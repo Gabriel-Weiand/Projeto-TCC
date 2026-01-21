@@ -1,0 +1,28 @@
+# Dependências do Node.js
+node_modules/
+npm-debug.log
+yarn-error.log
+package-lock.json
+yarn.lock
+
+# Variáveis de Ambiente
+.env
+.env.test
+.env.production
+
+# Build e Dist
+build/
+dist/
+public/build/
+
+# Banco de Dados SQLite
+*.sqlite
+*.sqlite3
+*.db
+*.db-journal
+
+# Arquivos de sistema e IDEs
+.DS_Store
+.vscode/
+.idea/
+tmp/
