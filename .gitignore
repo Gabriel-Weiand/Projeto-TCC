@@ -26,3 +26,7 @@ public/build/
 .vscode/
 .idea/
 tmp/
+
+# Teste raiz
+teste.http
+*.http
