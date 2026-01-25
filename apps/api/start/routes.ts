@@ -11,8 +11,8 @@ const AgentController = () => import('#controllers/agent_controller')
 router
   .group(() => {
     //Rotas do frontend
-    // ---ROTAS PÚBLICAS---
 
+    // ---ROTA PÚBLICA---
     router.post('login', [AuthController, 'login']).as('auth.login') // (Aberto)
 
     // ---ROTAS PROTEGIDAS(Precisa de Token)---
@@ -64,7 +64,7 @@ router
 
         router
           .patch('allocations/:id', [AllocationsController, 'update'])
-          .as('allocations.change_status') // Alterar status da reserva (Admin)
+          .as('allocations.change_status') // Alterar status da reserva (Admin - geral, User - próprio)
       })
       .use(middleware.auth())
   })
@@ -86,4 +86,4 @@ router
     router.post('telemetry', [AgentController, 'report']).as('agent.push_metrics')
   })
   .prefix('api/agent')
-// .use(middleware.machineAuth()) -> Futuro middleware de API Key
+  .use(middleware.machineAuth())

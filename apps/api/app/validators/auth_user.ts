@@ -17,12 +17,7 @@ const passwordRule = vine.string().minLength(8).maxLength(63)
 
 export const registerValidator = vine.compile(
   vine.object({
-    fullName: vine
-      .string()
-      .trim()
-      .minLength(4)
-      .maxLength(63)
-      .use(uniqueRule({ table: 'users', column: 'full_name' })),
+    fullName: vine.string().trim().minLength(4).maxLength(63),
     email: vine
       .string()
       .email()
