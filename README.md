@@ -44,52 +44,79 @@ O projeto adota uma estrutura de **Monorepo** organizada, onde a API Central orq
 
 ---
 
-## 🔌 API Endpoints (Core)
+## 🔌 API Endpoints
 
-A API é segmentada por prefixos para isolar a lógica de humanos da lógica de máquinas.
+A API é segmentada por prefixos e versões para isolar a lógica de interação humana da lógica de automação das máquinas.
 
-### 1. Rotas de Interface (`/api/v1`)
+**Base URL:** `/api/v1` (Para rotas de interface)
+**Agent URL:** `/api/agent` (Para rotas de hardware)
 
-_Destinadas ao Frontend Web (Usuários Interativos)._
+### 1. Interface & Gestão (`/api/v1`)
 
-#### Users (Gerenciamento)
+_Destinadas ao Frontend Web/Mobile. Requer Header `Authorization: Bearer <USER_TOKEN>` (exceto login)._
 
-| Método   | Endpoint     | Descrição                                       | Permissão     |
-| :------- | :----------- | :---------------------------------------------- | :------------ |
-| `POST`   | `/users`     | Cadastro de usuário (Público ou Admin).         | Público       |
-| `GET`    | `/users`     | Listar todos os usuários.                       | Admin         |
-| `PUT`    | `/users/:id` | Atualizar dados do perfil (Senha, Nome).        | Próprio/Admin |
-| `DELETE` | `/users/:id` | **Excluir usuário** (Remove acesso ao sistema). | Admin         |
+#### 🔐 Auth & Perfil
 
-#### Allocations (Solicitações)
+| Método   | Endpoint  | Descrição                             | Permissão   |
+| :------- | :-------- | :------------------------------------ | :---------- |
+| `POST`   | `/login`  | Autenticação e geração de token JWT.  | **Público** |
+| `DELETE` | `/logout` | Invalidação do token atual.           | Geral       |
+| `GET`    | `/me`     | Retorna dados do usuário autenticado. | Geral       |
 
-| Método  | Endpoint           | Descrição                                                            |
-| :------ | :----------------- | :------------------------------------------------------------------- |
-| `POST`  | `/allocations`     | Solicitar uso (Gera `APPROVED` por padrão).                          |
-| `GET`   | `/allocations`     | Listar alocações. _Filtra dados sensíveis para Alunos._              |
-| `PATCH` | `/allocations/:id` | Revogar acesso (`DENIED` - Admin) ou Cancelar (`CANCELLED` - Aluno). |
+#### 👥 Users (Usuários)
 
-#### Machines (Management & View)
+| Método   | Endpoint                 | Descrição                                       | Permissão |
+| :------- | :----------------------- | :---------------------------------------------- | :-------- |
+| `POST`   | `/users`                 | Cadastrar novo usuário.                         | Admin     |
+| `GET`    | `/users`                 | Listar todos os usuários.                       | Admin     |
+| `GET`    | `/users/:id`             | Detalhes de um usuário específico.              | Admin     |
+| `PUT`    | `/users/:id`             | Atualizar perfil (Nome, Senha).                 | Geral     |
+| `DELETE` | `/users/:id`             | Remover usuário (Soft Delete ou Cascata).       | Admin     |
+| `GET`    | `/users/:id/allocations` | Histórico de reservas de um usuário específico. | Admin     |
 
-| Método   | Endpoint                  | Descrição                                                      | Permissão |
-| :------- | :------------------------ | :------------------------------------------------------------- | :-------- |
-| `POST`   | `/machines`               | Cadastrar nova máquina e gerar **Machine Token**.              | Admin     |
-| `GET`    | `/machines`               | Listar inventário e status atual.                              | Auth      |
-| `DELETE` | `/machines/:id`           | Remoção lógica (Soft Delete).                                  | Admin     |
-| `GET`    | `/machines/:id/telemetry` | **Visualizar histórico** de uso (CPU/RAM) enviado pelo agente. | Admin     |
+#### 🖥️ Machines (Laboratórios)
 
-### 2. Rotas de Agente (`/api/agent`)
+| Método   | Endpoint                    | Descrição                                          | Permissão |
+| :------- | :-------------------------- | :------------------------------------------------- | :-------- |
+| `POST`   | `/machines`                 | Cadastrar máquina e gerar **API Key**.             | Admin     |
+| `GET`    | `/machines`                 | Inventário de máquinas e especificações.           | Geral     |
+| `GET`    | `/machines/:id`             | Detalhes técnicos da máquina.                      | Admin     |
+| `DELETE` | `/machines/:id`             | Remover máquina.                                   | Admin     |
+| `GET`    | `/machines/:id/telemetry`   | Visualizar histórico bruto de telemetria (Gráfico) | Admin     |
+| `GET`    | `/machines/:id/allocations` | Listar reservas futuras desta máquina.             | Geral     |
 
-_Destinadas ao software embarcado. Requer Header `Authorization: Bearer <MACHINE_TOKEN>`._
+#### 📅 Allocations (Reservas & Sessões)
 
-#### Synchronization & Telemetry
+| Método  | Endpoint                   | Descrição                                              | Permissão |
+| :------ | :------------------------- | :----------------------------------------------------- | :-------- |
+| `POST`  | `/allocations`             | Solicitar acesso a uma máquina.                        | Geral     |
+| `GET`   | `/allocations`             | Listar histórico de alocações.                         | Geral     |
+| `PATCH` | `/allocations/:id`         | Alterar status (Cancelar, Negar).                      | Geral     |
+| `POST`  | `/allocations/:id/summary` | **Encerrar Sessão:** Consolida dados e gera relatório. | Admin     |
+| `GET`   | `/allocations/:id/summary` | **Ver Resumo:** Retorna métricas (Médias CPU/RAM).     | Geral     |
 
-| Método | Endpoint              | Descrição                                                                     |
-| :----- | :-------------------- | :---------------------------------------------------------------------------- |
-| `GET`  | `/machines/sync`      | **Heartbeat:** Agente pergunta "Devo bloquear?". API responde `true`/`false`. |
-| `POST` | `/machines/telemetry` | Envio de dados de hardware (CPU, RAM, Uptime).                                |
+#### 🧹 Data Maintenance (Sistema)
+
+_Rotas administrativas para limpeza de dados e correções pontuais._
+
+| Método   | Endpoint                           | Descrição                                              |
+| :------- | :--------------------------------- | :----------------------------------------------------- |
+| `DELETE` | `/telemetries/:id`                 | Apagar um registro de telemetria bruto específico.     |
+| `DELETE` | `/allocation-metrics/:id`          | Apagar um relatório de resumo de sessão específico.    |
+| `DELETE` | `/system/prune/telemetries`        | **Prune:** Limpa dados brutos antigos (`?days=7`).     |
+| `DELETE` | `/system/prune/allocations`        | **Prune:** Limpa histórico de reservas (`?days=3650`). |
+| `DELETE` | `/system/prune/allocation-metrics` | **Prune:** Limpa resumos antigos (`?days=365`).        |
 
 ---
+
+### 2. Rotas do Agente (`/api/agent`)
+
+_Destinadas ao software embarcado na máquina. Requer Header `Authorization: Bearer <MACHINE_TOKEN>`._
+
+| Método | Endpoint           | Descrição                                                                |
+| :----- | :----------------- | :----------------------------------------------------------------------- |
+| `POST` | `/validate-access` | **Login Local:** Valida se as credenciais do aluno conferem com o banco. |
+| `POST` | `/telemetry`       | **Push:** Envia pacote de métricas (CPU, RAM, Temp) a cada 10s.          |
 
 ## 🛠 Tech Stack
 

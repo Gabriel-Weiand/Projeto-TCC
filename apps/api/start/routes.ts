@@ -83,7 +83,7 @@ router
 
             router
               .get('/:id/summary', [AllocationsController, 'getSessionSummary'])
-              .as('allocations.view_session_summary') // Ver resumo da sessão (Geral)
+              .as('allocations.view_session_summary') // Ver resumo da sessão (Seja telemetry ou allocation_metrics) (Geral)
           })
           .prefix('allocations')
 
