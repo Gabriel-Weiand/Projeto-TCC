@@ -1,7 +1,7 @@
 import router from '@adonisjs/core/services/router'
 import { middleware } from '#start/kernel'
 
-// Importação Preguiçosa dos Controllers (Melhor performance)
+// Lazy Loading Controllers
 const AuthController = () => import('#controllers/auth_controller')
 const UsersController = () => import('#controllers/users_controller')
 const AgentController = () => import('#controllers/agent_controller')
@@ -11,129 +11,108 @@ const TelemetriesController = () => import('#controllers/telemetries_controller'
 const AllocationMetricsController = () => import('#controllers/allocation_metrics_controller')
 const SystemController = () => import('#controllers/system_controller')
 
+/**
+ * API v1 - Frontend Routes
+ */
 router
   .group(() => {
-    //Rotas do frontend
+    // ========================================
+    // PUBLIC ROUTES
+    // ========================================
+    router.post('login', [AuthController, 'login']).as('auth.login')
 
-    // ---ROTA PÚBLICA---
-    router.post('login', [AuthController, 'login']).as('auth.login') // (Aberto)
-
-    // ---ROTAS PROTEGIDAS(Precisa de Token)---
+    // ========================================
+    // AUTHENTICATED ROUTES
+    // ========================================
     router
       .group(() => {
-        // --- GRUPO: AUTH & PERFIL ---
-        router.group(() => {
-          router.delete('logout', [AuthController, 'logout']).as('auth.logout') // (Geral)
+        // --- Auth & Profile ---
+        router.delete('logout', [AuthController, 'logout']).as('auth.logout')
+        router.get('me', [AuthController, 'me']).as('auth.me')
 
-          router.get('me', [AuthController, 'me']).as('auth.get_infos') // (Geral)
-        })
-
-        // --- GRUPO: USERS ---
+        // --- Users ---
         router
           .group(() => {
-            router.post('/', [UsersController, 'store']).as('users.register') // (Admin) - Criação
-
-            router.get('/', [UsersController, 'index']).as('users.list_all') // (Admin) - Listagem
-
-            router.get('/:id', [UsersController, 'show']).as('users.get_details') // (Admin) - Detalhes
-
-            router.put('/:id', [UsersController, 'update']).as('users.update_profile') // (Geral) - Edição
-
-            router.delete('/:id', [UsersController, 'destroy']).as('users.delete_account') // (Admin) - Exclusão
-
+            router.post('/', [UsersController, 'store']).as('users.store')
+            router.get('/', [UsersController, 'index']).as('users.index')
+            router.get('/:id', [UsersController, 'show']).as('users.show')
+            router.put('/:id', [UsersController, 'update']).as('users.update')
+            router.delete('/:id', [UsersController, 'destroy']).as('users.destroy')
             router
               .get('/:id/allocations', [AllocationsController, 'userHistory'])
-              .as('users.list_allocations_history') // Histórico de alocação de um usuário (Admin - Qualquer usuário, User - Próprio)
+              .as('users.allocations')
           })
           .prefix('users')
+          .where('id', router.matchers.number()) // Returns 404 if :id is not a number
 
-        // --- GRUPO: MACHINES ---
+        // --- Machines ---
         router
           .group(() => {
-            router.post('/', [MachinesController, 'store']).as('machines.register_new') // Cadastrar nova máquina (Admin)
-
-            router.get('/', [MachinesController, 'index']).as('machines.list_inventory') // Listar inventário (Geral)
-
-            router.get('/:id', [MachinesController, 'show']).as('machines.get_details') // Detalhes da máquina (Admin)
-
-            router.delete('/:id', [MachinesController, 'destroy']).as('machines.remove_device') // Remover dispositivo (Admin)
-
-            router
-              .get('/:id/telemetry', [MachinesController, 'telemetry'])
-              .as('machines.view_telemetry_history') // Ver histórico de telemetria de uma maquina (Admin)
-
+            router.post('/', [MachinesController, 'store']).as('machines.store')
+            router.get('/', [MachinesController, 'index']).as('machines.index')
+            router.get('/:id', [MachinesController, 'show']).as('machines.show')
+            router.delete('/:id', [MachinesController, 'destroy']).as('machines.destroy')
+            router.get('/:id/telemetry', [MachinesController, 'telemetry']).as('machines.telemetry')
             router
               .get('/:id/allocations', [AllocationsController, 'machineHistory'])
-              .as('machines.list_allocations_history') // Listar reservas futuras de uma máquina específica (Geral)
+              .as('machines.allocations')
           })
           .prefix('machines')
+          .where('id', router.matchers.number())
 
-        // --- GRUPO: ALLOCATIONS ---
+        // --- Allocations ---
         router
           .group(() => {
-            router.post('/', [AllocationsController, 'store']).as('allocations.request_access') // Solicitar acesso (Geral)
-
-            router.get('/', [AllocationsController, 'index']).as('allocations.list_history') // Listar histórico (Admin - geral, User - próprio)
-
-            router.patch('/:id', [AllocationsController, 'update']).as('allocations.change_status') // Alterar status da reserva (Admin - geral, User - próprio)
-
+            router.post('/', [AllocationsController, 'store']).as('allocations.store')
+            router.get('/', [AllocationsController, 'index']).as('allocations.index')
+            router.patch('/:id', [AllocationsController, 'update']).as('allocations.update')
             router
               .post('/:id/summary', [AllocationsController, 'summarizeSession'])
-              .as('allocations.create_session_summary') // Gerar resumo da sessão (Admin)
-
+              .as('allocations.summary.create')
             router
               .get('/:id/summary', [AllocationsController, 'getSessionSummary'])
-              .as('allocations.view_session_summary') // Ver resumo da sessão (Seja telemetry ou allocation_metrics) (Geral)
+              .as('allocations.summary.show')
           })
           .prefix('allocations')
+          .where('id', router.matchers.number())
 
-        // --- EXCLUSÃO DE DADOS ---
-        router.group(() => {
-          // Manutenção pontual
-          router
-            .delete('telemetries/:id', [TelemetriesController, 'destroy'])
-            .as('telemetries.delete') // Deletar um registro específico de telemetria
+        // --- Maintenance (Individual Operations) ---
+        router
+          .group(() => {
+            router
+              .delete('telemetries/:telemetryId', [TelemetriesController, 'destroy'])
+              .as('maintenance.telemetry.destroy')
+            router
+              .delete('metrics/:metricId', [AllocationMetricsController, 'destroy'])
+              .as('maintenance.metric.destroy')
+          })
+          .prefix('maintenance')
 
-          router
-            .delete('allocation-metrics/:id', [AllocationMetricsController, 'destroy'])
-            .as('allocation_metrics.delete') // Deletar um resumo específico
-
-          // Prune do sistema (Limpeza em massa)
-          router
-            .group(() => {
-              router
-                .delete('telemetries', [SystemController, 'pruneTelemetries'])
-                .as('system.prune.telemetries') // Apaga dados brutos (Telemetries)
-
-              router
-                .delete('allocations', [SystemController, 'pruneAllocations'])
-                .as('system.prune.allocations') // Apaga alocações inteiras (Cascata: Alocação + Métricas (Telemetries ou Allocation Metrics))
-
-              router
-                .delete('allocation-metrics', [SystemController, 'pruneMetrics'])
-                .as('system.prune.metrics') // Apaga resumos (Allocation Metrics)
-            })
-            .prefix('system/prune')
-        }) // (Admin)
+        // --- System Prune (Bulk Operations) ---
+        router
+          .group(() => {
+            router
+              .delete('telemetries', [SystemController, 'pruneTelemetries'])
+              .as('system.prune.telemetries')
+            router
+              .delete('allocations', [SystemController, 'pruneAllocations'])
+              .as('system.prune.allocations')
+            router.delete('metrics', [SystemController, 'pruneMetrics']).as('system.prune.metrics')
+          })
+          .prefix('system/prune')
       })
       .use(middleware.auth())
   })
   .prefix('api/v1')
 
+/**
+ * API Agent - Machine Agent Routes
+ */
 router
   .group(() => {
-    //Rotas da API dos Agentes de Máquina
+    router.post('validate-access', [AgentController, 'validateAccess']).as('agent.validate')
 
-    // Validação de Acesso (Login Local na Máquina)
-    // Payload esperado: { email, password } + API key
-    router
-      .post('validate-access', [AgentController, 'validateAccess'])
-      .as('agent.validate_user_credentials')
-    // Nome claro: O agente está validando as credenciais de um humano
-
-    // Telemetria (Reportar Estado)
-    // Payload esperado: { cpu_percent, ram_percent, gpu_percent, uptime_seconds }
-    router.post('telemetry', [AgentController, 'report']).as('agent.push_metrics')
+    router.post('telemetry', [AgentController, 'report']).as('agent.telemetry')
   })
   .prefix('api/agent')
   .use(middleware.machineAuth())
