@@ -1,49 +1,88 @@
 import type { HttpContext } from '@adonisjs/core/http'
 import User from '#models/user'
 import { registerValidator } from '#validators/auth_user'
+import { updateUserValidator } from '#validators/user'
 
 export default class UsersController {
-  //Listar todos os usuários (Apenas Admin)
+  /**
+   * Lista todos os usuários.
+   * 
+   * GET /api/v1/users
+   */
   async index({ response }: HttpContext) {
-    const users = await User.all()
+    const users = await User.query().orderBy('fullName', 'asc')
     return response.ok(users)
   }
 
-  //Cria novo usuário
+  /**
+   * Cria um novo usuário.
+   * 
+   * POST /api/v1/users
+   */
   async store({ request, response }: HttpContext) {
-    // 1. Validação dos dados de entrada
-    // Se o validator falhar, o Adonis retorna erro 422 automaticamente aqui.
     const payload = await request.validateUsing(registerValidator)
-
-    // 2. Criação do Usuário
-    // O hook @beforeSave no Model User vai criar o hash da senha automaticamente
     const user = await User.create(payload)
 
-    // 3. Retorno 201 Created
     return response.created(user)
   }
 
-  //Exibe um usuário específico
+  /**
+   * Exibe um usuário específico.
+   * 
+   * GET /api/v1/users/:id
+   */
   async show({ params, response }: HttpContext) {
     const user = await User.findOrFail(params.id)
     return response.ok(user)
   }
 
-  //Atualiza dados (Ex: Nome ou Senha)
-  async update({ params, request, response }: HttpContext) {
-    const user = await User.findOrFail(params.id)
-    const data = request.only(['fullName', 'password']) // Defina o que pode ser atualizado
+  /**
+   * Atualiza um usuário.
+   * - User normal: só pode atualizar seu próprio perfil (não pode alterar role)
+   * - Admin: pode atualizar qualquer usuário
+   * 
+   * PUT /api/v1/users/:id
+   */
+  async update({ auth, params, request, response }: HttpContext) {
+    const currentUser = auth.user!
+    const targetUser = await User.findOrFail(params.id)
+    
+    // User normal só pode atualizar seu próprio perfil
+    if (currentUser.role !== 'admin' && currentUser.id !== targetUser.id) {
+      return response.forbidden({
+        code: 'NOT_OWNER',
+        message: 'Você só pode atualizar seu próprio perfil.',
+      })
+    }
 
-    user.merge(data)
-    await user.save()
+    // Passa userId no meta para validação de unicidade do email
+    const data = await request.validateUsing(updateUserValidator, {
+      meta: { userId: targetUser.id },
+    })
 
-    return response.ok(user)
+    // User normal não pode alterar role
+    if (currentUser.role !== 'admin' && data.role) {
+      return response.forbidden({
+        code: 'CANNOT_CHANGE_ROLE',
+        message: 'Você não tem permissão para alterar roles.',
+      })
+    }
+
+    targetUser.merge(data)
+    await targetUser.save()
+
+    return response.ok(targetUser)
   }
 
-  //Remover usuário (Apenas Admin)
+  /**
+   * Remove um usuário.
+   * 
+   * DELETE /api/v1/users/:id
+   */
   async destroy({ params, response }: HttpContext) {
     const user = await User.findOrFail(params.id)
     await user.delete()
+
     return response.noContent()
   }
 }

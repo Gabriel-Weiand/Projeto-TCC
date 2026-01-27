@@ -30,53 +30,69 @@ router
         router.delete('logout', [AuthController, 'logout']).as('auth.logout')
         router.get('me', [AuthController, 'me']).as('auth.me')
 
-        // --- Users ---
+        // --- Users (Admin Only) ---
         router
           .group(() => {
             router.post('/', [UsersController, 'store']).as('users.store')
             router.get('/', [UsersController, 'index']).as('users.index')
             router.get('/:id', [UsersController, 'show']).as('users.show')
-            router.put('/:id', [UsersController, 'update']).as('users.update')
             router.delete('/:id', [UsersController, 'destroy']).as('users.destroy')
             router
               .get('/:id/allocations', [AllocationsController, 'userHistory'])
               .as('users.allocations')
           })
           .prefix('users')
-          .where('id', router.matchers.number()) // Returns 404 if :id is not a number
+          .where('id', router.matchers.number())
+          .use(middleware.isAdmin()) // Admin Only
 
-        // --- Machines ---
+        // --- Users Update (General - each user updates their own) ---
+        router
+          .put('/users/:id', [UsersController, 'update'])
+          .as('users.update')
+          .where('id', router.matchers.number())
+
+        // --- Machines (Admin Only - except GET list) ---
+        router.get('/machines', [MachinesController, 'index']).as('machines.index') // Public
+
         router
           .group(() => {
             router.post('/', [MachinesController, 'store']).as('machines.store')
-            router.get('/', [MachinesController, 'index']).as('machines.index')
             router.get('/:id', [MachinesController, 'show']).as('machines.show')
+            router.put('/:id', [MachinesController, 'update']).as('machines.update')
             router.delete('/:id', [MachinesController, 'destroy']).as('machines.destroy')
             router.get('/:id/telemetry', [MachinesController, 'telemetry']).as('machines.telemetry')
-            router
-              .get('/:id/allocations', [AllocationsController, 'machineHistory'])
-              .as('machines.allocations')
           })
           .prefix('machines')
           .where('id', router.matchers.number())
+          .use(middleware.isAdmin()) // Admin Only
 
-        // --- Allocations ---
+        // --- Machines Allocations (General - anonimizado para users) ---
+        router
+          .get('/machines/:id/allocations', [AllocationsController, 'machineHistory'])
+          .as('machines.allocations')
+          .where('id', router.matchers.number())
+
+        // --- Allocations (Mixed Permissions) ---
         router
           .group(() => {
-            router.post('/', [AllocationsController, 'store']).as('allocations.store')
-            router.get('/', [AllocationsController, 'index']).as('allocations.index')
-            router.patch('/:id', [AllocationsController, 'update']).as('allocations.update')
-            router
-              .post('/:id/summary', [AllocationsController, 'summarizeSession'])
-              .as('allocations.summary.create')
+            router.post('/', [AllocationsController, 'store']).as('allocations.store') // General
+            router.get('/', [AllocationsController, 'index']).as('allocations.index') // General
+            router.patch('/:id', [AllocationsController, 'update']).as('allocations.update') // General
             router
               .get('/:id/summary', [AllocationsController, 'getSessionSummary'])
-              .as('allocations.summary.show')
+              .as('allocations.summary.show') // General
           })
           .prefix('allocations')
           .where('id', router.matchers.number())
 
-        // --- Maintenance (Individual Operations) ---
+        // --- Allocations Summary (Admin Only) ---
+        router
+          .post('allocations/:id/summary', [AllocationsController, 'summarizeSession'])
+          .as('allocations.summary.create')
+          .where('id', router.matchers.number())
+          .use(middleware.isAdmin()) // Admin Only
+
+        // --- Maintenance (Admin Only) ---
         router
           .group(() => {
             router
@@ -87,8 +103,9 @@ router
               .as('maintenance.metric.destroy')
           })
           .prefix('maintenance')
+          .use(middleware.isAdmin()) // Admin Only
 
-        // --- System Prune (Bulk Operations) ---
+        // --- System Prune (Admin Only) ---
         router
           .group(() => {
             router
@@ -100,6 +117,7 @@ router
             router.delete('metrics', [SystemController, 'pruneMetrics']).as('system.prune.metrics')
           })
           .prefix('system/prune')
+          .use(middleware.isAdmin()) // Admin Only
       })
       .use(middleware.auth())
   })

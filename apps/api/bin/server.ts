@@ -11,7 +11,6 @@
 
 import 'reflect-metadata'
 import { Ignitor, prettyPrintError } from '@adonisjs/core'
-import { telemetryBuffer } from '#services/telemetry_buffer'
 
 /**
  * URL to the application root. AdonisJS need it to resolve
@@ -35,11 +34,19 @@ new Ignitor(APP_ROOT, { importer: IMPORTER })
     app.booting(async () => {
       await import('#start/env')
     })
+    
+    // Inicia o scheduler após o app estar pronto
+    app.ready(async () => {
+      const { initScheduler } = await import('#start/scheduler')
+      initScheduler()
+    })
+    
     app.listen('SIGTERM', () => app.terminate())
     app.listenIf(app.managedByPm2, 'SIGINT', () => app.terminate())
 
     // Flush do buffer de telemetria antes de encerrar
     app.terminating(async () => {
+      const { telemetryBuffer } = await import('#services/telemetry_buffer')
       await telemetryBuffer.shutdown()
     })
   })

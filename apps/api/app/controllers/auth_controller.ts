@@ -13,14 +13,21 @@ export default class AuthController {
     // Se falhar, ele lança uma exceção automática 'Invalid credentials'
     const user = await User.verifyCredentials(email, password)
 
-    // 3. Cria o token de acesso (Opaque Token)
+    // 3. Invalida todos os tokens antigos do usuário (segurança)
+    const existingTokens = await User.accessTokens.all(user)
+    for (const token of existingTokens) {
+      await User.accessTokens.delete(user, token.identifier)
+    }
+
+    // 4. Cria o token de acesso (expiração configurada no model: 6 horas)
     const token = await User.accessTokens.create(user)
 
-    // 4. Retorna o token para o frontend
+    // 5. Retorna o token para o frontend
     return response.ok({
       type: 'bearer',
       value: token.value!.release(),
-      user: user, // Opcional: retornar dados básicos do user junto
+      expiresAt: token.expiresAt,
+      user: user,
     })
   }
 

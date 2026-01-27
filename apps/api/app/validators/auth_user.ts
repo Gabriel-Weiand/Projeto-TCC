@@ -24,6 +24,7 @@ export const registerValidator = vine.compile(
       .normalizeEmail()
       .use(uniqueRule({ table: 'users', column: 'email' })),
     password: passwordRule,
+    role: vine.enum(['user', 'admin'] as const).optional(), // Default 'user' no banco
   })
 )
 
