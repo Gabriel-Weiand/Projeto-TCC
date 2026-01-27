@@ -2,6 +2,7 @@ import type { HttpContext } from '@adonisjs/core/http'
 import Allocation from '#models/allocation'
 import AllocationMetric from '#models/allocation_metric'
 import Telemetry from '#models/telemetry'
+import Machine from '#models/machine'
 import {
   createAllocationValidator,
   updateAllocationValidator,
@@ -59,6 +60,15 @@ export default class AllocationsController {
       targetUserId = data.userId
     } else {
       targetUserId = currentUser.id
+    }
+
+    // Verifica se a máquina existe e não está em manutenção
+    const machine = await Machine.findOrFail(data.machineId)
+    if (machine.status === 'maintenance') {
+      return response.badRequest({
+        code: 'MACHINE_IN_MAINTENANCE',
+        message: 'Esta máquina está em manutenção e não pode receber alocações.',
+      })
     }
 
     // Converte para ISO string para as queries

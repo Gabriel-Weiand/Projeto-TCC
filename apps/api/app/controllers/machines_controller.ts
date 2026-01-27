@@ -1,10 +1,12 @@
 import type { HttpContext } from '@adonisjs/core/http'
 import Machine from '#models/machine'
+import Allocation from '#models/allocation'
 import { createMachineValidator, updateMachineValidator } from '#validators/machine'
 import { listTelemetryValidator } from '#validators/telemetry'
 import { telemetryBuffer } from '#services/telemetry_buffer'
 import { machineCache } from '#services/machine_cache'
 import Telemetry from '#models/telemetry'
+import { DateTime } from 'luxon'
 
 export default class MachinesController {
   /**
@@ -64,6 +66,7 @@ export default class MachinesController {
 
   /**
    * Atualiza uma máquina.
+   * Se entrar em manutenção, cancela todas as alocações futuras.
    *
    * PUT /api/v1/machines/:id
    */
@@ -71,13 +74,33 @@ export default class MachinesController {
     const machine = await Machine.findOrFail(params.id)
     const data = await request.validateUsing(updateMachineValidator)
 
+    const wasNotInMaintenance = machine.status !== 'maintenance'
+    const isEnteringMaintenance = data.status === 'maintenance'
+
     machine.merge(data)
     await machine.save()
+
+    // Se entrou em manutenção, cancela alocações futuras
+    let cancelledCount = 0
+    if (wasNotInMaintenance && isEnteringMaintenance) {
+      const now = DateTime.now().toISO()
+      
+      const result = await Allocation.query()
+        .where('machineId', machine.id)
+        .whereIn('status', ['approved', 'pending'])
+        .where('startTime', '>', now)
+        .update({ status: 'cancelled' })
+
+      cancelledCount = result[0] ?? 0
+    }
 
     // Invalida cache se existir
     machineCache.invalidateById(machine.id)
 
-    return response.ok(machine)
+    return response.ok({
+      ...machine.serialize(),
+      cancelledAllocations: cancelledCount > 0 ? cancelledCount : undefined,
+    })
   }
 
   /**
