@@ -71,23 +71,22 @@ export default class AllocationsController {
       })
     }
 
-    // Converte para ISO string para as queries
-    const startISO = data.startTime.toISO()!
-    const endISO = data.endTime.toISO()!
+    // Timestamps em milissegundos para comparação
+    const newStart = data.startTime.toMillis()
+    const newEnd = data.endTime.toMillis()
 
-    // Verifica conflito de horário
-    const conflict = await Allocation.query()
+    // Busca todas as alocações ativas da máquina
+    const existingAllocations = await Allocation.query()
       .where('machineId', data.machineId)
       .whereIn('status', ['approved', 'pending'])
-      .where((query) => {
-        query
-          .whereBetween('startTime', [startISO, endISO])
-          .orWhereBetween('endTime', [startISO, endISO])
-          .orWhere((q) => {
-            q.where('startTime', '<=', startISO).where('endTime', '>=', endISO)
-          })
-      })
-      .first()
+
+    // Verifica conflito de horário em JavaScript
+    // Duas alocações conflitam se: existente.start < novo.end E existente.end > novo.start
+    const conflict = existingAllocations.find((allocation) => {
+      const existingStart = allocation.startTime.toMillis()
+      const existingEnd = allocation.endTime.toMillis()
+      return existingStart < newEnd && existingEnd > newStart
+    })
 
     if (conflict) {
       return response.conflict({

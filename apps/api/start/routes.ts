@@ -10,6 +10,16 @@ const AllocationsController = () => import('#controllers/allocations_controller'
 const TelemetriesController = () => import('#controllers/telemetries_controller')
 const AllocationMetricsController = () => import('#controllers/allocation_metrics_controller')
 const SystemController = () => import('#controllers/system_controller')
+const UtilsController = () => import('#controllers/utils_controller')
+
+/**
+ * Public Utils Routes (no auth required)
+ */
+router
+  .group(() => {
+    router.get('alive', [UtilsController, 'alive']).as('utils.alive')
+  })
+  .prefix('api')
 
 /**
  * API v1 - Frontend Routes
