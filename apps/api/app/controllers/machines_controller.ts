@@ -49,6 +49,7 @@ export default class MachinesController {
 
   /**
    * Exibe detalhes de uma máquina.
+   * Admin pode ver o token atual para configurar o agente.
    *
    * GET /api/v1/machines/:id
    */
@@ -60,6 +61,7 @@ export default class MachinesController {
 
     return response.ok({
       ...machine.serialize(),
+      token: machine.token, // Admin pode ver o token
       latestTelemetry,
     })
   }
@@ -83,15 +85,20 @@ export default class MachinesController {
     // Se entrou em manutenção, cancela alocações futuras
     let cancelledCount = 0
     if (wasNotInMaintenance && isEnteringMaintenance) {
-      const now = DateTime.now().toISO()
-      
-      const result = await Allocation.query()
+      const now = DateTime.now().toMillis()
+
+      // Busca alocações futuras e cancela em JavaScript (SQLite não compara datas bem)
+      const futureAllocations = await Allocation.query()
         .where('machineId', machine.id)
         .whereIn('status', ['approved', 'pending'])
-        .where('startTime', '>', now)
-        .update({ status: 'cancelled' })
 
-      cancelledCount = result[0] ?? 0
+      const toCancel = futureAllocations.filter((a) => a.startTime.toMillis() > now)
+
+      for (const allocation of toCancel) {
+        allocation.status = 'cancelled'
+        await allocation.save()
+        cancelledCount++
+      }
     }
 
     // Invalida cache se existir
@@ -152,6 +159,31 @@ export default class MachinesController {
     return response.ok({
       realtime: latestRealtime,
       history: telemetries,
+    })
+  }
+
+  /**
+   * Regenera o token de autenticação de uma máquina.
+   * Usado para rotação de segurança ou se o token foi comprometido.
+   *
+   * POST /api/v1/machines/:id/regenerate-token
+   */
+  async regenerateToken({ params, response }: HttpContext) {
+    const machine = await Machine.findOrFail(params.id)
+
+    // Invalida cache do token antigo
+    machineCache.invalidate(machine.token)
+
+    // Regenera o token
+    const newToken = machine.regenerateToken()
+    await machine.save()
+
+    return response.ok({
+      message: 'Token regenerado com sucesso. Configure o agente com o novo token.',
+      machineId: machine.id,
+      machineName: machine.name,
+      token: newToken,
+      tokenRotatedAt: machine.tokenRotatedAt,
     })
   }
 }

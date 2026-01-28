@@ -1,7 +1,9 @@
 import { test } from '@japa/runner'
 import User from '#models/user'
 import Machine from '#models/machine'
+import Allocation from '#models/allocation'
 import testUtils from '@adonisjs/core/services/test_utils'
+import { DateTime } from 'luxon'
 
 test.group('Machines', (group) => {
   group.each.setup(() => testUtils.db().withGlobalTransaction())
@@ -197,5 +199,155 @@ test.group('Machines', (group) => {
 
     // Assert
     response.assertStatus(404)
+  })
+
+  test('admin deve visualizar token da máquina no GET', async ({ client, assert }) => {
+    // Arrange
+    const admin = await User.create({
+      fullName: 'Admin',
+      email: 'admin@teste.com',
+      password: 'senha123',
+      role: 'admin',
+    })
+
+    const machine = await Machine.create({
+      name: 'PC-COM-TOKEN',
+      cpuModel: 'Intel i5',
+      totalRamGb: 8,
+      totalDiskGb: 256,
+      status: 'available',
+    })
+
+    // Act
+    const response = await client.get(`/api/v1/machines/${machine.id}`).loginAs(admin)
+
+    // Assert
+    response.assertStatus(200)
+    assert.exists(response.body().token)
+    assert.equal(response.body().token, machine.token)
+  })
+
+  test('admin deve regenerar token da máquina', async ({ client, assert }) => {
+    // Arrange
+    const admin = await User.create({
+      fullName: 'Admin',
+      email: 'admin@teste.com',
+      password: 'senha123',
+      role: 'admin',
+    })
+
+    const machine = await Machine.create({
+      name: 'PC-REGENERAR-TOKEN',
+      cpuModel: 'Intel i5',
+      totalRamGb: 8,
+      totalDiskGb: 256,
+      status: 'available',
+    })
+
+    const oldToken = machine.token
+
+    // Act
+    const response = await client
+      .post(`/api/v1/machines/${machine.id}/regenerate-token`)
+      .loginAs(admin)
+
+    // Assert
+    response.assertStatus(200)
+    assert.exists(response.body().token)
+    assert.notEqual(response.body().token, oldToken)
+    assert.exists(response.body().tokenRotatedAt)
+
+    // Verifica que o token foi alterado no banco
+    await machine.refresh()
+    assert.notEqual(machine.token, oldToken)
+    assert.isNotNull(machine.tokenRotatedAt)
+  })
+
+  test('usuário comum NÃO deve regenerar token', async ({ client }) => {
+    // Arrange
+    const user = await User.create({
+      fullName: 'User Normal',
+      email: 'user@teste.com',
+      password: 'senha123',
+      role: 'user',
+    })
+
+    const machine = await Machine.create({
+      name: 'PC-REGENERAR-TOKEN',
+      cpuModel: 'Intel i5',
+      totalRamGb: 8,
+      totalDiskGb: 256,
+      status: 'available',
+    })
+
+    // Act
+    const response = await client
+      .post(`/api/v1/machines/${machine.id}/regenerate-token`)
+      .loginAs(user)
+
+    // Assert
+    response.assertStatus(403)
+  })
+
+  test('colocar máquina em manutenção deve cancelar alocações futuras', async ({
+    client,
+    assert,
+  }) => {
+    // Arrange
+    const admin = await User.create({
+      fullName: 'Admin',
+      email: 'admin@teste.com',
+      password: 'senha123',
+      role: 'admin',
+    })
+
+    const user = await User.create({
+      fullName: 'User',
+      email: 'user@teste.com',
+      password: 'senha123',
+      role: 'user',
+    })
+
+    const machine = await Machine.create({
+      name: 'PC-MANUTENCAO',
+      cpuModel: 'Intel i5',
+      totalRamGb: 8,
+      totalDiskGb: 256,
+      status: 'available',
+    })
+
+    // Cria alocações futuras
+    const allocation1 = await Allocation.create({
+      userId: user.id,
+      machineId: machine.id,
+      startTime: DateTime.now().plus({ hours: 2 }),
+      endTime: DateTime.now().plus({ hours: 4 }),
+      status: 'approved',
+    })
+
+    const allocation2 = await Allocation.create({
+      userId: user.id,
+      machineId: machine.id,
+      startTime: DateTime.now().plus({ days: 1 }),
+      endTime: DateTime.now().plus({ days: 1, hours: 2 }),
+      status: 'approved',
+    })
+
+    // Act
+    const response = await client.put(`/api/v1/machines/${machine.id}`).loginAs(admin).json({
+      status: 'maintenance',
+    })
+
+    // Assert
+    response.assertStatus(200)
+    response.assertBodyContains({
+      status: 'maintenance',
+    })
+
+    // Verifica que alocações foram canceladas
+    await allocation1.refresh()
+    await allocation2.refresh()
+    assert.equal(allocation1.status, 'cancelled')
+    assert.equal(allocation2.status, 'cancelled')
   })
 })

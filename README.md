@@ -416,7 +416,7 @@ Inventário de máquinas com status em tempo real.
 
 ##### `GET /api/v1/machines/:id`
 
-Detalhes técnicos de uma máquina específica.
+Detalhes técnicos de uma máquina específica. **Inclui o token para configuração do agente.**
 
 **Permissão:** Admin
 
@@ -434,10 +434,21 @@ Detalhes técnicos de uma máquina específica.
   "ipAddress": "192.168.1.100",
   "macAddress": "AA:BB:CC:DD:EE:FF",
   "status": "available",
+  "lastSeenAt": "2026-01-28T12:00:00.000Z",
+  "loggedUser": "gabriel.santos",
+  "token": "38429811d7f5e8841b961733e2f21821...",
+  "tokenRotatedAt": null,
   "createdAt": "2026-01-28T12:00:00.000Z",
-  "updatedAt": "2026-01-28T12:00:00.000Z"
+  "updatedAt": "2026-01-28T12:00:00.000Z",
+  "latestTelemetry": {
+    "cpuUsage": 250,
+    "ramUsage": 450,
+    "createdAt": "2026-01-28T12:00:00.000Z"
+  }
 }
 ```
+
+> ⚠️ **Importante:** O `token` é sensível. Use apenas para configurar o agente.
 
 ---
 
@@ -456,7 +467,7 @@ Atualizar dados de uma máquina.
 }
 ```
 
-**Response (200):** Máquina atualizada (mesmo formato do GET)
+**Response (200):** Máquina atualizada (mesmo formato do GET, sem token)
 
 ---
 
@@ -466,13 +477,29 @@ Remover máquina do sistema.
 
 **Permissão:** Admin
 
+**Response (204):** No Content
+
+---
+
+##### `POST /api/v1/machines/:id/regenerate-token`
+
+Regenera o token de autenticação da máquina (rotação de segurança).
+
+**Permissão:** Admin
+
 **Response (200):**
 
 ```json
 {
-  "message": "Máquina removida com sucesso"
+  "message": "Token regenerado com sucesso. Configure o agente com o novo token.",
+  "machineId": 1,
+  "machineName": "PC-LAB-01",
+  "token": "novo_token_gerado_aqui...",
+  "tokenRotatedAt": "2026-01-28T14:00:00.000Z"
 }
 ```
+
+> ⚠️ **Após regenerar:** Atualize o arquivo de config do agente na máquina física.
 
 ---
 
@@ -872,25 +899,416 @@ _Destinadas ao software embarcado nas máquinas. Requer Header `Authorization: B
 
 ---
 
-##### `POST /api/agent/validate-access`
+#### 🔄 Ciclo de Vida do Agente (Polling)
 
-Validar se o token do agente é válido.
+```
+┌─────────────────────────────────────────────────────────────────────────────────┐
+│                           CICLO DE VIDA DO AGENTE                               │
+├─────────────────────────────────────────────────────────────────────────────────┤
+│                                                                                 │
+│   ┌──────────────────────────────────────────────────────────────────┐          │
+│   │                    BOOT DO AGENTE                                │          │
+│   │  1. Lê token do arquivo de config local                          │          │
+│   │  2. PUT /sync-specs → Envia specs detectadas (CPU, RAM, etc)     │          │
+│   │  3. POST /heartbeat → Registra que está online                   │          │
+│   └──────────────────────────────────────────────────────────────────┘          │
+│                              │                                                  │
+│                              ▼                                                  │
+│   ┌──────────────────────────────────────────────────────────────────┐          │
+│   │              LOOP PRINCIPAL (enquanto máquina ligada)            │          │
+│   │                                                                  │          │
+│   │   A cada 30s:  POST /heartbeat                                   │          │
+│   │                └─ Mantém status online                           │          │
+│   │                └─ Recebe se deve bloquear                        │          │
+│   │                └─ Recebe alocação atual (se houver)              │          │
+│   │                                                                  │          │
+│   │   A cada 10s:  POST /telemetry                                   │          │
+│   │                └─ Envia métricas CPU/RAM/GPU/Temp                 │          │
+│   │                                                                  │          │
+│   └──────────────────────────────────────────────────────────────────┘          │
+│                              │                                                  │
+│                              ▼                                                  │
+│   ┌──────────────────────────────────────────────────────────────────┐          │
+│   │              QUANDO USUÁRIO TENTA LOGAR NO SO                    │          │
+│   │                                                                  │          │
+│   │   1. POST /validate-user {email, password}                       │          │
+│   │      └─ allowed: true  → Permite login                           │          │
+│   │      └─ allowed: false → Bloqueia e mostra mensagem              │          │
+│   │                                                                  │          │
+│   │   2. Se permitiu → POST /report-login {username}                 │          │
+│   │      └─ Registra quem logou para auditoria                       │          │
+│   │                                                                  │          │
+│   └──────────────────────────────────────────────────────────────────┘          │
+│                              │                                                  │
+│                              ▼                                                  │
+│   ┌──────────────────────────────────────────────────────────────────┐          │
+│   │              DURANTE A SESSÃO DO USUÁRIO                         │          │
+│   │                                                                  │          │
+│   │   A cada 60s:  GET /should-block?loggedUserId=123                │          │
+│   │                └─ shouldBlock: true  → Força logout              │          │
+│   │                └─ shouldBlock: false → Continua                  │          │
+│   │                └─ remainingMinutes: 15 → Avisa usuário           │          │
+│   │                                                                  │          │
+│   └──────────────────────────────────────────────────────────────────┘          │
+│                              │                                                  │
+│                              ▼                                                  │
+│   ┌──────────────────────────────────────────────────────────────────┐          │
+│   │              QUANDO USUÁRIO FAZ LOGOUT                           │          │
+│   │                                                                  │          │
+│   │   POST /report-logout                                            │          │
+│   │   └─ Libera a máquina para o próximo                             │          │
+│   │                                                                  │          │
+│   └──────────────────────────────────────────────────────────────────┘          │
+│                                                                                 │
+└─────────────────────────────────────────────────────────────────────────────────┘
+```
+
+---
+
+#### Intervalos Recomendados de Polling
+
+| Rota              | Intervalo | Descrição                            |
+| :---------------- | :-------- | :----------------------------------- |
+| `/heartbeat`      | 30s       | Manter online + status de bloqueio   |
+| `/telemetry`      | 10s       | Métricas de hardware                 |
+| `/should-block`   | 60s       | Verificar se alocação foi revogada   |
+| `/validate-user`  | Sob demanda | Quando usuário tenta logar         |
+| `/report-login`   | Sob demanda | Após login bem-sucedido            |
+| `/report-logout`  | Sob demanda | Quando usuário sai                 |
+| `/allocations`    | Sob demanda | Consultar agenda da máquina        |
+| `/current-session`| Sob demanda | Quem deveria estar usando          |
+| `/sync-specs`     | No boot   | Atualizar specs detectadas           |
+
+---
+
+##### `POST /api/agent/heartbeat`
+
+Heartbeat - Mantém a máquina online e retorna status de controle.
 
 **Headers:**
-
 ```
 Authorization: Bearer <MACHINE_TOKEN>
 ```
 
 **Response (200):**
-
 ```json
 {
-  "valid": true,
   "machine": {
     "id": 1,
     "name": "PC-LAB-01",
     "status": "available"
+  },
+  "currentAllocation": {
+    "id": 5,
+    "userId": 3,
+    "userEmail": "aluno@ufpel.edu.br",
+    "userName": "Gabriel Santos",
+    "startTime": "2026-01-28T08:00:00.000Z",
+    "endTime": "2026-01-28T12:00:00.000Z"
+  },
+  "shouldBlock": false,
+  "serverTime": "2026-01-28T10:30:00.000Z"
+}
+```
+
+| Campo              | Tipo    | Descrição                                      |
+| :----------------- | :------ | :--------------------------------------------- |
+| `machine`          | object  | Dados da máquina                               |
+| `currentAllocation`| object? | Alocação ativa no momento (null se livre)      |
+| `shouldBlock`      | boolean | Se true, bloquear a máquina imediatamente      |
+| `serverTime`       | string  | Hora do servidor (para sincronização)          |
+
+---
+
+##### `POST /api/agent/validate-user`
+
+Valida credenciais de um usuário e verifica se tem alocação ativa.
+
+**Headers:**
+```
+Authorization: Bearer <MACHINE_TOKEN>
+```
+
+**Request Body:**
+```json
+{
+  "email": "aluno@ufpel.edu.br",
+  "password": "senha123"
+}
+```
+
+**Response - Autorizado (200):**
+```json
+{
+  "allowed": true,
+  "reason": "AUTHORIZED",
+  "message": "Acesso autorizado.",
+  "user": {
+    "id": 3,
+    "fullName": "Gabriel Santos",
+    "email": "aluno@ufpel.edu.br",
+    "role": "user"
+  },
+  "allocation": {
+    "id": 5,
+    "startTime": "2026-01-28T08:00:00.000Z",
+    "endTime": "2026-01-28T12:00:00.000Z",
+    "remainingMinutes": 90
+  }
+}
+```
+
+**Response - Sem Alocação (200):**
+```json
+{
+  "allowed": false,
+  "reason": "NO_ACTIVE_ALLOCATION",
+  "message": "Você não possui uma alocação ativa para esta máquina neste momento.",
+  "user": {
+    "id": 3,
+    "fullName": "Gabriel Santos",
+    "email": "aluno@ufpel.edu.br"
+  },
+  "nextAllocation": {
+    "id": 6,
+    "startTime": "2026-01-28T14:00:00.000Z",
+    "endTime": "2026-01-28T18:00:00.000Z"
+  }
+}
+```
+
+**Response - Credenciais Inválidas (401):**
+```json
+{
+  "allowed": false,
+  "reason": "INVALID_CREDENTIALS",
+  "message": "Email ou senha inválidos."
+}
+```
+
+**Códigos de Razão:**
+| Código                  | Descrição                                |
+| :---------------------- | :--------------------------------------- |
+| `AUTHORIZED`            | Usuário tem alocação ativa - permitir    |
+| `NO_ACTIVE_ALLOCATION`  | Sem alocação para este horário           |
+| `INVALID_CREDENTIALS`   | Email/senha incorretos                   |
+| `MACHINE_MAINTENANCE`   | Máquina em manutenção                    |
+
+---
+
+##### `GET /api/agent/should-block`
+
+Verifica se o agente deve bloquear a máquina (polling durante sessão).
+
+**Headers:**
+```
+Authorization: Bearer <MACHINE_TOKEN>
+```
+
+**Query Params:**
+| Param          | Tipo   | Obrigatório | Descrição                    |
+| :------------- | :----- | :---------- | :--------------------------- |
+| `loggedUserId` | number | ❌          | ID do usuário logado no SO   |
+
+**Response - Não Bloquear (200):**
+```json
+{
+  "shouldBlock": false,
+  "reason": "VALID_ALLOCATION",
+  "allocation": {
+    "id": 5,
+    "endTime": "2026-01-28T12:00:00.000Z",
+    "remainingMinutes": 45
+  }
+}
+```
+
+**Response - Bloquear (200):**
+```json
+{
+  "shouldBlock": true,
+  "reason": "ALLOCATION_EXPIRED_OR_REVOKED",
+  "message": "Alocação expirou ou foi revogada."
+}
+```
+
+**Códigos de Razão:**
+| Código                       | Descrição                                |
+| :--------------------------- | :--------------------------------------- |
+| `VALID_ALLOCATION`           | Alocação válida - não bloquear           |
+| `ALLOCATION_EXPIRED_OR_REVOKED` | Alocação expirou/cancelada - bloquear |
+| `MACHINE_MAINTENANCE`        | Admin colocou em manutenção - bloquear   |
+
+---
+
+##### `GET /api/agent/allocations`
+
+Lista alocações ativas e futuras da máquina.
+
+**Headers:**
+```
+Authorization: Bearer <MACHINE_TOKEN>
+```
+
+**Response (200):**
+```json
+{
+  "machineId": 1,
+  "machineName": "PC-LAB-01",
+  "allocations": [
+    {
+      "id": 5,
+      "userId": 3,
+      "userEmail": "aluno@ufpel.edu.br",
+      "userName": "Gabriel Santos",
+      "startTime": "2026-01-28T08:00:00.000Z",
+      "endTime": "2026-01-28T12:00:00.000Z",
+      "status": "approved",
+      "isCurrent": true
+    },
+    {
+      "id": 6,
+      "userId": 4,
+      "userEmail": "outro@ufpel.edu.br",
+      "userName": "Maria Silva",
+      "startTime": "2026-01-28T14:00:00.000Z",
+      "endTime": "2026-01-28T18:00:00.000Z",
+      "status": "approved",
+      "isCurrent": false
+    }
+  ]
+}
+```
+
+---
+
+##### `GET /api/agent/current-session`
+
+Retorna quem deveria estar usando a máquina agora.
+
+**Headers:**
+```
+Authorization: Bearer <MACHINE_TOKEN>
+```
+
+**Response - Com Sessão (200):**
+```json
+{
+  "hasActiveSession": true,
+  "session": {
+    "allocationId": 5,
+    "user": {
+      "id": 3,
+      "email": "aluno@ufpel.edu.br",
+      "fullName": "Gabriel Santos"
+    },
+    "startTime": "2026-01-28T08:00:00.000Z",
+    "endTime": "2026-01-28T12:00:00.000Z",
+    "remainingMinutes": 45
+  },
+  "machineStatus": "occupied"
+}
+```
+
+**Response - Sem Sessão (200):**
+```json
+{
+  "hasActiveSession": false,
+  "session": null,
+  "machineStatus": "available"
+}
+```
+
+---
+
+##### `POST /api/agent/report-login`
+
+Reporta que um usuário logou no SO da máquina.
+
+**Headers:**
+```
+Authorization: Bearer <MACHINE_TOKEN>
+```
+
+**Request Body:**
+```json
+{
+  "username": "gabriel.santos"
+}
+```
+
+**Response (200):**
+```json
+{
+  "registered": true,
+  "message": "Login de 'gabriel.santos' registrado."
+}
+```
+
+---
+
+##### `POST /api/agent/report-logout`
+
+Reporta que o usuário deslogou do SO da máquina.
+
+**Headers:**
+```
+Authorization: Bearer <MACHINE_TOKEN>
+```
+
+**Response (200):**
+```json
+{
+  "registered": true,
+  "message": "Logout de 'gabriel.santos' registrado."
+}
+```
+
+---
+
+##### `PUT /api/agent/sync-specs`
+
+Sincroniza especificações de hardware detectadas automaticamente.
+
+**Headers:**
+```
+Authorization: Bearer <MACHINE_TOKEN>
+```
+
+**Request Body:**
+```json
+{
+  "cpuModel": "Intel Core i7-12700K",
+  "gpuModel": "NVIDIA GeForce RTX 3060",
+  "totalRamGb": 16,
+  "totalDiskGb": 512,
+  "ipAddress": "192.168.1.100",
+  "macAddress": "AA:BB:CC:DD:EE:FF"
+}
+```
+
+| Campo        | Tipo   | Obrigatório | Descrição                               |
+| :----------- | :----- | :---------- | :-------------------------------------- |
+| `cpuModel`   | string | ❌          | Modelo do processador                   |
+| `gpuModel`   | string | ❌          | Modelo da GPU                           |
+| `totalRamGb` | number | ❌          | RAM total em GB                         |
+| `totalDiskGb`| number | ❌          | Disco total em GB                       |
+| `ipAddress`  | string | ❌          | Endereço IP atual                       |
+| `macAddress` | string | ❌          | MAC Address (formato: `AA:BB:CC:DD:EE:FF`) |
+
+**Response (200):**
+```json
+{
+  "synced": true,
+  "machine": {
+    "id": 1,
+    "name": "PC-LAB-01",
+    "cpuModel": "Intel Core i7-12700K",
+    "gpuModel": "NVIDIA GeForce RTX 3060",
+    "totalRamGb": 16,
+    "totalDiskGb": 512,
+    "ipAddress": "192.168.1.100",
+    "macAddress": "AA:BB:CC:DD:EE:FF"
   }
 }
 ```
@@ -899,16 +1317,14 @@ Authorization: Bearer <MACHINE_TOKEN>
 
 ##### `POST /api/agent/telemetry`
 
-Enviar pacote de métricas (CPU, RAM, Temp).
+Envia pacote de métricas de hardware.
 
 **Headers:**
-
 ```
 Authorization: Bearer <MACHINE_TOKEN>
 ```
 
 **Request Body:**
-
 ```json
 {
   "cpuUsage": 250,
@@ -920,7 +1336,7 @@ Authorization: Bearer <MACHINE_TOKEN>
   "downloadUsage": 50.5,
   "uploadUsage": 10.2,
   "moboTemperature": 450,
-  "loggedUserName": "aluno.silva"
+  "loggedUserName": "gabriel.santos"
 }
 ```
 
@@ -938,6 +1354,65 @@ Authorization: Bearer <MACHINE_TOKEN>
 | `loggedUserName`  | string | ❌          | Nome do usuário logado no SO             |
 
 **Response (204):** No Content
+
+---
+
+### 3. Configuração do Agente
+
+#### Arquivo de Configuração
+
+O agente deve ler o token de um arquivo de configuração local:
+
+**Linux:** `/etc/lab-agent/config.yaml`
+**Windows:** `C:\ProgramData\LabAgent\config.yaml`
+
+```yaml
+# Configuração do Lab Agent
+api_url: "https://api.lab.ufpel.edu.br"
+machine_token: "38429811d7f5e8841b961733e2f21821..."
+
+# Intervalos de polling (em segundos)
+polling:
+  heartbeat_interval: 30
+  telemetry_interval: 10
+  block_check_interval: 60
+
+# Comportamento
+behavior:
+  block_on_no_allocation: true  # Bloquear se não houver alocação?
+  warn_before_expire_minutes: 15  # Avisar X minutos antes de expirar
+  force_logout_on_expire: true  # Forçar logout quando alocação expirar?
+```
+
+#### Processo de Setup
+
+1. **Admin cria máquina** via `POST /api/v1/machines` ou interface web
+2. **Admin copia o token** retornado na criação (ou via `GET /api/v1/machines/:id`)
+3. **Admin instala o agente** na máquina física
+4. **Admin configura o token** no arquivo de config do agente
+5. **Agente inicia** e faz `PUT /sync-specs` + `POST /heartbeat`
+6. **Máquina fica online** e pronta para uso
+
+#### Rotação de Token (Segurança)
+
+Se o token for comprometido:
+
+```http
+POST /api/v1/machines/1/regenerate-token
+Authorization: Bearer <ADMIN_USER_TOKEN>
+```
+
+Resposta:
+```json
+{
+  "message": "Token regenerado com sucesso. Configure o agente com o novo token.",
+  "machineId": 1,
+  "token": "novo_token_aqui...",
+  "tokenRotatedAt": "2026-01-28T12:00:00.000Z"
+}
+```
+
+O admin deve então atualizar o config do agente na máquina física.
 
 ---
 

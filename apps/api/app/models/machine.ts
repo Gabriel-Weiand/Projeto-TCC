@@ -39,6 +39,16 @@ export default class Machine extends BaseModel {
   @column()
   declare status: 'available' | 'occupied' | 'maintenance' | 'offline'
 
+  // Campos de Segurança/Auditoria do Agente
+  @column.dateTime()
+  declare lastSeenAt: DateTime | null
+
+  @column.dateTime()
+  declare tokenRotatedAt: DateTime | null
+
+  @column()
+  declare loggedUser: string | null
+
   @column.dateTime({ autoCreate: true })
   declare createdAt: DateTime
 
@@ -58,5 +68,14 @@ export default class Machine extends BaseModel {
     if (!machine.token) {
       machine.token = randomBytes(64).toString('hex')
     }
+  }
+
+  /**
+   * Regenera o token da máquina (para rotação de segurança)
+   */
+  regenerateToken(): string {
+    this.token = randomBytes(64).toString('hex')
+    this.tokenRotatedAt = DateTime.now()
+    return this.token
   }
 }

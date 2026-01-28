@@ -26,6 +26,11 @@ export default class extends BaseSchema {
       // Status da máquina
       table.enum('status', ['available', 'occupied', 'maintenance', 'offline']).defaultTo('offline')
 
+      // Campos de Segurança/Auditoria do Agente
+      table.timestamp('last_seen_at').nullable() // Último heartbeat recebido
+      table.timestamp('token_rotated_at').nullable() // Última rotação do token
+      table.string('logged_user', 100).nullable() // Usuário logado no SO (reportado pelo agente)
+
       table.timestamp('created_at')
       table.timestamp('updated_at')
     })

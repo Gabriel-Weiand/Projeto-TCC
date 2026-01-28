@@ -71,6 +71,9 @@ router
             router.put('/:id', [MachinesController, 'update']).as('machines.update')
             router.delete('/:id', [MachinesController, 'destroy']).as('machines.destroy')
             router.get('/:id/telemetry', [MachinesController, 'telemetry']).as('machines.telemetry')
+            router
+              .post('/:id/regenerate-token', [MachinesController, 'regenerateToken'])
+              .as('machines.regenerateToken')
           })
           .prefix('machines')
           .where('id', router.matchers.number())
@@ -135,12 +138,28 @@ router
 
 /**
  * API Agent - Machine Agent Routes
+ * Todas as rotas requerem autenticação via token da máquina.
  */
 router
   .group(() => {
-    router.post('validate-access', [AgentController, 'validateAccess']).as('agent.validate')
+    // --- Heartbeat & Status ---
+    router.post('heartbeat', [AgentController, 'heartbeat']).as('agent.heartbeat')
+    router.get('should-block', [AgentController, 'shouldBlock']).as('agent.shouldBlock')
 
-    router.post('telemetry', [AgentController, 'report']).as('agent.telemetry')
+    // --- Validação de Usuário ---
+    router.post('validate-user', [AgentController, 'validateUser']).as('agent.validateUser')
+
+    // --- Alocações ---
+    router.get('allocations', [AgentController, 'allocations']).as('agent.allocations')
+    router.get('current-session', [AgentController, 'currentSession']).as('agent.currentSession')
+
+    // --- Reports de Login/Logout no SO ---
+    router.post('report-login', [AgentController, 'reportLogin']).as('agent.reportLogin')
+    router.post('report-logout', [AgentController, 'reportLogout']).as('agent.reportLogout')
+
+    // --- Sync & Telemetria ---
+    router.put('sync-specs', [AgentController, 'syncSpecs']).as('agent.syncSpecs')
+    router.post('telemetry', [AgentController, 'telemetry']).as('agent.telemetry')
   })
   .prefix('api/agent')
   .use(middleware.machineAuth())
