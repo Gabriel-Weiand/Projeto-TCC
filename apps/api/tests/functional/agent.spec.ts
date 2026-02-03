@@ -129,7 +129,7 @@ test.group('Agent API', (group) => {
 
   test('validate-user deve negar usuário sem alocação ativa', async ({ client }) => {
     // Arrange
-    const user = await User.create({
+    await User.create({
       fullName: 'Teste User',
       email: 'teste@teste.com',
       password: 'senha123',
@@ -192,7 +192,7 @@ test.group('Agent API', (group) => {
 
   test('validate-user deve negar acesso em máquina em manutenção', async ({ client }) => {
     // Arrange
-    const user = await User.create({
+    await User.create({
       fullName: 'Teste User',
       email: 'teste@teste.com',
       password: 'senha123',
@@ -224,15 +224,8 @@ test.group('Agent API', (group) => {
     })
   })
 
-  test('allocations deve listar alocações da máquina', async ({ client, assert }) => {
+  test('day-schedule deve retornar formato correto', async ({ client, assert }) => {
     // Arrange
-    const user = await User.create({
-      fullName: 'Teste User',
-      email: 'teste@teste.com',
-      password: 'senha123',
-      role: 'user',
-    })
-
     const machine = await Machine.create({
       name: 'PC-AGENT-06',
       cpuModel: 'Intel i5',
@@ -241,107 +234,46 @@ test.group('Agent API', (group) => {
       status: 'available',
     })
 
-    // Cria alocações futuras
-    await Allocation.createMany([
-      {
-        userId: user.id,
-        machineId: machine.id,
-        startTime: DateTime.now().plus({ hours: 1 }),
-        endTime: DateTime.now().plus({ hours: 2 }),
-        status: 'approved',
-      },
-      {
-        userId: user.id,
-        machineId: machine.id,
-        startTime: DateTime.now().plus({ hours: 3 }),
-        endTime: DateTime.now().plus({ hours: 4 }),
-        status: 'approved',
-      },
-    ])
-
     // Act
     const response = await client
-      .get('/api/agent/allocations')
+      .get('/api/agent/day-schedule')
       .header('Authorization', `Bearer ${machine.token}`)
 
-    // Assert
+    // Assert - verifica formato da resposta
     response.assertStatus(200)
-    assert.equal(response.body().allocations.length, 2)
-    assert.equal(response.body().machineId, machine.id)
+    assert.property(response.body(), 'machineId')
+    assert.property(response.body(), 'machineName')
+    assert.property(response.body(), 'date')
+    assert.property(response.body(), 'slots')
+    assert.isArray(response.body().slots)
   })
 
-  test('current-session deve retornar sessão ativa', async ({ client }) => {
+  test('day-schedule deve aceitar parâmetro de data', async ({ client, assert }) => {
     // Arrange
-    const user = await User.create({
-      fullName: 'Teste User',
-      email: 'teste@teste.com',
-      password: 'senha123',
-      role: 'user',
-    })
-
     const machine = await Machine.create({
-      name: 'PC-AGENT-07',
+      name: 'PC-AGENT-06B',
       cpuModel: 'Intel i5',
       totalRamGb: 8,
       totalDiskGb: 256,
       status: 'available',
     })
 
-    // Cria alocação ativa
-    const allocation = await Allocation.create({
-      userId: user.id,
-      machineId: machine.id,
-      startTime: DateTime.now().minus({ hours: 1 }),
-      endTime: DateTime.now().plus({ hours: 1 }),
-      status: 'approved',
-    })
+    const tomorrow = DateTime.now().plus({ days: 1 }).toISODate()
 
     // Act
     const response = await client
-      .get('/api/agent/current-session')
+      .get(`/api/agent/day-schedule?date=${tomorrow}`)
       .header('Authorization', `Bearer ${machine.token}`)
 
     // Assert
     response.assertStatus(200)
-    response.assertBodyContains({
-      hasActiveSession: true,
-      session: {
-        allocationId: allocation.id,
-        user: {
-          id: user.id,
-          email: 'teste@teste.com',
-        },
-      },
-    })
+    assert.equal(response.body().date, tomorrow)
   })
 
-  test('current-session deve retornar null quando não há sessão', async ({ client }) => {
+  test('heartbeat deve incluir shouldBlock true para máquina em manutenção', async ({ client }) => {
     // Arrange
     const machine = await Machine.create({
-      name: 'PC-AGENT-08',
-      cpuModel: 'Intel i5',
-      totalRamGb: 8,
-      totalDiskGb: 256,
-      status: 'available',
-    })
-
-    // Act
-    const response = await client
-      .get('/api/agent/current-session')
-      .header('Authorization', `Bearer ${machine.token}`)
-
-    // Assert
-    response.assertStatus(200)
-    response.assertBodyContains({
-      hasActiveSession: false,
-      session: null,
-    })
-  })
-
-  test('should-block deve retornar true para máquina em manutenção', async ({ client }) => {
-    // Arrange
-    const machine = await Machine.create({
-      name: 'PC-MANUTENCAO',
+      name: 'PC-MANUTENCAO-2',
       cpuModel: 'Intel i5',
       totalRamGb: 8,
       totalDiskGb: 256,
@@ -350,18 +282,20 @@ test.group('Agent API', (group) => {
 
     // Act
     const response = await client
-      .get('/api/agent/should-block')
+      .post('/api/agent/heartbeat')
       .header('Authorization', `Bearer ${machine.token}`)
 
     // Assert
     response.assertStatus(200)
     response.assertBodyContains({
       shouldBlock: true,
-      reason: 'MACHINE_MAINTENANCE',
+      blockReason: 'MACHINE_MAINTENANCE',
     })
   })
 
-  test('should-block deve retornar true quando alocação expirou', async ({ client }) => {
+  test('heartbeat deve retornar shouldBlock true quando usuário não tem alocação', async ({
+    client,
+  }) => {
     // Arrange
     const user = await User.create({
       fullName: 'Teste User',
@@ -380,16 +314,152 @@ test.group('Agent API', (group) => {
 
     // Não cria alocação ativa para o usuário
 
-    // Act
+    // Act - Usa user.id para verificar que o usuário não tem alocação
     const response = await client
-      .get(`/api/agent/should-block?loggedUserId=${user.id}`)
+      .post(`/api/agent/heartbeat?loggedUserId=${user.id}`)
       .header('Authorization', `Bearer ${machine.token}`)
 
     // Assert
     response.assertStatus(200)
     response.assertBodyContains({
       shouldBlock: true,
-      reason: 'ALLOCATION_EXPIRED_OR_REVOKED',
+      blockReason: 'NO_VALID_ALLOCATION',
+    })
+  })
+
+  test('heartbeat deve incluir info de quickAllocate', async ({ client, assert }) => {
+    // Arrange
+    const machine = await Machine.create({
+      name: 'PC-QUICK-TEST',
+      cpuModel: 'Intel i5',
+      totalRamGb: 8,
+      totalDiskGb: 256,
+      status: 'available',
+    })
+
+    // Act
+    const response = await client
+      .post('/api/agent/heartbeat')
+      .header('Authorization', `Bearer ${machine.token}`)
+
+    // Assert
+    response.assertStatus(200)
+    assert.property(response.body(), 'quickAllocate')
+    assert.equal(response.body().quickAllocate.allowed, true)
+    assert.equal(response.body().quickAllocate.maxDurationMinutes, 60)
+  })
+
+  test('quick-allocate deve criar alocação instantânea', async ({ client, assert }) => {
+    // Arrange
+    const user = await User.create({
+      fullName: 'Teste User',
+      email: 'teste@teste.com',
+      password: 'senha123',
+      role: 'user',
+    })
+
+    const machine = await Machine.create({
+      name: 'PC-QUICK-01',
+      cpuModel: 'Intel i5',
+      totalRamGb: 8,
+      totalDiskGb: 256,
+      status: 'available',
+    })
+
+    // Act
+    const response = await client
+      .post('/api/agent/quick-allocate')
+      .header('Authorization', `Bearer ${machine.token}`)
+      .json({
+        email: 'teste@teste.com',
+        password: 'senha123',
+        durationMinutes: 30,
+      })
+
+    // Assert
+    response.assertStatus(201)
+    response.assertBodyContains({
+      success: true,
+      reason: 'ALLOCATION_CREATED',
+    })
+    assert.equal(response.body().allocation.durationMinutes, 30)
+    assert.equal(response.body().user.id, user.id)
+
+    // Verifica que a alocação foi criada no banco
+    const allocation = await Allocation.find(response.body().allocation.id)
+    assert.isNotNull(allocation)
+    assert.equal(allocation!.userId, user.id)
+    assert.equal(allocation!.machineId, machine.id)
+    assert.equal(allocation!.status, 'approved')
+  })
+
+  test('quick-allocate deve rejeitar se próxima alocação muito próxima', async ({ client }) => {
+    // Arrange
+    const user = await User.create({
+      fullName: 'Teste User',
+      email: 'teste@teste.com',
+      password: 'senha123',
+      role: 'user',
+    })
+
+    const machine = await Machine.create({
+      name: 'PC-QUICK-02',
+      cpuModel: 'Intel i5',
+      totalRamGb: 8,
+      totalDiskGb: 256,
+      status: 'available',
+    })
+
+    // Cria alocação que começa em 10 minutos (menos que o mínimo de 20)
+    await Allocation.create({
+      userId: user.id,
+      machineId: machine.id,
+      startTime: DateTime.now().plus({ minutes: 10 }),
+      endTime: DateTime.now().plus({ minutes: 70 }),
+      status: 'approved',
+    })
+
+    // Act
+    const response = await client
+      .post('/api/agent/quick-allocate')
+      .header('Authorization', `Bearer ${machine.token}`)
+      .json({
+        email: 'teste@teste.com',
+        password: 'senha123',
+      })
+
+    // Assert
+    response.assertStatus(409)
+    response.assertBodyContains({
+      success: false,
+      reason: 'INSUFFICIENT_TIME',
+    })
+  })
+
+  test('quick-allocate deve rejeitar credenciais inválidas', async ({ client }) => {
+    // Arrange
+    const machine = await Machine.create({
+      name: 'PC-QUICK-03',
+      cpuModel: 'Intel i5',
+      totalRamGb: 8,
+      totalDiskGb: 256,
+      status: 'available',
+    })
+
+    // Act
+    const response = await client
+      .post('/api/agent/quick-allocate')
+      .header('Authorization', `Bearer ${machine.token}`)
+      .json({
+        email: 'naoexiste@teste.com',
+        password: 'senhaerrada',
+      })
+
+    // Assert
+    response.assertStatus(401)
+    response.assertBodyContains({
+      success: false,
+      reason: 'INVALID_CREDENTIALS',
     })
   })
 

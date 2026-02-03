@@ -38,3 +38,15 @@ export const syncSpecsValidator = vine.compile(
       .optional(),
   })
 )
+
+/**
+ * Validator para alocação rápida (quick-allocate).
+ * Permite criar uma alocação instantânea diretamente do agente.
+ */
+export const quickAllocateValidator = vine.compile(
+  vine.object({
+    email: vine.string().email().normalizeEmail(),
+    password: vine.string().minLength(1),
+    durationMinutes: vine.number().positive().max(60).optional(),
+  })
+)

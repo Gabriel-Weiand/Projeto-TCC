@@ -142,16 +142,17 @@ router
  */
 router
   .group(() => {
-    // --- Heartbeat & Status ---
+    // --- Heartbeat (inclui should-block e info de quick-allocate) ---
     router.post('heartbeat', [AgentController, 'heartbeat']).as('agent.heartbeat')
-    router.get('should-block', [AgentController, 'shouldBlock']).as('agent.shouldBlock')
 
     // --- Validação de Usuário ---
     router.post('validate-user', [AgentController, 'validateUser']).as('agent.validateUser')
 
-    // --- Alocações ---
-    router.get('allocations', [AgentController, 'allocations']).as('agent.allocations')
-    router.get('current-session', [AgentController, 'currentSession']).as('agent.currentSession')
+    // --- Agenda do dia (sem nomes dos usuários) ---
+    router.get('day-schedule', [AgentController, 'daySchedule']).as('agent.daySchedule')
+
+    // --- Alocação rápida (on-the-spot) ---
+    router.post('quick-allocate', [AgentController, 'quickAllocate']).as('agent.quickAllocate')
 
     // --- Reports de Login/Logout no SO ---
     router.post('report-login', [AgentController, 'reportLogin']).as('agent.reportLogin')

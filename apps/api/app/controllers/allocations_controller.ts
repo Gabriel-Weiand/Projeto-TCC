@@ -80,12 +80,17 @@ export default class AllocationsController {
       .where('machineId', data.machineId)
       .whereIn('status', ['approved', 'pending'])
 
+    // Gap mínimo obrigatório entre alocações (5 minutos)
+    const GAP_MS = 5 * 60 * 1000
+
     // Verifica conflito de horário em JavaScript
-    // Duas alocações conflitam se: existente.start < novo.end E existente.end > novo.start
+    // Considera gap de 5 minutos entre alocações
     const conflict = existingAllocations.find((allocation) => {
       const existingStart = allocation.startTime.toMillis()
       const existingEnd = allocation.endTime.toMillis()
-      return existingStart < newEnd && existingEnd > newStart
+      // Conflito: nova alocação precisa começar 5min depois da anterior terminar
+      // e terminar 5min antes da próxima começar
+      return (newStart < existingEnd + GAP_MS) && (newEnd + GAP_MS > existingStart)
     })
 
     if (conflict) {
