@@ -1,6 +1,32 @@
 # Sistema Distribuído de Gestão de Laboratórios
 
-Este projeto é parte fundamental do Trabalho de Conclusão de Curso (TCC) na Universidade Federal de Pelotas (Ufpel). Ele tem como objetivo abranger uma solução completa para o gerenciamento de alocação, monitoramento e controle de acesso em máquinas de laboratórios universitários de pesquisa. O sistema tem como objetivo operar em uma arquitetura distribuída composta por uma API central, um dashboard e site para alocações web e agentes locais instalados nas máquinas.
+Este projeto é parte fundamental do Trabalho de Conclusão de Curso (TCC) na Universidade Federal de Pelotas (UFPel). Ele tem como objetivo abranger uma solução completa para o gerenciamento de alocação, monitoramento e controle de acesso em máquinas de laboratórios universitários de pesquisa. O sistema opera em uma arquitetura distribuída composta por uma API central, um dashboard/site web para alocações e agentes locais instalados nas máquinas.
+
+---
+
+## 📑 Sumário
+
+1. [Contexto e Solução](#-contexto-e-solução)
+2. [Arquitetura do Sistema](#-arquitetura-do-sistema)
+   - [Visão Geral](#visão-geral)
+   - [Diagrama de Componentes](#diagrama-de-componentes)
+   - [Diagrama de Entidade-Relacionamento](#diagrama-de-entidade-relacionamento)
+   - [Fluxo de Comunicação](#fluxo-de-comunicação)
+3. [Funcionalidades (MVP)](#-funcionalidades-mvp)
+4. [Tecnologias Utilizadas](#-tecnologias-utilizadas)
+5. [Segurança](#-segurança)
+   - [Criptografia de Senhas](#criptografia-de-senhas)
+   - [Autenticação de Usuários](#autenticação-de-usuários)
+   - [Autenticação de Máquinas](#autenticação-de-máquinas)
+6. [Regras de Negócio](#-regras-de-negócio)
+7. [API Endpoints](#-api-endpoints)
+8. [Agente de Máquina](#-agente-de-máquina)
+9. [Front-end (Web)](#-front-end-web)
+10. [Estrutura do Projeto](#-estrutura-do-projeto)
+11. [Como Rodar](#-como-rodar)
+12. [Trabalhos Futuros](#-trabalhos-futuros)
+
+---
 
 ## 🎯 Contexto e Solução
 
@@ -8,18 +34,184 @@ Atualmente, a gestão de recursos computacionais em alguns laboratórios de pesq
 
 A solução foi projetada sob a ótica de **Sistemas Distribuídos**, visando garantir a convergência entre:
 
-1.  **Estado Desejado:** O agendamento definido no sistema web.
-2.  **Estado Real:** O comportamento efetivo da máquina física no laboratório.
+1. **Estado Desejado:** O agendamento definido no sistema web.
+2. **Estado Real:** O comportamento efetivo da máquina física no laboratório.
+
+### Objetivos do Sistema
+
+- **Gerenciamento de Reservas**: Permitir que usuários reservem máquinas para períodos específicos
+- **Controle de Acesso**: Validar credenciais e bloquear máquinas não reservadas
+- **Monitoramento**: Coletar telemetria de uso (CPU, memória, disco)
+- **Otimização de Recursos**: Fornecer dados para análise de utilização dos laboratórios
+
+---
 
 ## 🏛 Arquitetura do Sistema
 
 O projeto adota uma estrutura de **Monorepo** organizada, onde a API Central orquestra as regras de negócio para dois clientes distintos. A arquitetura foca na separação de responsabilidades de autenticação:
 
-1.  **Backend (API Central):** Desenvolvido em **AdonisJS 6**, atua como a fonte da verdade. Gerencia duas frentes de autenticação:
-    - _Usuários:_ Autenticação via Sessão/Cookie (Stateful) ou JWT.
-    - _Agentes:_ Autenticação via Tokens Perpétuos (API Keys).
-2.  **Frontend (Web):** Interface para alunos solicitarem uso e administradores gerenciarem o parque.
-3.  **Agent (Máquinas Gerenciadas):** Software local (Daemon) que consulta a API para saber se deve permitir o uso ao hardware e reporta telemetria.
+1. **Backend (API Central):** Desenvolvido em **AdonisJS 6**, atua como a fonte da verdade. Gerencia duas frentes de autenticação:
+   - _Usuários:_ Autenticação via tokens (JWT-like) com hash SHA-256
+   - _Agentes:_ Autenticação via API Keys de 512 bits
+2. **Frontend (Web):** Interface para alunos solicitarem uso e administradores gerenciarem o parque.
+3. **Agent (Máquinas Gerenciadas):** Software local (Daemon) que consulta a API para saber se deve permitir o uso ao hardware e reporta telemetria.
+
+### Visão Geral
+
+```
+┌─────────────────────────────────────────────────────────────────────────┐
+│                         SISTEMA DE LABORATÓRIOS                          │
+├─────────────────────────────────────────────────────────────────────────┤
+│                                                                          │
+│   ┌──────────────┐     ┌──────────────┐     ┌──────────────────────┐   │
+│   │              │     │              │     │                      │   │
+│   │   FRONT-END  │────▶│     API      │◀────│   AGENTES DE         │   │
+│   │   (Web App)  │     │   (AdonisJS) │     │   MÁQUINA            │   │
+│   │              │     │              │     │                      │   │
+│   └──────────────┘     └──────┬───────┘     └──────────────────────┘   │
+│                               │                                         │
+│                               ▼                                         │
+│                        ┌──────────────┐                                 │
+│                        │   DATABASE   │                                 │
+│                        │   (SQLite)   │                                 │
+│                        └──────────────┘                                 │
+│                                                                          │
+└─────────────────────────────────────────────────────────────────────────┘
+```
+
+### Diagrama de Componentes
+
+```
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                              API (AdonisJS)                                  │
+├─────────────────────────────────────────────────────────────────────────────┤
+│                                                                              │
+│  ┌─────────────────┐  ┌─────────────────┐  ┌─────────────────────────────┐ │
+│  │   Controllers   │  │   Middleware    │  │        Services             │ │
+│  ├─────────────────┤  ├─────────────────┤  ├─────────────────────────────┤ │
+│  │ AgentController │  │ AuthMiddleware  │  │ MachineCache (TTL: 5min)   │ │
+│  │ AuthController  │  │ MachineAuth     │  │ TelemetryBuffer (batch)    │ │
+│  │ UsersController │  │ IsAdmin         │  └─────────────────────────────┘ │
+│  │ MachinesCtrl    │  │ ForceJSON       │                                  │
+│  │ AllocationsCtrl │  └─────────────────┘  ┌─────────────────────────────┐ │
+│  │ TelemetriesCtrl │                       │        Models               │ │
+│  └─────────────────┘  ┌─────────────────┐  ├─────────────────────────────┤ │
+│                       │   Validators    │  │ User, Machine, Allocation  │ │
+│                       ├─────────────────┤  │ Telemetry, AllocationMetric│ │
+│                       │ VineJS Schemas  │  │ AccessToken                │ │
+│                       └─────────────────┘  └─────────────────────────────┘ │
+│                                                                              │
+└─────────────────────────────────────────────────────────────────────────────┘
+```
+
+### Diagrama de Entidade-Relacionamento
+
+```
+┌──────────────────┐       ┌──────────────────┐       ┌──────────────────┐
+│      USERS       │       │   ACCESS_TOKENS  │       │    MACHINES      │
+├──────────────────┤       ├──────────────────┤       ├──────────────────┤
+│ id (PK)          │──────<│ tokenable_id(FK) │       │ id (PK)          │
+│ full_name        │       │ type             │       │ name             │
+│ email (UNIQUE)   │       │ name             │       │ api_key (UNIQUE) │
+│ password (HASH)  │       │ hash             │       │ cpu_model        │
+│ role (enum)      │       │ abilities        │       │ ram_gb           │
+│ created_at       │       │ created_at       │       │ disk_gb          │
+│ updated_at       │       │ updated_at       │       │ os               │
+└──────────────────┘       │ last_used_at     │       │ status (enum)    │
+         │                 │ expires_at       │       │ last_heartbeat   │
+         │                 └──────────────────┘       │ created_at       │
+         │                                            │ updated_at       │
+         │                                            └──────────────────┘
+         │                                                     │
+         │                 ┌──────────────────┐                │
+         │                 │   ALLOCATIONS    │                │
+         │                 ├──────────────────┤                │
+         └────────────────>│ user_id (FK)     │<───────────────┘
+                           │ machine_id (FK)  │
+                           │ starts_at        │
+                           │ ends_at          │
+                           │ actual_login     │
+                           │ actual_logout    │
+                           │ created_at       │
+                           │ updated_at       │
+                           └────────┬─────────┘
+                                    │
+         ┌──────────────────────────┴──────────────────────────┐
+         │                                                      │
+         ▼                                                      ▼
+┌──────────────────┐                               ┌──────────────────────┐
+│   TELEMETRIES    │                               │  ALLOCATION_METRICS  │
+├──────────────────┤                               ├──────────────────────┤
+│ id (PK)          │                               │ id (PK)              │
+│ machine_id (FK)  │                               │ allocation_id (FK)   │
+│ cpu_percent      │                               │ avg_cpu_percent      │
+│ ram_percent      │                               │ avg_ram_percent      │
+│ disk_percent     │                               │ avg_disk_percent     │
+│ created_at       │                               │ peak_cpu_percent     │
+│                  │                               │ peak_ram_percent     │
+└──────────────────┘                               │ samples_count        │
+                                                   │ created_at           │
+                                                   │ updated_at           │
+                                                   └──────────────────────┘
+```
+
+### Fluxo de Comunicação
+
+#### Fluxo do Agente (Heartbeat)
+
+```
+┌─────────┐                    ┌─────────┐                    ┌──────────┐
+│ AGENTE  │                    │   API   │                    │ DATABASE │
+└────┬────┘                    └────┬────┘                    └────┬─────┘
+     │                              │                              │
+     │  POST /api/agent/heartbeat   │                              │
+     │  {telemetry: {...}}          │                              │
+     │─────────────────────────────>│                              │
+     │                              │   Verificar API Key          │
+     │                              │   (MachineCache)             │
+     │                              │                              │
+     │                              │   Buscar alocação ativa      │
+     │                              │─────────────────────────────>│
+     │                              │<─────────────────────────────│
+     │                              │                              │
+     │                              │   Buffer telemetria          │
+     │                              │                              │
+     │  {                           │                              │
+     │    machineId,                │                              │
+     │    shouldBlock,              │                              │
+     │    canQuickAllocate,         │                              │
+     │    currentAllocation {...}   │                              │
+     │  }                           │                              │
+     │<─────────────────────────────│                              │
+     │                              │                              │
+```
+
+#### Fluxo de Login na Máquina
+
+```
+┌─────────┐                    ┌─────────┐                    ┌──────────┐
+│ AGENTE  │                    │   API   │                    │ DATABASE │
+└────┬────┘                    └────┬────┘                    └────┬─────┘
+     │                              │                              │
+     │  POST /api/agent/validate    │                              │
+     │  {email, password}           │                              │
+     │─────────────────────────────>│                              │
+     │                              │   Validar credenciais        │
+     │                              │   (hash comparison)          │
+     │                              │─────────────────────────────>│
+     │                              │<─────────────────────────────│
+     │                              │                              │
+     │  {valid: true/false,         │                              │
+     │   hasAllocation: bool,       │                              │
+     │   canQuickAllocate: bool}    │                              │
+     │<─────────────────────────────│                              │
+     │                              │                              │
+     │  [Se válido e tem alocação]  │                              │
+     │  POST /api/agent/report-login│                              │
+     │─────────────────────────────>│   Registrar actual_login     │
+     │                              │─────────────────────────────>│
+     │                              │                              │
+```
 
 ---
 
@@ -29,11 +221,13 @@ O projeto adota uma estrutura de **Monorepo** organizada, onde a API Central orq
 
 - **Autenticação Híbrida:** Login tradicional para usuários e "Handshake" seguro para os agentes instalados.
 - **Role-Based Access Control (RBAC):** Diferenciação estrita entre `Student` e `Admin`.
+- **Senhas Criptografadas:** Senhas armazenadas com hash seguro (scrypt), nunca em texto plano.
 
 ### 📅 Alocação de Recursos (Modelo Otimista)
 
 - **Aprovação Automática:** Visando agilidade no MVP, solicitações de alunos autenticados nascem com status `APPROVED`.
 - **Controle Reativo:** O Administrador monitora alocações ativas e pode alterá-las para `DENIED`. Isso aciona o bloqueio imediato na máquina física via Agente.
+- **Quick Allocate:** Alocação rápida de até 1 hora diretamente na máquina, se não houver conflitos.
 - **Privacidade:** Alunos veem a ocupação do laboratório (mapa de máquinas), mas os dados de _quem_ está usando são anonimizados para não-admins.
 
 ### 🖥️ Gestão de Ativos & Telemetria
@@ -41,6 +235,179 @@ O projeto adota uma estrutura de **Monorepo** organizada, onde a API Central orq
 - **Sincronização de Estado:** O Agente consulta periodicamente ("Heartbeat") a API para alinhar o estado local (Bloqueado/Liberado).
 - **Auditoria de Hardware:** Coleta de métricas (CPU/RAM) para identificar uso indevido ou máquinas ociosas.
 - **Soft Deletes:** Preservação de histórico para auditoria.
+
+---
+
+## 🛠 Tecnologias Utilizadas
+
+| Tecnologia     | Versão | Propósito                            |
+| -------------- | ------ | ------------------------------------ |
+| **Node.js**    | 20+    | Runtime JavaScript                   |
+| **AdonisJS**   | 6.x    | Framework web full-stack             |
+| **TypeScript** | 5.x    | Tipagem estática                     |
+| **Lucid ORM**  | -      | Mapeamento objeto-relacional         |
+| **VineJS**     | -      | Validação de dados                   |
+| **SQLite**     | 3.x    | Banco de dados (WAL Mode habilitado) |
+
+---
+
+## 🔐 Segurança
+
+### Criptografia de Senhas
+
+As senhas dos usuários **nunca são armazenadas em texto plano** no banco de dados. O sistema utiliza o algoritmo **scrypt** para hash de senhas, um dos mais seguros disponíveis atualmente.
+
+```
+┌─────────────────────────────────────────────────────────────────────────┐
+│                    ARMAZENAMENTO SEGURO DE SENHAS                        │
+├─────────────────────────────────────────────────────────────────────────┤
+│                                                                          │
+│  📥 CADASTRO/ATUALIZAÇÃO DE SENHA                                       │
+│  ┌────────────────────────────────────────────────────────────────────┐ │
+│  │                                                                    │ │
+│  │  Senha: "minhasenha123"                                            │ │
+│  │           │                                                        │ │
+│  │           ▼                                                        │ │
+│  │  ┌─────────────────┐                                               │ │
+│  │  │  Algoritmo      │  • scrypt (padrão AdonisJS)                   │ │
+│  │  │  de Hashing     │  • Resistente a ataques de GPU                │ │
+│  │  │  (scrypt)       │  • Salt aleatório por senha                   │ │
+│  │  └────────┬────────┘                                               │ │
+│  │           │                                                        │ │
+│  │           ▼                                                        │ │
+│  │  Hash: "$scrypt$n=16384,r=8,p=1$salt$hash..."                      │ │
+│  │  (armazenado no banco de dados)                                    │ │
+│  │                                                                    │ │
+│  └────────────────────────────────────────────────────────────────────┘ │
+│                                                                          │
+│  📤 VERIFICAÇÃO DE LOGIN                                                │
+│  ┌────────────────────────────────────────────────────────────────────┐ │
+│  │                                                                    │ │
+│  │  1. Usuário envia: email + senha em texto plano (via HTTPS)        │ │
+│  │  2. API busca o hash armazenado pelo email                         │ │
+│  │  3. Aplica o mesmo algoritmo na senha enviada                      │ │
+│  │  4. Compara os hashes (timing-safe comparison)                     │ │
+│  │  5. Se igual → Login autorizado                                    │ │
+│  │     Se diferente → Credenciais inválidas                           │ │
+│  │                                                                    │ │
+│  └────────────────────────────────────────────────────────────────────┘ │
+│                                                                          │
+│  ⚠️  IMPORTANTE:                                                        │
+│  • Mesmo administradores não conseguem ver a senha original             │
+│  • Não existe "recuperar senha", apenas "redefinir"                     │
+│  • Cada senha tem seu próprio salt único                                │
+│  • O hash inclui os parâmetros do algoritmo para futuras migrações      │
+│                                                                          │
+└─────────────────────────────────────────────────────────────────────────┘
+```
+
+**Características do scrypt:**
+
+- **Resistente a ataques de força bruta**: Requer muita memória para computar
+- **Salt único por senha**: Mesmo senhas iguais geram hashes diferentes
+- **Timing-safe comparison**: Previne ataques de timing
+- **Parâmetros ajustáveis**: Pode aumentar a dificuldade conforme hardware evolui
+
+### Autenticação de Usuários
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│                    FLUXO DE AUTENTICAÇÃO                     │
+├─────────────────────────────────────────────────────────────┤
+│                                                              │
+│  1. Login: POST /api/auth/login                             │
+│     Body: { email, password }                               │
+│     → Senha verificada contra hash no banco                 │
+│     Response: { token, user }                               │
+│                                                              │
+│  2. Requisições autenticadas:                               │
+│     Header: Authorization: Bearer <token>                   │
+│     → Token validado (hash SHA-256 comparado)               │
+│                                                              │
+│  3. Logout: DELETE /api/auth/logout                         │
+│     → Token invalidado (removido do banco)                  │
+│                                                              │
+└─────────────────────────────────────────────────────────────┘
+```
+
+### Autenticação de Máquinas
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│                   AUTENTICAÇÃO DE MÁQUINAS                   │
+├─────────────────────────────────────────────────────────────┤
+│                                                              │
+│  • Cada máquina possui uma API Key única de 512 bits        │
+│  • Header: X-Machine-Api-Key: <api_key>                     │
+│  • Cache de 5 minutos para reduzir consultas ao banco       │
+│  • Usado apenas nas rotas /api/agent/*                      │
+│                                                              │
+│  Geração da API Key:                                        │
+│  ┌────────────────────────────────────────────────────────┐ │
+│  │ const apiKey = string.generateRandom(64) // 512 bits  │ │
+│  │ // Exemplo: "d08248929bf8bcae92a2e204219c7941..."      │ │
+│  └────────────────────────────────────────────────────────┘ │
+│                                                              │
+│  Rotação de Token:                                          │
+│  • Admin pode regenerar token se comprometido               │
+│  • POST /api/v1/machines/:id/regenerate-token               │
+│  • Agente deve ser reconfigurado com novo token             │
+│                                                              │
+└─────────────────────────────────────────────────────────────┘
+```
+
+---
+
+## 📋 Regras de Negócio
+
+### Regra de Gap entre Alocações
+
+```
+┌─────────────────────────────────────────────────────────────────────────┐
+│                      REGRA DE 5 MINUTOS DE GAP                           │
+├─────────────────────────────────────────────────────────────────────────┤
+│                                                                          │
+│  Objetivo: Garantir tempo para troca de usuários entre sessões          │
+│                                                                          │
+│  Implementação:                                                          │
+│  • Ao criar alocação, verificar conflito com gap de 5 minutos           │
+│  • Alocação A (10:00-11:00) bloqueia criação de B antes de 11:05        │
+│                                                                          │
+│  Linha do tempo:                                                         │
+│  ┌──────────────────────────────────────────────────────────────────┐   │
+│  │ 10:00      11:00  11:05      12:00                               │   │
+│  │   │──────────│      │──────────│                                 │   │
+│  │   │ Alocação │ GAP  │ Alocação │                                 │   │
+│  │   │    A     │ 5min │    B     │                                 │   │
+│  └──────────────────────────────────────────────────────────────────┘   │
+│                                                                          │
+└─────────────────────────────────────────────────────────────────────────┘
+```
+
+### Regra de Quick Allocate
+
+```
+┌─────────────────────────────────────────────────────────────────────────┐
+│                      REGRA DE QUICK ALLOCATE                             │
+├─────────────────────────────────────────────────────────────────────────┤
+│                                                                          │
+│  Condições para permitir alocação rápida:                               │
+│  1. Máquina não deve ter alocação ativa no momento                      │
+│  2. Próxima alocação agendada deve estar a pelo menos 20 minutos        │
+│  3. Duração máxima: 60 minutos                                          │
+│  4. Duração padrão: mínimo entre 60 min e tempo até próxima alocação    │
+│                                                                          │
+│  Cenário permitido:                                                      │
+│  ┌──────────────────────────────────────────────────────────────────┐   │
+│  │ AGORA          +20min              +60min                        │   │
+│  │   │              │                    │                          │   │
+│  │   ├──────────────┼────────────────────┤                          │   │
+│  │   │   LIVRE      │    Quick Allocate  │  Próxima alocação       │   │
+│  │   │   (OK!)      │    (até 1h)        │  agendada               │   │
+│  └──────────────────────────────────────────────────────────────────┘   │
+│                                                                          │
+└─────────────────────────────────────────────────────────────────────────┘
+```
 
 ---
 
@@ -967,17 +1334,17 @@ _Destinadas ao software embarcado nas máquinas. Requer Header `Authorization: B
 
 #### Intervalos Recomendados de Polling
 
-| Rota              | Intervalo | Descrição                            |
-| :---------------- | :-------- | :----------------------------------- |
-| `/heartbeat`      | 30s       | Manter online + status de bloqueio   |
-| `/telemetry`      | 10s       | Métricas de hardware                 |
-| `/should-block`   | 60s       | Verificar se alocação foi revogada   |
-| `/validate-user`  | Sob demanda | Quando usuário tenta logar         |
-| `/report-login`   | Sob demanda | Após login bem-sucedido            |
-| `/report-logout`  | Sob demanda | Quando usuário sai                 |
-| `/allocations`    | Sob demanda | Consultar agenda da máquina        |
-| `/current-session`| Sob demanda | Quem deveria estar usando          |
-| `/sync-specs`     | No boot   | Atualizar specs detectadas           |
+| Rota               | Intervalo   | Descrição                          |
+| :----------------- | :---------- | :--------------------------------- |
+| `/heartbeat`       | 30s         | Manter online + status de bloqueio |
+| `/telemetry`       | 10s         | Métricas de hardware               |
+| `/should-block`    | 60s         | Verificar se alocação foi revogada |
+| `/validate-user`   | Sob demanda | Quando usuário tenta logar         |
+| `/report-login`    | Sob demanda | Após login bem-sucedido            |
+| `/report-logout`   | Sob demanda | Quando usuário sai                 |
+| `/allocations`     | Sob demanda | Consultar agenda da máquina        |
+| `/current-session` | Sob demanda | Quem deveria estar usando          |
+| `/sync-specs`      | No boot     | Atualizar specs detectadas         |
 
 ---
 
@@ -986,11 +1353,13 @@ _Destinadas ao software embarcado nas máquinas. Requer Header `Authorization: B
 Heartbeat - Mantém a máquina online e retorna status de controle.
 
 **Headers:**
+
 ```
 Authorization: Bearer <MACHINE_TOKEN>
 ```
 
 **Response (200):**
+
 ```json
 {
   "machine": {
@@ -1011,12 +1380,12 @@ Authorization: Bearer <MACHINE_TOKEN>
 }
 ```
 
-| Campo              | Tipo    | Descrição                                      |
-| :----------------- | :------ | :--------------------------------------------- |
-| `machine`          | object  | Dados da máquina                               |
-| `currentAllocation`| object? | Alocação ativa no momento (null se livre)      |
-| `shouldBlock`      | boolean | Se true, bloquear a máquina imediatamente      |
-| `serverTime`       | string  | Hora do servidor (para sincronização)          |
+| Campo               | Tipo    | Descrição                                 |
+| :------------------ | :------ | :---------------------------------------- |
+| `machine`           | object  | Dados da máquina                          |
+| `currentAllocation` | object? | Alocação ativa no momento (null se livre) |
+| `shouldBlock`       | boolean | Se true, bloquear a máquina imediatamente |
+| `serverTime`        | string  | Hora do servidor (para sincronização)     |
 
 ---
 
@@ -1025,11 +1394,13 @@ Authorization: Bearer <MACHINE_TOKEN>
 Valida credenciais de um usuário e verifica se tem alocação ativa.
 
 **Headers:**
+
 ```
 Authorization: Bearer <MACHINE_TOKEN>
 ```
 
 **Request Body:**
+
 ```json
 {
   "email": "aluno@ufpel.edu.br",
@@ -1038,6 +1409,7 @@ Authorization: Bearer <MACHINE_TOKEN>
 ```
 
 **Response - Autorizado (200):**
+
 ```json
 {
   "allowed": true,
@@ -1059,6 +1431,7 @@ Authorization: Bearer <MACHINE_TOKEN>
 ```
 
 **Response - Sem Alocação (200):**
+
 ```json
 {
   "allowed": false,
@@ -1078,6 +1451,7 @@ Authorization: Bearer <MACHINE_TOKEN>
 ```
 
 **Response - Credenciais Inválidas (401):**
+
 ```json
 {
   "allowed": false,
@@ -1087,12 +1461,12 @@ Authorization: Bearer <MACHINE_TOKEN>
 ```
 
 **Códigos de Razão:**
-| Código                  | Descrição                                |
+| Código | Descrição |
 | :---------------------- | :--------------------------------------- |
-| `AUTHORIZED`            | Usuário tem alocação ativa - permitir    |
-| `NO_ACTIVE_ALLOCATION`  | Sem alocação para este horário           |
-| `INVALID_CREDENTIALS`   | Email/senha incorretos                   |
-| `MACHINE_MAINTENANCE`   | Máquina em manutenção                    |
+| `AUTHORIZED` | Usuário tem alocação ativa - permitir |
+| `NO_ACTIVE_ALLOCATION` | Sem alocação para este horário |
+| `INVALID_CREDENTIALS` | Email/senha incorretos |
+| `MACHINE_MAINTENANCE` | Máquina em manutenção |
 
 ---
 
@@ -1101,16 +1475,18 @@ Authorization: Bearer <MACHINE_TOKEN>
 Verifica se o agente deve bloquear a máquina (polling durante sessão).
 
 **Headers:**
+
 ```
 Authorization: Bearer <MACHINE_TOKEN>
 ```
 
 **Query Params:**
-| Param          | Tipo   | Obrigatório | Descrição                    |
+| Param | Tipo | Obrigatório | Descrição |
 | :------------- | :----- | :---------- | :--------------------------- |
-| `loggedUserId` | number | ❌          | ID do usuário logado no SO   |
+| `loggedUserId` | number | ❌ | ID do usuário logado no SO |
 
 **Response - Não Bloquear (200):**
+
 ```json
 {
   "shouldBlock": false,
@@ -1124,6 +1500,7 @@ Authorization: Bearer <MACHINE_TOKEN>
 ```
 
 **Response - Bloquear (200):**
+
 ```json
 {
   "shouldBlock": true,
@@ -1133,11 +1510,11 @@ Authorization: Bearer <MACHINE_TOKEN>
 ```
 
 **Códigos de Razão:**
-| Código                       | Descrição                                |
+| Código | Descrição |
 | :--------------------------- | :--------------------------------------- |
-| `VALID_ALLOCATION`           | Alocação válida - não bloquear           |
+| `VALID_ALLOCATION` | Alocação válida - não bloquear |
 | `ALLOCATION_EXPIRED_OR_REVOKED` | Alocação expirou/cancelada - bloquear |
-| `MACHINE_MAINTENANCE`        | Admin colocou em manutenção - bloquear   |
+| `MACHINE_MAINTENANCE` | Admin colocou em manutenção - bloquear |
 
 ---
 
@@ -1146,11 +1523,13 @@ Authorization: Bearer <MACHINE_TOKEN>
 Lista alocações ativas e futuras da máquina.
 
 **Headers:**
+
 ```
 Authorization: Bearer <MACHINE_TOKEN>
 ```
 
 **Response (200):**
+
 ```json
 {
   "machineId": 1,
@@ -1187,11 +1566,13 @@ Authorization: Bearer <MACHINE_TOKEN>
 Retorna quem deveria estar usando a máquina agora.
 
 **Headers:**
+
 ```
 Authorization: Bearer <MACHINE_TOKEN>
 ```
 
 **Response - Com Sessão (200):**
+
 ```json
 {
   "hasActiveSession": true,
@@ -1211,6 +1592,7 @@ Authorization: Bearer <MACHINE_TOKEN>
 ```
 
 **Response - Sem Sessão (200):**
+
 ```json
 {
   "hasActiveSession": false,
@@ -1226,11 +1608,13 @@ Authorization: Bearer <MACHINE_TOKEN>
 Reporta que um usuário logou no SO da máquina.
 
 **Headers:**
+
 ```
 Authorization: Bearer <MACHINE_TOKEN>
 ```
 
 **Request Body:**
+
 ```json
 {
   "username": "gabriel.santos"
@@ -1238,6 +1622,7 @@ Authorization: Bearer <MACHINE_TOKEN>
 ```
 
 **Response (200):**
+
 ```json
 {
   "registered": true,
@@ -1252,11 +1637,13 @@ Authorization: Bearer <MACHINE_TOKEN>
 Reporta que o usuário deslogou do SO da máquina.
 
 **Headers:**
+
 ```
 Authorization: Bearer <MACHINE_TOKEN>
 ```
 
 **Response (200):**
+
 ```json
 {
   "registered": true,
@@ -1271,11 +1658,13 @@ Authorization: Bearer <MACHINE_TOKEN>
 Sincroniza especificações de hardware detectadas automaticamente.
 
 **Headers:**
+
 ```
 Authorization: Bearer <MACHINE_TOKEN>
 ```
 
 **Request Body:**
+
 ```json
 {
   "cpuModel": "Intel Core i7-12700K",
@@ -1287,16 +1676,17 @@ Authorization: Bearer <MACHINE_TOKEN>
 }
 ```
 
-| Campo        | Tipo   | Obrigatório | Descrição                               |
-| :----------- | :----- | :---------- | :-------------------------------------- |
-| `cpuModel`   | string | ❌          | Modelo do processador                   |
-| `gpuModel`   | string | ❌          | Modelo da GPU                           |
-| `totalRamGb` | number | ❌          | RAM total em GB                         |
-| `totalDiskGb`| number | ❌          | Disco total em GB                       |
-| `ipAddress`  | string | ❌          | Endereço IP atual                       |
-| `macAddress` | string | ❌          | MAC Address (formato: `AA:BB:CC:DD:EE:FF`) |
+| Campo         | Tipo   | Obrigatório | Descrição                                  |
+| :------------ | :----- | :---------- | :----------------------------------------- |
+| `cpuModel`    | string | ❌          | Modelo do processador                      |
+| `gpuModel`    | string | ❌          | Modelo da GPU                              |
+| `totalRamGb`  | number | ❌          | RAM total em GB                            |
+| `totalDiskGb` | number | ❌          | Disco total em GB                          |
+| `ipAddress`   | string | ❌          | Endereço IP atual                          |
+| `macAddress`  | string | ❌          | MAC Address (formato: `AA:BB:CC:DD:EE:FF`) |
 
 **Response (200):**
+
 ```json
 {
   "synced": true,
@@ -1320,11 +1710,13 @@ Authorization: Bearer <MACHINE_TOKEN>
 Envia pacote de métricas de hardware.
 
 **Headers:**
+
 ```
 Authorization: Bearer <MACHINE_TOKEN>
 ```
 
 **Request Body:**
+
 ```json
 {
   "cpuUsage": 250,
@@ -1379,9 +1771,9 @@ polling:
 
 # Comportamento
 behavior:
-  block_on_no_allocation: true  # Bloquear se não houver alocação?
-  warn_before_expire_minutes: 15  # Avisar X minutos antes de expirar
-  force_logout_on_expire: true  # Forçar logout quando alocação expirar?
+  block_on_no_allocation: true # Bloquear se não houver alocação?
+  warn_before_expire_minutes: 15 # Avisar X minutos antes de expirar
+  force_logout_on_expire: true # Forçar logout quando alocação expirar?
 ```
 
 #### Processo de Setup
@@ -1403,6 +1795,7 @@ Authorization: Bearer <ADMIN_USER_TOKEN>
 ```
 
 Resposta:
+
 ```json
 {
   "message": "Token regenerado com sucesso. Configure o agente com o novo token.",
@@ -1416,13 +1809,384 @@ O admin deve então atualizar o config do agente na máquina física.
 
 ---
 
-## 🛠 Tech Stack
+## 🤖 Agente de Máquina
 
-- **Backend:** Node.js, AdonisJS 6, TypeScript.
-- **Banco de Dados:** SQLite (Configurado com WAL Mode para alta concorrência).
-- **Frontend:** (A definir).
-- **Agent:** (A definir).
+### Responsabilidades
+
+O agente de máquina é um software instalado em cada computador do laboratório, responsável por:
+
+- **Comunicação**: Manter conexão com a API central via heartbeats periódicos
+- **Autenticação Local**: Interceptar tentativas de login e validar permissões
+- **Bloqueio de Tela**: Bloquear acesso quando não há alocação ativa
+- **Coleta de Métricas**: Monitorar uso de CPU, memória e disco
+- **Sincronização**: Reportar especificações de hardware
+
+### Diagrama de Estados
+
+```
+                              ┌─────────────────┐
+                              │                 │
+                              │   INICIALIZADO  │
+                              │                 │
+                              └────────┬────────┘
+                                       │
+                                       │ Conectar à API
+                                       ▼
+                              ┌─────────────────┐
+                              │                 │
+              ┌───────────────│    OCIOSO       │───────────────┐
+              │               │  (Tela Bloqueada)               │
+              │               └────────┬────────┘               │
+              │                        │                        │
+              │ Heartbeat              │ Usuário tenta          │ Heartbeat
+              │ (a cada 30s)           │ fazer login            │ (shouldBlock=false)
+              │                        ▼                        │
+              │               ┌─────────────────┐               │
+              │               │                 │               │
+              │               │   VALIDANDO     │               │
+              │               │   CREDENCIAIS   │               │
+              │               │                 │               │
+              │               └────────┬────────┘               │
+              │                        │                        │
+              │            ┌───────────┴───────────┐            │
+              │            │                       │            │
+              │     Válido + Alocação        Inválido ou        │
+              │            │                 Sem Alocação       │
+              │            ▼                       │            │
+              │   ┌─────────────────┐              │            │
+              │   │                 │              │            │
+              └──>│     ATIVO       │<─────────────┘            │
+                  │ (Sessão do User)│                           │
+                  │                 │                           │
+                  └────────┬────────┘                           │
+                           │                                    │
+                           │ Logout ou                          │
+                           │ Fim da alocação                    │
+                           │                                    │
+                           └────────────────────────────────────┘
+```
+
+### Ciclo de Heartbeat
+
+```
+┌─────────────────────────────────────────────────────────────────────────┐
+│                         CICLO DE HEARTBEAT                               │
+├─────────────────────────────────────────────────────────────────────────┤
+│                                                                          │
+│  Intervalo: 30 segundos                                                 │
+│                                                                          │
+│  Dados enviados:                                                        │
+│  {                                                                       │
+│    "telemetry": {                                                       │
+│      "cpuPercent": 45.2,                                                │
+│      "ramPercent": 68.5,                                                │
+│      "diskPercent": 52.0                                                │
+│    }                                                                     │
+│  }                                                                       │
+│                                                                          │
+│  Dados recebidos:                                                       │
+│  {                                                                       │
+│    "machineId": 1,                                                      │
+│    "shouldBlock": false,          // Bloquear tela?                     │
+│    "canQuickAllocate": true,      // Permitir alocação rápida?          │
+│    "minutesUntilNext": 45,        // Minutos até próxima alocação       │
+│    "currentAllocation": {         // Alocação ativa (se houver)         │
+│      "id": 123,                                                         │
+│      "userId": 5,                                                       │
+│      "startsAt": "2026-02-02T10:00:00",                                │
+│      "endsAt": "2026-02-02T11:00:00"                                   │
+│    }                                                                     │
+│  }                                                                       │
+│                                                                          │
+└─────────────────────────────────────────────────────────────────────────┘
+```
+
+---
+
+## 💻 Front-end (Web)
+
+> **Nota**: A implementação do front-end está em fase de planejamento. As informações abaixo representam a visão geral das funcionalidades planejadas.
+
+### Tecnologias Consideradas
+
+| Opção       | Descrição                                         |
+| ----------- | ------------------------------------------------- |
+| **React**   | Biblioteca para construção de interfaces reativas |
+| **Vue.js**  | Framework progressivo para SPAs                   |
+| **Next.js** | Framework React com SSR/SSG                       |
+| **Nuxt.js** | Framework Vue com SSR/SSG                         |
+
+### Bibliotecas de Apoio (Planejadas)
+
+- **UI Components**: Tailwind CSS, shadcn/ui ou Vuetify
+- **Gerenciamento de Estado**: Zustand, Pinia ou Redux
+- **Requisições HTTP**: Axios ou fetch nativo
+- **Validação de Formulários**: Zod, Yup ou VeeValidate
+- **Calendário**: FullCalendar ou similar
+
+### Funcionalidades Planejadas
+
+#### Para Usuários Comuns
+
+```
+┌─────────────────────────────────────────────────────────────────────────┐
+│                      FUNCIONALIDADES DO USUÁRIO                          │
+├─────────────────────────────────────────────────────────────────────────┤
+│                                                                          │
+│  📅 Visualização de Disponibilidade                                     │
+│     • Calendário interativo com slots disponíveis                       │
+│     • Filtro por laboratório, data e horário                            │
+│     • Indicadores visuais de ocupação                                   │
+│                                                                          │
+│  🖥️ Reserva de Máquinas                                                 │
+│     • Seleção de máquina específica ou automática                       │
+│     • Definição de período (início e fim)                               │
+│     • Confirmação e cancelamento de reservas                            │
+│                                                                          │
+│  📊 Histórico e Métricas Pessoais                                       │
+│     • Lista de reservas passadas e futuras                              │
+│     • Estatísticas de uso (horas, frequência)                           │
+│                                                                          │
+│  👤 Perfil do Usuário                                                   │
+│     • Atualização de dados pessoais                                     │
+│     • Alteração de senha                                                │
+│                                                                          │
+└─────────────────────────────────────────────────────────────────────────┘
+```
+
+#### Para Administradores
+
+```
+┌─────────────────────────────────────────────────────────────────────────┐
+│                   FUNCIONALIDADES DO ADMINISTRADOR                       │
+├─────────────────────────────────────────────────────────────────────────┤
+│                                                                          │
+│  🖥️ Gerenciamento de Máquinas                                           │
+│     • Cadastro e edição de máquinas                                     │
+│     • Visualização de status em tempo real                              │
+│     • Histórico de manutenções                                          │
+│                                                                          │
+│  👥 Gerenciamento de Usuários                                           │
+│     • Listagem e busca de usuários                                      │
+│     • Criação e edição de contas                                        │
+│     • Definição de permissões (admin/user)                              │
+│                                                                          │
+│  📊 Dashboard de Monitoramento                                          │
+│     • Visão geral de todos os laboratórios                              │
+│     • Métricas de utilização (CPU, RAM, Disco)                          │
+│     • Gráficos de tendência de uso                                      │
+│                                                                          │
+│  📈 Relatórios                                                          │
+│     • Relatório de ocupação por período                                 │
+│     • Relatório de usuários mais ativos                                 │
+│     • Exportação em PDF/CSV                                             │
+│                                                                          │
+└─────────────────────────────────────────────────────────────────────────┘
+```
+
+### Interfaces Principais (Wireframes)
+
+#### Wireframe - Tela de Login
+
+```
+┌─────────────────────────────────────────────────────────────────────────┐
+│                                                                          │
+│                        SISTEMA DE LABORATÓRIOS                           │
+│                                                                          │
+│                    ┌───────────────────────────┐                        │
+│                    │                           │                        │
+│                    │         🔐 LOGIN          │                        │
+│                    │                           │                        │
+│                    │  ┌─────────────────────┐  │                        │
+│                    │  │ Email               │  │                        │
+│                    │  └─────────────────────┘  │                        │
+│                    │                           │                        │
+│                    │  ┌─────────────────────┐  │                        │
+│                    │  │ Senha          👁️   │  │                        │
+│                    │  └─────────────────────┘  │                        │
+│                    │                           │                        │
+│                    │  ┌─────────────────────┐  │                        │
+│                    │  │      ENTRAR         │  │                        │
+│                    │  └─────────────────────┘  │                        │
+│                    │                           │                        │
+│                    │  Não tem conta? Registre  │                        │
+│                    │                           │                        │
+│                    └───────────────────────────┘                        │
+│                                                                          │
+└─────────────────────────────────────────────────────────────────────────┘
+```
+
+#### Wireframe - Calendário de Reservas
+
+```
+┌─────────────────────────────────────────────────────────────────────────┐
+│  🏠 Home   📅 Reservas   🖥️ Máquinas   👤 Perfil         [Sair]        │
+├─────────────────────────────────────────────────────────────────────────┤
+│                                                                          │
+│  ◀ Fevereiro 2026 ▶                           [Filtrar Laboratório ▼]  │
+│                                                                          │
+│  ┌─────┬─────┬─────┬─────┬─────┬─────┬─────┐                           │
+│  │ DOM │ SEG │ TER │ QUA │ QUI │ SEX │ SAB │                           │
+│  ├─────┼─────┼─────┼─────┼─────┼─────┼─────┤                           │
+│  │  1  │  2  │  3  │  4  │  5  │  6  │  7  │                           │
+│  │     │ ●●  │ ●   │ ●●● │     │ ●   │     │                           │
+│  ├─────┼─────┼─────┼─────┼─────┼─────┼─────┤                           │
+│  │  8  │  9  │ 10  │ 11  │ 12  │ 13  │ 14  │                           │
+│  │     │ ●   │ ●●  │     │ ●●  │ ●●● │     │                           │
+│  └─────┴─────┴─────┴─────┴─────┴─────┴─────┘                           │
+│                                                                          │
+│  ● = Suas reservas                                                      │
+│                                                                          │
+│  ┌───────────────────────────────────────────────────────────────────┐  │
+│  │ Dia selecionado: 02/02/2026                                       │  │
+│  │                                                                    │  │
+│  │  08:00 │ Lab 1 - PC-05 │ Reservado (Você)     │ [Cancelar]        │  │
+│  │  10:00 │ Lab 2 - PC-12 │ Reservado (Você)     │ [Cancelar]        │  │
+│  │                                                                    │  │
+│  │                    [+ Nova Reserva]                                │  │
+│  └───────────────────────────────────────────────────────────────────┘  │
+│                                                                          │
+└─────────────────────────────────────────────────────────────────────────┘
+```
+
+#### Wireframe - Dashboard Administrativo
+
+```
+┌─────────────────────────────────────────────────────────────────────────┐
+│  🏠 Dashboard   👥 Usuários   🖥️ Máquinas   📊 Relatórios     [Admin]  │
+├─────────────────────────────────────────────────────────────────────────┤
+│                                                                          │
+│  ┌─────────────────┐  ┌─────────────────┐  ┌─────────────────┐         │
+│  │   MÁQUINAS      │  │   USUÁRIOS      │  │   RESERVAS      │         │
+│  │                 │  │                 │  │                 │         │
+│  │   🖥️ 24        │  │   👥 156        │  │   📅 45         │         │
+│  │   Online: 18    │  │   Ativos: 89    │  │   Hoje: 12      │         │
+│  └─────────────────┘  └─────────────────┘  └─────────────────┘         │
+│                                                                          │
+│  ┌─────────────────────────────────────────────────────────────────┐   │
+│  │                    USO MÉDIO DE RECURSOS                         │   │
+│  │                                                                   │   │
+│  │  CPU    ████████████████░░░░░░░░░░░░  45%                        │   │
+│  │  RAM    ██████████████████████░░░░░░  62%                        │   │
+│  │  DISCO  ████████████░░░░░░░░░░░░░░░░  35%                        │   │
+│  │                                                                   │   │
+│  └─────────────────────────────────────────────────────────────────┘   │
+│                                                                          │
+│  ┌─────────────────────────────────────────────────────────────────┐   │
+│  │  MÁQUINAS EM TEMPO REAL                               [Ver Todos]│   │
+│  │                                                                   │   │
+│  │  PC-01 🟢  CPU: 23%  RAM: 45%  │  PC-02 🟢  CPU: 67%  RAM: 78%  │   │
+│  │  PC-03 🔴  Offline             │  PC-04 🟡  CPU: 89%  RAM: 92%  │   │
+│  │  PC-05 🟢  CPU: 12%  RAM: 34%  │  PC-06 🟢  CPU: 45%  RAM: 56%  │   │
+│  │                                                                   │   │
+│  └─────────────────────────────────────────────────────────────────┘   │
+│                                                                          │
+└─────────────────────────────────────────────────────────────────────────┘
+```
+
+---
+
+## 📁 Estrutura do Projeto
+
+```
+Projeto-TCC/
+├── apps/
+│   ├── api/                      # Backend AdonisJS
+│   │   ├── app/
+│   │   │   ├── controllers/      # Lógica de requisições HTTP
+│   │   │   │   ├── agent_controller.ts
+│   │   │   │   ├── allocations_controller.ts
+│   │   │   │   ├── auth_controller.ts
+│   │   │   │   ├── machines_controller.ts
+│   │   │   │   └── users_controller.ts
+│   │   │   ├── middleware/       # Interceptadores de requisição
+│   │   │   │   ├── auth_middleware.ts
+│   │   │   │   ├── machine_auth_middleware.ts
+│   │   │   │   └── is_admin_middleware.ts
+│   │   │   ├── models/           # Entidades do banco de dados
+│   │   │   │   ├── user.ts
+│   │   │   │   ├── machine.ts
+│   │   │   │   ├── allocation.ts
+│   │   │   │   └── telemetry.ts
+│   │   │   ├── services/         # Serviços auxiliares
+│   │   │   │   ├── machine_cache.ts
+│   │   │   │   └── telemetry_buffer.ts
+│   │   │   └── validators/       # Esquemas de validação
+│   │   ├── config/               # Configurações do framework
+│   │   ├── database/
+│   │   │   ├── migrations/       # Versionamento do schema
+│   │   │   └── seeders/          # Dados de teste
+│   │   ├── start/
+│   │   │   ├── routes.ts         # Definição de rotas
+│   │   │   └── kernel.ts         # Middlewares globais
+│   │   └── tests/                # Testes automatizados
+│   ├── agent/                    # Agente de máquina (a definir)
+│   └── web/                      # Frontend (a definir)
+├── packages/
+│   └── shared/                   # Código compartilhado
+├── docs/                         # Documentação
+└── README.md
+```
 
 ---
 
 ## 📦 Como Rodar
+
+### Pré-requisitos
+
+- Node.js 20+
+- npm ou pnpm
+
+### Instalação
+
+```bash
+# Clone o repositório
+git clone https://github.com/seu-usuario/Projeto-TCC.git
+cd Projeto-TCC
+
+# Instale as dependências
+npm install
+
+# Entre na pasta da API
+cd apps/api
+
+# Configure o ambiente
+cp .env.example .env
+
+# Execute as migrations
+node ace migration:run
+
+# (Opcional) Execute os seeders para dados de teste
+node ace db:seed
+
+# Inicie o servidor de desenvolvimento
+node ace serve --watch
+```
+
+### Testes
+
+```bash
+cd apps/api
+node ace test
+```
+
+---
+
+## 🔮 Trabalhos Futuros
+
+- **Notificações Push**: Alertas para início/fim de reservas
+- **Integração LDAP/AD**: Autenticação com diretório da instituição
+- **App Mobile**: Versão mobile para consulta e reservas
+- **Machine Learning**: Previsão de demanda e sugestões de horários
+- **Auditoria Avançada**: Log detalhado de eventos para compliance
+- **WebSocket**: Atualização em tempo real do status das máquinas
+
+---
+
+## 📄 Licença
+
+Este projeto foi desenvolvido como parte do Trabalho de Conclusão de Curso (TCC) na Universidade Federal de Pelotas (UFPel).
+
+---
+
+_Documento atualizado em: Fevereiro de 2026_
