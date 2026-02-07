@@ -2,7 +2,6 @@ import { DateTime } from 'luxon'
 import { BaseModel, column, beforeCreate, hasMany } from '@adonisjs/lucid/orm'
 import type { HasMany } from '@adonisjs/lucid/types/relations'
 import { randomBytes } from 'node:crypto'
-import Telemetry from '#models/telemetry'
 import Allocation from '#models/allocation'
 
 export default class Machine extends BaseModel {
@@ -56,9 +55,6 @@ export default class Machine extends BaseModel {
   declare updatedAt: DateTime | null
 
   // --- RELACIONAMENTOS ---
-  @hasMany(() => Telemetry)
-  declare telemetries: HasMany<typeof Telemetry>
-
   @hasMany(() => Allocation)
   declare allocations: HasMany<typeof Allocation>
 

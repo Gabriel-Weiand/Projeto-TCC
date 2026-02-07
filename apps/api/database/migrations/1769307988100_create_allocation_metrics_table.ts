@@ -17,34 +17,34 @@ export default class extends BaseSchema {
         .unique()
 
       // --- PROCESSADOR (CPU) ---
-      table.integer('avg_cpu_usage').unsigned()
-      table.integer('max_cpu_usage').unsigned()
-      table.integer('avg_cpu_temp').unsigned()
-      table.integer('max_cpu_temp').unsigned() // Crítico para alertas térmicos
+      table.float('avg_cpu_usage')
+      table.float('max_cpu_usage')
+      table.float('avg_cpu_temp')
+      table.float('max_cpu_temp') // Crítico para alertas térmicos
 
       // --- PLACA DE VÍDEO (GPU) ---
-      table.integer('avg_gpu_usage').unsigned()
-      table.integer('max_gpu_usage').unsigned()
-      table.integer('avg_gpu_temp').unsigned()
-      table.integer('max_gpu_temp').unsigned()
+      table.float('avg_gpu_usage')
+      table.float('max_gpu_usage')
+      table.float('avg_gpu_temp')
+      table.float('max_gpu_temp')
 
       // --- MEMÓRIA (RAM) ---
-      table.integer('avg_ram_usage').unsigned()
-      table.integer('max_ram_usage').unsigned()
+      table.float('avg_ram_usage')
+      table.float('max_ram_usage')
 
       // --- DISCO ---
-      table.integer('avg_disk_usage').unsigned()
-      table.integer('max_disk_usage').unsigned()
+      table.float('avg_disk_usage')
+      table.float('max_disk_usage')
 
       // --- REDE (Download/Upload) ---
-      table.integer('avg_download_usage').unsigned() // Mbps
-      table.integer('max_download_usage').unsigned()
-      table.integer('avg_upload_usage').unsigned()
-      table.integer('max_upload_usage').unsigned()
+      table.float('avg_download_usage') // Mbps
+      table.float('max_download_usage')
+      table.float('avg_upload_usage')
+      table.float('max_upload_usage')
 
       // --- PLACA MÃE ---
-      table.integer('avg_mobo_temp').unsigned()
-      table.integer('max_mobo_temp').unsigned()
+      table.float('avg_mobo_temp')
+      table.float('max_mobo_temp')
 
       // --- OUTROS ---
       table.integer('session_duration_minutes').unsigned() // Duração total

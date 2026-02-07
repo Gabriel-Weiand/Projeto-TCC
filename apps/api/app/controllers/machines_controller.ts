@@ -2,10 +2,8 @@ import type { HttpContext } from '@adonisjs/core/http'
 import Machine from '#models/machine'
 import Allocation from '#models/allocation'
 import { createMachineValidator, updateMachineValidator } from '#validators/machine'
-import { listTelemetryValidator } from '#validators/telemetry'
 import { telemetryBuffer } from '#services/telemetry_buffer'
 import { machineCache } from '#services/machine_cache'
-import Telemetry from '#models/telemetry'
 import { DateTime } from 'luxon'
 
 export default class MachinesController {
@@ -129,29 +127,35 @@ export default class MachinesController {
 
   /**
    * Retorna histórico de telemetria de uma máquina.
+   * Busca as telemetrias através das alocações da máquina.
    *
    * GET /api/v1/machines/:id/telemetry
    */
   async telemetry({ params, request, response }: HttpContext) {
     const machine = await Machine.findOrFail(params.id)
-    const {
-      startDate,
-      endDate,
-      page = 1,
-      limit = 100,
-    } = await request.validateUsing(listTelemetryValidator)
+    const { page = 1, limit = 100 } = request.qs()
 
-    let query = Telemetry.query().where('machineId', machine.id).orderBy('createdAt', 'desc')
+    // Busca alocações da máquina e carrega suas telemetrias
+    const allocations = await Allocation.query()
+      .where('machineId', machine.id)
+      .select('id')
 
-    if (startDate) {
-      query = query.where('createdAt', '>=', startDate)
+    const allocationIds = allocations.map((a) => a.id)
+
+    if (allocationIds.length === 0) {
+      return response.ok({
+        realtime: telemetryBuffer.getLatest(machine.id),
+        history: { data: [], meta: { total: 0, perPage: limit, currentPage: page } },
+      })
     }
 
-    if (endDate) {
-      query = query.where('createdAt', '<=', endDate)
-    }
+    // Importa Telemetry aqui para a query
+    const Telemetry = (await import('#models/telemetry')).default
 
-    const telemetries = await query.paginate(page, limit)
+    const telemetries = await Telemetry.query()
+      .whereIn('allocationId', allocationIds)
+      .orderBy('id', 'desc')
+      .paginate(page, limit)
 
     // Adiciona dado real-time no topo
     const latestRealtime = telemetryBuffer.getLatest(machine.id)

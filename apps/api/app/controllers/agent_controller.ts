@@ -562,6 +562,7 @@ export default class AgentController {
   /**
    * Recebe telemetria do agente.
    * Os dados vão para o buffer e são persistidos periodicamente.
+   * Telemetria só é aceita se houver uma alocação ativa na máquina.
    * 
    * POST /api/agent/telemetry
    */
@@ -569,9 +570,24 @@ export default class AgentController {
     const machine = authenticatedMachine!
     const data = await request.validateUsing(telemetryReportValidator)
 
-    // Adiciona ao buffer (não vai direto ao banco)
-    telemetryBuffer.add({
-      machineId: machine.id,
+    // Busca alocação ativa nesta máquina (qualquer usuário)
+    const currentAllocation = await this.findCurrentAllocation(machine.id)
+
+    if (!currentAllocation) {
+      // Sem alocação ativa = telemetria descartada (não há contexto para persistência)
+      // Atualiza apenas o último contato
+      machine.lastSeenAt = DateTime.now()
+      if (machine.status === 'offline') {
+        machine.status = 'available'
+      }
+      await machine.save()
+
+      return response.noContent()
+    }
+
+    // Adiciona ao buffer com allocationId (não vai direto ao banco)
+    telemetryBuffer.add(machine.id, {
+      allocationId: currentAllocation.id,
       ...data,
     })
 

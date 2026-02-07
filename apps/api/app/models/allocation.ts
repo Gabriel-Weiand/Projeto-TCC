@@ -1,9 +1,10 @@
 import { DateTime } from 'luxon'
-import { BaseModel, column, belongsTo, hasOne } from '@adonisjs/lucid/orm'
-import type { BelongsTo, HasOne } from '@adonisjs/lucid/types/relations'
+import { BaseModel, column, belongsTo, hasOne, hasMany } from '@adonisjs/lucid/orm'
+import type { BelongsTo, HasOne, HasMany } from '@adonisjs/lucid/types/relations'
 import User from '#models/user'
 import Machine from '#models/machine'
 import AllocationMetric from '#models/allocation_metric'
+import Telemetry from '#models/telemetry'
 
 export default class Allocation extends BaseModel {
   @column({ isPrimary: true })
@@ -40,6 +41,9 @@ export default class Allocation extends BaseModel {
 
   @belongsTo(() => Machine)
   declare machine: BelongsTo<typeof Machine>
+
+  @hasMany(() => Telemetry)
+  declare telemetries: HasMany<typeof Telemetry>
 
   @hasOne(() => AllocationMetric)
   declare metric: HasOne<typeof AllocationMetric>

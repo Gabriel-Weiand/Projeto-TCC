@@ -7,17 +7,14 @@ export default class extends BaseSchema {
     this.schema.createTable(this.tableName, (table) => {
       table.increments('id')
 
-      // Indexamos machine_id pois sempre buscaremos dados "DE UMA" máquina
+      // Telemetria pertence a uma alocação (contém user + machine)
       table
-        .integer('machine_id')
+        .integer('allocation_id')
         .unsigned()
         .references('id')
-        .inTable('machines')
+        .inTable('allocations')
         .onDelete('CASCADE')
         .index()
-
-      // Opcional: Se você quiser ligar esse dado bruto a uma alocação específica já na coleta
-      // table.integer('allocation_id').unsigned().references('id').inTable('allocations').onDelete('SET NULL')
 
       // --- DADOS DE HARDWARE (Escala 0 a 1000) ---
       // 0 = 0.0%, 1000 = 100.0% | 650 = 65.0ºC
@@ -32,7 +29,6 @@ export default class extends BaseSchema {
       table.integer('disk_usage').unsigned().notNullable() // % de uso do disco ativo
 
       // --- REDE (Mbps) ---
-      // Sugestão: Use integer normal (kbps) ou apenas Mbps sem casa decimal se não precisar de precisão fina.
       table.integer('download_usage').unsigned().notNullable()
       table.integer('upload_usage').unsigned().notNullable()
 
@@ -41,8 +37,7 @@ export default class extends BaseSchema {
       // Contexto
       table.string('logged_user_name').nullable()
 
-      // Data da Coleta (Indexado para gráficos e limpeza)
-      table.timestamp('created_at').index()
+      // Sem created_at: o ID auto-increment serve como sequência temporal (1 telemetria/segundo)
     })
   }
 

@@ -10,20 +10,36 @@ import {
 
 export default class SystemController {
   /**
-   * Remove telemetrias antigas.
+   * Remove telemetrias de alocações antigas.
+   * Identifica alocações anteriores à data e remove suas telemetrias.
    * 
    * DELETE /api/v1/system/prune/telemetries
    */
   async pruneTelemetries({ request, response }: HttpContext) {
     const { before, machineId } = await request.validateUsing(pruneTelemetriesValidator)
 
-    let query = Telemetry.query().where('createdAt', '<', before)
+    // Busca alocações anteriores à data (finalizadas/canceladas)
+    let allocQuery = Allocation.query()
+      .where('endTime', '<', before)
+      .whereIn('status', ['finished', 'cancelled'])
 
     if (machineId) {
-      query = query.where('machineId', machineId)
+      allocQuery = allocQuery.where('machineId', machineId)
     }
 
-    const deleted = await query.delete()
+    const allocations = await allocQuery.select('id')
+    const allocationIds = allocations.map((a) => a.id)
+
+    if (allocationIds.length === 0) {
+      return response.ok({
+        message: 'Nenhuma telemetria para remover.',
+        deleted: 0,
+      })
+    }
+
+    const deleted = await Telemetry.query()
+      .whereIn('allocationId', allocationIds)
+      .delete()
 
     return response.ok({
       message: 'Telemetrias removidas com sucesso.',

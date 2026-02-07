@@ -1,0 +1,1019 @@
+================================================================================
+                CAPÍTULO 2: ENGENHARIA E ARQUITETURA DO SISTEMA
+================================================================================
+
+Este capítulo apresenta os fundamentos teóricos e as decisões técnicas que
+guiaram o desenvolvimento do Sistema Distribuído de Gestão de Laboratórios.
+Inicia-se com uma fundamentação sobre arquiteturas web modernas, seguida pela
+justificativa das escolhas tecnológicas, e finaliza com a descrição detalhada
+da arquitetura implementada.
+
+--------------------------------------------------------------------------------
+2.1 FUNDAMENTAÇÃO: ARQUITETURAS WEB MODERNAS
+--------------------------------------------------------------------------------
+
+Antes de adentrar nas especificidades do sistema desenvolvido, faz-se necessário
+compreender os conceitos fundamentais que norteiam o desenvolvimento de
+aplicações web distribuídas na atualidade.
+
+2.1.1 O Modelo Cliente-Servidor
+
+A arquitetura cliente-servidor constitui a base da comunicação na web moderna.
+Neste paradigma, clientes (navegadores, aplicações móveis, agentes de software)
+enviam requisições a servidores centralizados que processam a lógica de negócio
+e retornam respostas estruturadas.
+
+[DIAGRAMA 2.1: Modelo Cliente-Servidor Básico]
+- Ilustrar múltiplos clientes conectando-se a um servidor central
+- Mostrar o fluxo de requisição (Request) e resposta (Response)
+- Destacar a natureza stateless do protocolo HTTP
+
+Esta abordagem oferece vantagens significativas:
+
+  • Centralização da lógica: As regras de negócio residem em um único ponto,
+    facilitando manutenção, atualizações e correções de segurança.
+
+  • Escalabilidade vertical e horizontal: O servidor pode ser aprimorado
+    (vertical) ou replicado (horizontal) conforme a demanda.
+
+  • Independência de plataforma: Clientes heterogêneos (web, mobile, desktop,
+    IoT) podem consumir os mesmos serviços.
+
+2.1.2 APIs REST e o Padrão de Comunicação
+
+REST (Representational State Transfer) emergiu como o padrão de facto para
+comunicação entre sistemas distribuídos na web. Proposto por Roy Fielding em
+sua tese de doutorado (2000), REST define um conjunto de restrições arquiteturais
+que, quando seguidas, resultam em sistemas escaláveis e de fácil manutenção.
+
+Princípios REST aplicados neste trabalho:
+
+  1. Interface Uniforme: Recursos são identificados por URIs consistentes.
+     Exemplo: /api/v1/machines, /api/v1/allocations
+
+  2. Stateless: Cada requisição carrega toda informação necessária para seu
+     processamento. O servidor não mantém estado de sessão entre requisições.
+
+  3. Cacheável: Respostas podem indicar se são cacheáveis, otimizando
+     performance em operações de leitura frequente.
+
+  4. Sistema em Camadas: A arquitetura permite inserção de camadas
+     intermediárias (load balancers, proxies, caches) sem impactar os clientes.
+
+[DIAGRAMA 2.2: Verbos HTTP e Semântica REST]
+- Tabela visual com GET, POST, PUT, PATCH, DELETE
+- Exemplos de recursos do sistema (machines, allocations, users)
+- Códigos de resposta HTTP típicos (200, 201, 400, 401, 404, 409)
+
+2.1.3 Arquitetura de Três Camadas (Three-Tier Architecture)
+
+A separação de responsabilidades em camadas distintas constitui um princípio
+fundamental da engenharia de software. No contexto web, a arquitetura de três
+camadas manifesta-se como:
+
+  1. Camada de Apresentação (Presentation Tier)
+     - Interface do usuário (frontend web/mobile)
+     - Responsável pela exibição e captura de dados
+     - Não contém lógica de negócio
+
+  2. Camada de Aplicação (Application/Logic Tier)
+     - Servidor de aplicação (API REST)
+     - Implementa regras de negócio
+     - Orquestra operações e validações
+
+  3. Camada de Dados (Data Tier)
+     - Sistema de gerenciamento de banco de dados
+     - Persistência e recuperação de informações
+     - Garantias de integridade e consistência
+
+[DIAGRAMA 2.3: Arquitetura de Três Camadas do Sistema]
+- Frontend (Web App) → API (AdonisJS) → Database (SQLite)
+- Destacar que o Agente de Máquina atua como cliente especializado
+- Mostrar fluxos de dados entre camadas
+
+Esta separação permite que cada camada evolua independentemente, facilita
+testes isolados e possibilita a substituição de componentes sem afetar o
+sistema como um todo. Por exemplo, o banco de dados SQLite utilizado em
+desenvolvimento pode ser substituído por PostgreSQL em produção sem alterações
+na camada de aplicação.
+
+2.1.4 O Paradigma Assíncrono e Event Loop
+
+JavaScript, linguagem que executa tanto no navegador quanto no servidor (via
+Node.js), adota um modelo de concorrência baseado em event loop. Diferente de
+linguagens que utilizam threads para paralelismo, JavaScript processa eventos
+de forma assíncrona em uma única thread.
+
+[DIAGRAMA 2.4: Event Loop do Node.js]
+- Ilustrar a Call Stack, Event Queue e Web APIs
+- Mostrar o ciclo de processamento de eventos
+- Destacar operações de I/O não-bloqueantes
+
+Este modelo é particularmente adequado para aplicações I/O-bound, como servidores
+web que passam a maior parte do tempo aguardando operações de rede ou disco.
+O sistema de laboratórios, que processa múltiplas requisições de heartbeat e
+telemetria simultaneamente, beneficia-se diretamente deste paradigma.
+
+Exemplo prático: Quando 10 agentes de máquina enviam telemetria simultaneamente,
+o servidor não cria 10 threads. Em vez disso, as operações de escrita no banco
+são enfileiradas e processadas de forma não-bloqueante, permitindo que o
+servidor continue recebendo novas requisições enquanto aguarda o I/O.
+
+
+--------------------------------------------------------------------------------
+2.2 JUSTIFICATIVA DAS ESCOLHAS TECNOLÓGICAS
+--------------------------------------------------------------------------------
+
+A seleção de tecnologias para um projeto de software envolve trade-offs entre
+familiaridade, performance, ecossistema, documentação e adequação ao problema.
+Esta seção justifica as escolhas realizadas neste trabalho.
+
+2.2.1 Por Que Node.js e JavaScript?
+
+Node.js é um runtime JavaScript construído sobre o motor V8 do Chrome. Sua
+adoção neste projeto justifica-se por múltiplos fatores:
+
+  a) Modelo de Concorrência Adequado ao Domínio
+
+     O sistema de laboratórios caracteriza-se por alta frequência de operações
+     I/O-bound: heartbeats a cada 30 segundos, telemetria a cada 5-10 segundos,
+     e consultas de validação sob demanda. O modelo não-bloqueante do Node.js
+     é ideal para este padrão de carga.
+
+  b) Ecossistema npm
+
+     O Node Package Manager (npm) constitui o maior repositório de pacotes de
+     código aberto do mundo, com mais de 2 milhões de bibliotecas. Esta
+     abundância acelera o desenvolvimento ao disponibilizar soluções testadas
+     para problemas comuns (validação, autenticação, ORM, etc.).
+
+  c) Unificação de Linguagem
+
+     JavaScript no servidor (Node.js) e no cliente (navegador) permite
+     compartilhamento de código, tipos e validações entre frontend e backend.
+     O diretório packages/shared do projeto demonstra esta possibilidade.
+
+  d) Performance Adequada
+
+     Embora linguagens compiladas (Go, Rust) ofereçam performance superior em
+     cenários CPU-bound, Node.js apresenta desempenho satisfatório para
+     aplicações web típicas. O V8 compila JavaScript para código de máquina
+     em tempo de execução (JIT compilation).
+
+[DIAGRAMA 2.5: Comparativo de Modelos de Concorrência]
+- Thread-based (Java, PHP tradicional) vs Event-based (Node.js)
+- Mostrar consumo de memória por conexão
+- Destacar overhead de context switching
+
+2.2.2 Por Que TypeScript?
+
+TypeScript é um superset de JavaScript que adiciona tipagem estática opcional.
+Sua adoção traz benefícios significativos para projetos de médio e grande porte:
+
+  a) Detecção de Erros em Tempo de Compilação
+
+     Erros de tipo são capturados antes da execução, reduzindo bugs em produção.
+     Exemplo: tentar passar uma string onde um número é esperado resulta em
+     erro de compilação, não em comportamento inesperado em runtime.
+
+     // Exemplo do projeto: validator de telemetria
+     // Sem TypeScript: erro só apareceria em runtime
+     // Com TypeScript: IDE indica erro imediatamente
+     interface TelemetryData {
+       cpuUsage: number;    // 0-1000
+       ramUsage: number;    // 0-1000
+       diskUsage: number;   // 0-1000
+     }
+
+  b) Autocompletar e Refatoração Inteligente
+
+     IDEs como VS Code utilizam informações de tipo para oferecer autocompletar
+     preciso, navegação de código (ir para definição) e refatoração segura
+     (renomear variável em todos os usos).
+
+  c) Documentação Implícita
+
+     Tipos servem como documentação que nunca desatualiza. A interface de um
+     Model (User, Machine, Allocation) documenta automaticamente seus campos
+     e tipos esperados.
+
+  d) Compatibilidade Total com JavaScript
+
+     Todo código JavaScript válido é também TypeScript válido. Bibliotecas
+     JavaScript podem ser utilizadas, com tipos fornecidos pelo DefinitelyTyped
+     ou inferidos automaticamente.
+
+[DIAGRAMA 2.6: Pipeline de Compilação TypeScript]
+- Código TypeScript (.ts) → Compilador (tsc) → JavaScript (.js) → Node.js
+- Mostrar arquivos de configuração (tsconfig.json)
+- Destacar source maps para debugging
+
+2.2.3 Por Que Utilizar um Framework? A Escolha do AdonisJS
+
+Uma questão fundamental no desenvolvimento de software é: construir do zero
+("hardcode") ou utilizar um framework existente? Cada abordagem apresenta
+vantagens e desvantagens.
+
+  Construir do Zero (Hardcode):
+  
+  + Controle total sobre cada aspecto do sistema
+  + Sem overhead de abstração desnecessária
+  + Código mais enxuto para problemas específicos
+  
+  - Reinvenção de soluções já resolvidas (routing, validação, autenticação)
+  - Maior superfície para bugs de segurança
+  - Curva de aprendizado íngreme para novos desenvolvedores
+  - Manutenção a longo prazo mais custosa
+
+  Utilizar Framework:
+  
+  + Soluções testadas em produção por milhares de projetos
+  + Padrões estabelecidos que facilitam colaboração
+  + Segurança: vulnerabilidades são corrigidas pela comunidade
+  + Documentação e recursos de aprendizado abundantes
+  + Foco no problema de negócio, não em infraestrutura
+  
+  - Overhead de aprendizado das convenções do framework
+  - Possível inclusão de código não utilizado
+  - Dependência de decisões arquiteturais do framework
+  - Atualizações podem requerer adaptações
+
+[DIAGRAMA 2.7: Trade-off Framework vs Hardcode]
+- Gráfico de tempo vs complexidade
+- Mostrar que para projetos pequenos, hardcode é mais rápido
+- Mostrar que para projetos maiores, framework amortiza o overhead inicial
+
+Para este projeto, a escolha de um framework justifica-se pela complexidade
+das funcionalidades requeridas: autenticação dual (usuários e máquinas),
+validação robusta de dados, ORM para abstração do banco, e estrutura MVC
+para organização do código.
+
+**Por que AdonisJS especificamente?**
+
+AdonisJS foi escolhido entre alternativas como Express.js, NestJS e Fastify
+pelos seguintes motivos:
+
+  a) Batteries Included (Pilhas Incluídas)
+
+     Diferente de frameworks minimalistas como Express, AdonisJS inclui
+     soluções integradas para problemas comuns:
+     
+     - Lucid ORM: Mapeamento objeto-relacional com suporte a migrations
+     - VineJS: Validação de dados com mensagens customizáveis
+     - Auth: Sistema de autenticação com múltiplos guards
+     - Hash: Hashing de senhas com scrypt
+     - CORS: Configuração de Cross-Origin Resource Sharing
+     - Scheduler: Agendamento de tarefas (prune de tokens)
+
+  b) Convenção sobre Configuração
+
+     AdonisJS adota o princípio de "convention over configuration", reduzindo
+     decisões arbitrárias. A estrutura de pastas é padronizada:
+     
+     app/
+       controllers/    # Lógica de requisições HTTP
+       models/         # Entidades do banco de dados
+       middleware/     # Interceptadores de requisição
+       validators/     # Esquemas de validação
+       services/       # Lógica de negócio reutilizável
+
+  c) TypeScript de Primeira Classe
+
+     Ao contrário de frameworks retrofitted para TypeScript, AdonisJS foi
+     reescrito do zero na versão 6 com TypeScript como linguagem primária.
+     Isto resulta em tipos mais precisos e melhor integração com IDEs.
+
+  d) Inspiração no Laravel
+
+     AdonisJS inspira-se fortemente no Laravel (PHP), um dos frameworks web
+     mais populares e bem documentados. Desenvolvedores familiarizados com
+     Laravel encontram conceitos similares (Eloquent → Lucid, Middleware,
+     Artisan → Ace).
+
+[DIAGRAMA 2.8: Ecossistema AdonisJS]
+- Mostrar os pacotes principais (@adonisjs/core, @adonisjs/lucid, @adonisjs/auth)
+- Ilustrar como se integram
+- Destacar o Ace CLI para comandos (migrations, seeders, etc.)
+
+2.2.4 Lucid ORM e Abstração do Banco de Dados
+
+Object-Relational Mapping (ORM) é uma técnica que mapeia objetos de linguagens
+orientadas a objetos para tabelas de bancos relacionais. O Lucid, ORM do
+AdonisJS, oferece:
+
+  a) Definição de Modelos Declarativa
+
+     // Exemplo real do projeto: Model de Allocation
+     export default class Allocation extends BaseModel {
+       @column({ isPrimary: true })
+       declare id: number
+
+       @column()
+       declare userId: number
+
+       @column()
+       declare machineId: number
+
+       @column.dateTime()
+       declare startTime: DateTime
+
+       @column.dateTime()
+       declare endTime: DateTime
+
+       @belongsTo(() => User)
+       declare user: BelongsTo<typeof User>
+
+       @belongsTo(() => Machine)
+       declare machine: BelongsTo<typeof Machine>
+     }
+
+  b) Query Builder Fluente
+
+     // Busca paginada com filtros
+     const allocations = await Allocation.query()
+       .where('machineId', machineId)
+       .whereIn('status', ['approved', 'pending'])
+       .preload('user')
+       .orderBy('startTime', 'desc')
+       .paginate(page, limit)
+
+  c) Migrations para Versionamento de Schema
+
+     Migrations permitem evoluir o schema do banco de forma incremental e
+     versionada, essencial para trabalho em equipe e deploys automatizados.
+
+     // Exemplo: Migration de criação da tabela allocations
+     await this.db.schema.createTable('allocations', (table) => {
+       table.increments('id')
+       table.integer('user_id').references('users.id').onDelete('CASCADE')
+       table.integer('machine_id').references('machines.id').onDelete('CASCADE')
+       table.datetime('start_time').notNullable()
+       table.datetime('end_time').notNullable()
+       table.enum('status', ['pending','approved','denied','cancelled','finished'])
+       table.timestamps()
+     })
+
+  d) Seeders para Dados de Teste
+
+     Seeders populam o banco com dados iniciais ou de teste, facilitando
+     desenvolvimento e testes automatizados.
+
+[DIAGRAMA 2.9: Fluxo do Lucid ORM]
+- Model (TypeScript) → Query Builder → SQL → Database
+- Mostrar transformação bidirecional (hydration)
+- Destacar lazy loading vs eager loading de relacionamentos
+
+2.2.5 VineJS e Validação de Dados
+
+Validação de entrada é crítica para segurança e integridade. VineJS, biblioteca
+de validação do ecossistema AdonisJS, oferece:
+
+  a) Schema Declarativo com Tipos Inferidos
+
+     // Exemplo real: Validator de criação de alocação
+     export const createAllocationValidator = vine.compile(
+       vine.object({
+         machineId: vine.number().positive(),
+         startTime: vine.date({ formats: ['iso8601'] })
+           .transform((value) => DateTime.fromJSDate(value)),
+         endTime: vine.date({ formats: ['iso8601'] })
+           .transform((value) => DateTime.fromJSDate(value)),
+         reason: vine.string().trim().maxLength(255).optional(),
+       })
+     )
+
+  b) Transformações Inline
+
+     Dados podem ser transformados durante validação. No exemplo acima,
+     strings ISO 8601 são convertidas para objetos DateTime do Luxon.
+
+  c) Mensagens de Erro Customizáveis
+
+     Mensagens de validação podem ser traduzidas ou customizadas para
+     melhor experiência do usuário.
+
+  d) Performance
+
+     VineJS compila schemas para funções JavaScript otimizadas, oferecendo
+     performance superior a validadores baseados em reflexão.
+
+2.2.6 SQLite: Banco de Dados para MVP
+
+A escolha de SQLite como banco de dados merece consideração especial:
+
+  Vantagens para o Contexto do Projeto:
+
+  - Zero configuração: Arquivo único, sem necessidade de servidor separado
+  - Portabilidade: Banco pode ser copiado entre ambientes facilmente
+  - Performance: Adequado para cargas moderadas (centenas de req/s)
+  - Transações ACID: Garantias de integridade equivalentes a bancos maiores
+  - WAL Mode: Write-Ahead Logging permite leituras concorrentes com escritas
+
+  Configuração de WAL no projeto:
+  
+  // config/database.ts
+  sqlite: {
+    client: 'better-sqlite3',
+    connection: {
+      filename: app.tmpPath('db.sqlite3'),
+    },
+    useNullAsDefault: true,
+  }
+
+  Limitações e Caminho de Evolução:
+
+  - Não suporta múltiplas escritas simultâneas (serializa automaticamente)
+  - Não possui tipos DATE nativos (armazenados como TEXT ou INTEGER)
+  - Não oferece replicação nativa
+
+  O Lucid ORM abstrai estas diferenças. Se o sistema evoluir para produção
+  em larga escala, a migração para PostgreSQL requer apenas mudança de
+  configuração, sem alterações no código da aplicação.
+
+
+--------------------------------------------------------------------------------
+2.3 ARQUITETURA DO SISTEMA
+--------------------------------------------------------------------------------
+
+Com a fundamentação teórica estabelecida, esta seção descreve a arquitetura
+concreta implementada no Sistema Distribuído de Gestão de Laboratórios.
+
+2.3.1 Visão Geral: Sistema Distribuído de Três Componentes
+
+O sistema opera como uma arquitetura distribuída composta por três componentes
+principais que se comunicam via API REST:
+
+[DIAGRAMA 2.10: Visão Geral do Sistema Distribuído]
+- Componentes: Frontend Web, API Central (AdonisJS), Agentes de Máquina
+- Mostrar banco de dados como componente interno da API
+- Indicar protocolos de comunicação (HTTPS, REST)
+- Destacar a API como "fonte da verdade" (single source of truth)
+
+  1. API Central (Servidor de Alocação)
+     
+     Implementada em AdonisJS 6, constitui o núcleo do sistema. Responsável
+     por toda lógica de negócio, persistência de dados e orquestração.
+     Opera como "fonte da verdade" - o estado oficial do sistema reside aqui.
+
+  2. Frontend Web (Interface de Usuário)
+     
+     Aplicação cliente que consome a API para permitir que usuários
+     visualizem disponibilidade, criem reservas e gerenciem suas alocações.
+     Administradores acessam funcionalidades estendidas de gestão.
+
+  3. Agentes de Máquina (Daemons Locais)
+     
+     Software instalado em cada computador do laboratório. Responsável por:
+     - Consultar a API sobre permissões de acesso
+     - Bloquear/liberar a máquina conforme orientação da API
+     - Reportar telemetria (CPU, memória, disco)
+     - Interceptar tentativas de login no sistema operacional
+
+2.3.2 Fluxo de Dados e Comunicação
+
+O sistema adota um modelo de comunicação pull-based (polling), onde os
+clientes (agentes e frontend) consultam periodicamente a API para obter
+atualizações de estado.
+
+[DIAGRAMA 2.11: Fluxo de Comunicação - Visão Temporal]
+- Linha do tempo mostrando interações típicas
+- Heartbeat do agente a cada 30 segundos
+- Telemetria a cada 5-10 segundos
+- Validação de usuário sob demanda
+- Consultas do frontend sob demanda
+
+Justificativa para Polling vs Push (WebSockets):
+
+O modelo de polling foi escolhido por sua simplicidade e resiliência:
+
+  - Tolerância a falhas de rede: Agente reconecta automaticamente no próximo
+    ciclo de polling, sem necessidade de lógica de reconexão
+  - Compatibilidade: Funciona através de proxies e firewalls corporativos
+  - Debugging: Requisições HTTP são facilmente inspecionáveis
+  - Overhead aceitável: Com 30-50 máquinas e polling a cada 30s, a carga
+    é de ~2 requisições por segundo, trivial para qualquer servidor
+
+2.3.3 Estrutura Interna da API: Padrão MVC Adaptado
+
+A API segue uma estrutura MVC (Model-View-Controller) adaptada para APIs REST,
+onde a "View" é substituída por serializadores JSON.
+
+[DIAGRAMA 2.12: Estrutura MVC da API]
+- Request → Router → Middleware → Controller → Service → Model → Database
+- Mostrar Response no caminho de volta
+- Destacar Validators como entrada nos Controllers
+
+Detalhamento das Camadas:
+
+  a) Rotas (start/routes.ts)
+     
+     Mapeiam URLs para controllers. Utilizam prefixos para versionamento
+     (/api/v1/ para interface, /api/agent/ para agentes) e aplicam
+     middlewares de autenticação por grupo.
+
+     // Exemplo: Rotas do agente requerem autenticação de máquina
+     router.group(() => {
+       router.post('heartbeat', [AgentController, 'heartbeat'])
+       router.post('validate-user', [AgentController, 'validateUser'])
+       router.post('telemetry', [AgentController, 'telemetry'])
+     })
+     .prefix('api/agent')
+     .use(middleware.machineAuth())
+
+  b) Middlewares (app/middleware/)
+     
+     Interceptam requisições para autenticação, autorização e transformações.
+     O sistema implementa três middlewares principais:
+
+     - AuthMiddleware: Valida token de usuário (JWT-like)
+     - MachineAuthMiddleware: Valida token de máquina (API Key)
+     - IsAdminMiddleware: Verifica role de administrador
+
+  c) Controllers (app/controllers/)
+     
+     Orquestram o fluxo de uma requisição: validam entrada, invocam lógica
+     de negócio e formatam resposta. Não contêm lógica de negócio complexa.
+
+     // Exemplo simplificado: AgentController.heartbeat
+     async heartbeat({ authenticatedMachine, response }: HttpContext) {
+       const machine = authenticatedMachine!
+       machine.lastSeenAt = DateTime.now()
+       await machine.save()
+       
+       const currentAllocation = await this.findCurrentAllocation(machine.id)
+       const shouldBlock = this.determineShouldBlock(machine, currentAllocation)
+       
+       return response.ok({ machine, currentAllocation, shouldBlock })
+     }
+
+  d) Models (app/models/)
+     
+     Representam entidades do domínio e seu mapeamento para o banco.
+     Incluem relacionamentos, hooks e métodos de instância.
+
+     // Exemplo: Hook para gerar token automaticamente
+     @beforeCreate()
+     static assignToken(machine: Machine) {
+       if (!machine.token) {
+         machine.token = randomBytes(64).toString('hex')
+       }
+     }
+
+  e) Validators (app/validators/)
+     
+     Definem schemas de validação para entrada de dados. Executam antes
+     dos controllers, rejeitando requisições inválidas com código 422.
+
+  f) Services (app/services/)
+     
+     Encapsulam lógica de negócio reutilizável e otimizações:
+
+     - MachineCache: Cache em memória para tokens de máquina (TTL: 5 min)
+     - TelemetryBuffer: Buffer para batch insert de telemetrias
+
+[DIAGRAMA 2.13: Fluxo Detalhado de uma Requisição]
+- Mostrar passo a passo: Request → CORS → BodyParser → Router → Middleware
+  → Validator → Controller → Service/Model → Response
+- Indicar pontos de rejeição (401, 403, 422, etc.)
+
+2.3.4 Modelo de Dados (Entidade-Relacionamento)
+
+O sistema persiste cinco entidades principais com relacionamentos bem definidos:
+
+[DIAGRAMA 2.14: Diagrama Entidade-Relacionamento (ER)]
+- Tabelas: users, access_tokens, machines, allocations, telemetries, 
+  allocation_metrics
+- Cardinalidades: User 1:N Allocation, Machine 1:N Allocation, etc.
+- Chaves primárias, estrangeiras e índices
+- Tipos de dados de cada coluna
+
+Entidades e Propósitos:
+
+  1. Users
+     - Cadastro de usuários do sistema (alunos e administradores)
+     - Campo role distingue permissões (user | admin)
+     - Senha armazenada com hash scrypt (nunca em texto plano)
+
+  2. AccessTokens
+     - Tokens de autenticação de usuários
+     - Hash SHA-256 do token (não armazena token original)
+     - Expiração configurável (padrão: 6 horas)
+
+  3. Machines
+     - Cadastro de máquinas gerenciadas
+     - Token de 512 bits para autenticação do agente
+     - Especificações técnicas (CPU, RAM, disco, IP)
+     - Status operacional (available | occupied | maintenance | offline)
+
+  4. Allocations
+     - Reservas de máquinas por usuários
+     - Período (startTime, endTime) e status do ciclo de vida
+     - Relacionamento triplo: User N:M Machine através de Allocation
+
+  5. Telemetries
+     - Métricas de hardware coletadas pelos agentes
+     - Série temporal indexada por machineId e createdAt
+     - Valores em escala inteira (0-1000) para economia de espaço
+
+  6. AllocationMetrics
+     - Resumo estatístico de uma sessão finalizada
+     - Médias e picos de utilização
+     - Relacionamento 1:1 com Allocation
+
+2.3.5 Sistema de Autenticação Dual
+
+Uma característica distintiva do sistema é a separação de autenticação entre
+usuários humanos e agentes de máquina.
+
+[DIAGRAMA 2.15: Fluxo de Autenticação Dual]
+- Lado esquerdo: Fluxo de usuário (email/senha → token bearer)
+- Lado direito: Fluxo de máquina (API key → validação direta)
+- Mostrar middlewares envolvidos
+- Destacar cache de tokens de máquina
+
+  Autenticação de Usuários:
+
+  1. Usuário envia email e senha para POST /api/v1/login
+  2. Senha é verificada contra hash scrypt no banco
+  3. Se válido, token de acesso é gerado e retornado
+  4. Requisições subsequentes incluem token no header Authorization
+  5. Middleware AuthMiddleware valida token em cada requisição
+
+  Autenticação de Máquinas:
+
+  1. Administrador cadastra máquina, token de 512 bits é gerado
+  2. Token é configurado no agente (arquivo de configuração local)
+  3. Agente inclui token no header Authorization de cada requisição
+  4. Middleware MachineAuthMiddleware valida token
+  5. Cache em memória (MachineCache) evita consultas repetidas ao banco
+
+  Justificativa da Separação:
+
+  - Tokens de usuário expiram (6h) e são revogáveis individualmente
+  - Tokens de máquina são de longa duração e rotativos (apenas quando
+    comprometidos ou por política de segurança)
+  - Permissões são distintas: usuários têm roles, máquinas têm status
+
+2.3.6 Otimizações de Performance
+
+O sistema implementa duas otimizações principais para cenários de alta
+frequência de requisições:
+
+[DIAGRAMA 2.16: Cache e Buffer - Fluxo de Dados]
+- Mostrar MachineCache interceptando consultas de token
+- Mostrar TelemetryBuffer acumulando e fazendo batch insert
+- Indicar TTLs e tamanhos de buffer
+
+  a) MachineCache: Cache de Tokens
+
+     Com agentes enviando heartbeat a cada 30 segundos, validar o token
+     no banco a cada requisição seria ineficiente. O MachineCache mantém
+     tokens válidos em memória por 5 minutos.
+
+     // Implementação simplificada
+     class MachineCache {
+       private cache = new Map<string, CachedMachine>()
+       private readonly TTL_MS = 5 * 60 * 1000 // 5 minutos
+
+       async getByToken(token: string): Promise<Machine | null> {
+         const cached = this.cache.get(token)
+         if (cached && Date.now() - cached.cachedAt < this.TTL_MS) {
+           return cached.machine // Cache hit
+         }
+         // Cache miss: busca no banco e armazena
+         const machine = await Machine.findBy('token', token)
+         if (machine) this.cache.set(token, { machine, cachedAt: Date.now() })
+         return machine
+       }
+
+       invalidate(token: string): void {
+         this.cache.delete(token)
+       }
+     }
+
+  b) TelemetryBuffer: Buffer de Escritas
+
+     Telemetrias são enviadas a cada 5-10 segundos por máquina. Escrever
+     cada uma individualmente geraria overhead de I/O significativo.
+     O TelemetryBuffer acumula em memória e faz batch insert periodicamente.
+
+     // Configuração do buffer
+     FLUSH_INTERVAL_MS = 60 * 1000  // Flush a cada 60 segundos
+     MAX_BUFFER_SIZE = 1000          // Ou quando acumular 1000 registros
+
+     Benefícios:
+     - Redução de transações no banco (1 insert de 100 linhas vs 100 inserts)
+     - Estado mais recente disponível em memória para dashboard real-time
+     - Graceful degradation: se servidor reiniciar, perde apenas buffer
+
+
+--------------------------------------------------------------------------------
+2.4 SEGURANÇA DO SISTEMA
+--------------------------------------------------------------------------------
+
+Segurança é um requisito transversal que permeia todas as camadas do sistema.
+Esta seção detalha as medidas implementadas.
+
+2.4.1 Proteção de Credenciais
+
+[DIAGRAMA 2.17: Fluxo de Hash de Senhas]
+- Entrada: senha em texto plano
+- Processo: salt único + scrypt
+- Saída: hash armazenado no banco
+- Verificação: mesma operação, comparação timing-safe
+
+  Hashing de Senhas com scrypt:
+
+  O algoritmo scrypt foi escolhido por sua resistência a ataques de força
+  bruta. Diferente de MD5 ou SHA-256, scrypt requer significativa memória
+  para computar, inviabilizando ataques com hardware especializado (GPUs, ASICs).
+
+  // Configuração no AdonisJS (config/hash.ts)
+  export default hashConfig({
+    default: 'scrypt',
+    list: {
+      scrypt: scryptDriverConfig({})  // Parâmetros padrão seguros
+    }
+  })
+
+  Características:
+  - Salt único por senha: senhas iguais geram hashes diferentes
+  - Parâmetros no hash: permite aumentar dificuldade no futuro
+  - Comparação timing-safe: previne ataques de timing
+
+  Tokens de Máquina:
+
+  Gerados com randomBytes criptograficamente seguro:
+
+  machine.token = randomBytes(64).toString('hex') // 512 bits de entropia
+
+  Armazenados com serializeAs: null, impedindo exposição acidental em respostas.
+
+2.4.2 Autenticação e Autorização
+
+[DIAGRAMA 2.18: Matriz de Permissões]
+- Linhas: Rotas principais
+- Colunas: User, Admin, Machine Agent
+- Células: ✓ permitido, ✗ negado, - não aplicável
+
+  Role-Based Access Control (RBAC):
+
+  O sistema implementa dois roles:
+
+  - user: Pode criar alocações próprias, visualizar máquinas, cancelar
+    próprias reservas, atualizar próprio perfil
+  
+  - admin: Todas as permissões de user, mais: gerenciar usuários, gerenciar
+    máquinas, aprovar/negar alocações, visualizar telemetria, executar prune
+
+  // Middleware de verificação de admin
+  export default class IsAdminMiddleware {
+    async handle({ auth, response }: HttpContext, next: NextFn) {
+      if (auth.user?.role !== 'admin') {
+        return response.forbidden({
+          code: 'ADMIN_REQUIRED',
+          message: 'Esta ação requer privilégios de administrador'
+        })
+      }
+      return next()
+    }
+  }
+
+2.4.3 Validação e Sanitização de Entrada
+
+Toda entrada de usuário é validada antes de processamento:
+
+  // Exemplo: Validator previne injection e garante tipos
+  export const createMachineValidator = vine.compile(
+    vine.object({
+      name: vine.string().trim().minLength(2).maxLength(50),
+      macAddress: vine.string().regex(/^([0-9A-Fa-f]{2}:){5}[0-9A-Fa-f]{2}$/),
+      status: vine.enum(['available', 'occupied', 'maintenance', 'offline']),
+    })
+  )
+
+  Medidas aplicadas:
+  - trim() remove espaços em branco nas extremidades
+  - Comprimentos mínimos e máximos prevenem overflow
+  - Enums restringem valores aceitos
+  - Regex valida formatos específicos (MAC address, email)
+  - Transformações convertem tipos (string ISO → DateTime)
+
+2.4.4 Proteção contra Ataques Comuns
+
+  a) SQL Injection
+     Lucid ORM parametriza todas as queries automaticamente.
+     Valores de usuário nunca são interpolados diretamente no SQL.
+
+  b) Cross-Origin Resource Sharing (CORS)
+     Configuração explícita de origens permitidas em config/cors.ts.
+     Apenas domínios autorizados podem fazer requisições.
+
+  c) Rate Limiting (Trabalho Futuro)
+     Não implementado no MVP, mas arquitetura permite adicionar
+     middleware de rate limiting por IP ou por token.
+
+  d) Exposição de Dados Sensíveis
+     Campos sensíveis usam serializeAs: null:
+     
+     @column({ serializeAs: null })
+     declare password: string
+     
+     @column({ serializeAs: null })
+     declare token: string
+
+
+--------------------------------------------------------------------------------
+2.5 REGRAS DE NEGÓCIO E INVARIANTES
+--------------------------------------------------------------------------------
+
+Além da arquitetura técnica, o sistema implementa regras de negócio específicas
+do domínio de gestão de laboratórios.
+
+2.5.1 Ciclo de Vida de Alocações
+
+[DIAGRAMA 2.19: Máquina de Estados - Alocação]
+- Estados: pending, approved, denied, cancelled, finished
+- Transições permitidas e atores que podem executá-las
+- Destacar modelo "otimista" (aprovação automática)
+
+  Modelo Otimista de Aprovação:
+
+  No MVP, alocações de usuários autenticados nascem como 'approved',
+  assumindo boa-fé. Administradores podem revogar posteriormente.
+
+  Justificativa:
+  - Agilidade: usuário pode usar máquina imediatamente
+  - Realidade acadêmica: fiscalização pós-fato é mais prática
+  - Escalabilidade: não requer aprovação manual de cada reserva
+
+2.5.2 Regra de Gap entre Alocações
+
+Para garantir tempo de troca entre usuários, alocações consecutivas na mesma
+máquina devem ter gap mínimo de 5 minutos.
+
+[DIAGRAMA 2.20: Regra de Gap - Linha Temporal]
+- Mostrar duas alocações e o gap de 5 minutos entre elas
+- Indicar que tentativa de criar alocação no gap é rejeitada
+
+  // Implementação no AllocationsController
+  const GAP_MS = 5 * 60 * 1000 // 5 minutos em milissegundos
+
+  const conflict = existingAllocations.find((allocation) => {
+    const existingStart = allocation.startTime.toMillis()
+    const existingEnd = allocation.endTime.toMillis()
+    // Conflito se nova alocação invadir gap
+    return (newStart < existingEnd + GAP_MS) && (newEnd + GAP_MS > existingStart)
+  })
+
+2.5.3 Quick Allocate (Alocação Rápida)
+
+Funcionalidade para uso imediato de máquina disponível, sem agendamento prévio.
+
+[DIAGRAMA 2.21: Fluxo de Quick Allocate]
+- Usuário na máquina → Agente valida → API verifica disponibilidade
+- Cria alocação de até 60 minutos
+- Considera gap de 20 minutos até próxima reserva
+
+  Regras implementadas:
+  - Máquina deve estar sem alocação ativa no momento
+  - Próxima alocação agendada deve estar a pelo menos 20 minutos
+  - Duração máxima: 60 minutos (ou até 5 min antes da próxima)
+  - Usuário deve estar autenticado via credenciais válidas
+
+
+--------------------------------------------------------------------------------
+2.6 CONSIDERAÇÕES SOBRE ESCALABILIDADE
+--------------------------------------------------------------------------------
+
+Embora o MVP foque em um laboratório específico, a arquitetura contempla
+crescimento futuro.
+
+2.6.1 Escalabilidade Vertical
+
+A aplicação Node.js pode se beneficiar de:
+- Mais núcleos de CPU (cluster mode do PM2)
+- Mais memória (aumenta capacidade de cache)
+- SSD rápido (melhora I/O do SQLite)
+
+2.6.2 Escalabilidade Horizontal
+
+Para múltiplas instâncias, seria necessário:
+- Migrar de SQLite para PostgreSQL (suporta conexões concorrentes)
+- Externalizar cache (Redis no lugar de Map em memória)
+- Load balancer (nginx, HAProxy)
+- Sessões stateless (já implementado com tokens)
+
+[DIAGRAMA 2.22: Arquitetura Escalável (Futuro)]
+- Múltiplas instâncias da API atrás de load balancer
+- Redis para cache compartilhado
+- PostgreSQL com read replicas
+- CDN para assets estáticos do frontend
+
+2.6.3 Gargalos Conhecidos
+
+- TelemetryBuffer: Perda de dados em caso de crash (aceitável para telemetria)
+- SQLite: Serializa escritas (adequado para dezenas de máquinas)
+- Cache local: Inconsistência em múltiplas instâncias (resolver com Redis)
+
+
+--------------------------------------------------------------------------------
+2.7 RESUMO DO CAPÍTULO
+--------------------------------------------------------------------------------
+
+Este capítulo apresentou a fundamentação teórica e as decisões arquiteturais
+do Sistema Distribuído de Gestão de Laboratórios:
+
+  1. Fundamentação: Conceitos de arquitetura web (cliente-servidor, REST,
+     três camadas, event loop) que embasam as escolhas técnicas.
+
+  2. Tecnologias: Justificativas para Node.js, TypeScript, AdonisJS e
+     ecossistema associado (Lucid ORM, VineJS).
+
+  3. Arquitetura: Sistema de três componentes (API, Frontend, Agentes)
+     com comunicação REST e modelo de dados relacional.
+
+  4. Segurança: Autenticação dual, hashing de senhas, validação de entrada
+     e controle de acesso baseado em roles.
+
+  5. Regras de Negócio: Ciclo de vida de alocações, gap entre reservas
+     e funcionalidade de alocação rápida.
+
+  6. Escalabilidade: Considerações para crescimento futuro, incluindo
+     migração para PostgreSQL e cache distribuído.
+
+[DIAGRAMA 2.23: Resumo Visual da Arquitetura]
+- Consolidar todos os componentes em um único diagrama
+- Indicar tecnologias em cada camada
+- Mostrar fluxos principais de comunicação
+
+O próximo capítulo abordará os detalhes de implementação, incluindo código
+específico de endpoints, testes automatizados e procedimentos de deployment.
+
+
+================================================================================
+                         FIM DO CAPÍTULO 2
+================================================================================
+
+
+--------------------------------------------------------------------------------
+                    LISTA DE DIAGRAMAS PARA PRODUÇÃO
+--------------------------------------------------------------------------------
+
+Os seguintes diagramas devem ser produzidos com ferramentas apropriadas
+(draw.io, Lucidchart, PlantUML, etc.) para inclusão no documento final:
+
+DIAGRAMA 2.1:  Modelo Cliente-Servidor Básico
+DIAGRAMA 2.2:  Verbos HTTP e Semântica REST
+DIAGRAMA 2.3:  Arquitetura de Três Camadas do Sistema
+DIAGRAMA 2.4:  Event Loop do Node.js
+DIAGRAMA 2.5:  Comparativo de Modelos de Concorrência
+DIAGRAMA 2.6:  Pipeline de Compilação TypeScript
+DIAGRAMA 2.7:  Trade-off Framework vs Hardcode
+DIAGRAMA 2.8:  Ecossistema AdonisJS
+DIAGRAMA 2.9:  Fluxo do Lucid ORM
+DIAGRAMA 2.10: Visão Geral do Sistema Distribuído
+DIAGRAMA 2.11: Fluxo de Comunicação - Visão Temporal
+DIAGRAMA 2.12: Estrutura MVC da API
+DIAGRAMA 2.13: Fluxo Detalhado de uma Requisição
+DIAGRAMA 2.14: Diagrama Entidade-Relacionamento (ER)
+DIAGRAMA 2.15: Fluxo de Autenticação Dual
+DIAGRAMA 2.16: Cache e Buffer - Fluxo de Dados
+DIAGRAMA 2.17: Fluxo de Hash de Senhas
+DIAGRAMA 2.18: Matriz de Permissões
+DIAGRAMA 2.19: Máquina de Estados - Alocação
+DIAGRAMA 2.20: Regra de Gap - Linha Temporal
+DIAGRAMA 2.21: Fluxo de Quick Allocate
+DIAGRAMA 2.22: Arquitetura Escalável (Futuro)
+DIAGRAMA 2.23: Resumo Visual da Arquitetura
+
+Total: 23 diagramas
+
+Recomendações de ferramentas:
+- draw.io: Diagramas de arquitetura, fluxos, ER
+- PlantUML: Diagramas de sequência, máquinas de estado
+- Mermaid: Alternativa text-based integrável ao markdown
+- Lucidchart: Diagramas profissionais colaborativos
+
+
+--------------------------------------------------------------------------------
+                    REFERÊNCIAS SUGERIDAS PARA O CAPÍTULO
+--------------------------------------------------------------------------------
+
+FIELDING, R. T. Architectural Styles and the Design of Network-based Software
+Architectures. Tese (Doutorado) - University of California, Irvine, 2000.
+
+NODE.JS FOUNDATION. Node.js Documentation. Disponível em: https://nodejs.org/docs
+
+ADONIS.JS. AdonisJS Documentation v6. Disponível em: https://docs.adonisjs.com
+
+MICROSOFT. TypeScript Handbook. Disponível em: https://www.typescriptlang.org/docs
+
+PERCIVAL, C.; JOSEFSSON, S. The scrypt Password-Based Key Derivation Function.
+RFC 7914, IETF, 2016.
+
+SQLITE. SQLite Documentation. Disponível em: https://www.sqlite.org/docs.html
+
+FOWLER, M. Patterns of Enterprise Application Architecture. Addison-Wesley, 2002.
+
+================================================================================

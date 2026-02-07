@@ -1,9 +1,8 @@
 import Telemetry from '#models/telemetry'
 import logger from '@adonisjs/core/services/logger'
-import { DateTime } from 'luxon'
 
 interface TelemetryData {
-  machineId: number
+  allocationId: number
   cpuUsage: number
   cpuTemp: number
   gpuUsage: number
@@ -14,7 +13,6 @@ interface TelemetryData {
   uploadUsage: number
   moboTemperature?: number | null
   loggedUserName?: string | null
-  createdAt: DateTime
 }
 
 interface MachineLatestState {
@@ -28,12 +26,16 @@ interface MachineLatestState {
  * - Acumula telemetrias em memória
  * - Faz batch insert periodicamente
  * - Mantém estado mais recente para consulta imediata (dashboard)
+ *
+ * O estado real-time é indexado por machineId para fácil acesso do dashboard,
+ * enquanto a persistência usa allocationId como FK.
  */
 class TelemetryBuffer {
   // Buffer de telemetrias pendentes para insert
   private buffer: TelemetryData[] = []
 
   // Estado mais recente de cada máquina (para dashboard real-time)
+  // Chave: machineId (resolvido externamente pelo controller)
   private latestState = new Map<number, MachineLatestState>()
 
   // Configurações
@@ -52,19 +54,16 @@ class TelemetryBuffer {
 
   /**
    * Adiciona telemetria ao buffer e atualiza estado mais recente.
+   * @param machineId - ID da máquina (para indexar o estado real-time do dashboard)
+   * @param data - Dados da telemetria com allocationId
    */
-  add(data: Omit<TelemetryData, 'createdAt'>): void {
-    const telemetry: TelemetryData = {
-      ...data,
-      createdAt: DateTime.now(),
-    }
-
+  add(machineId: number, data: TelemetryData): void {
     // Adiciona ao buffer para persistência
-    this.buffer.push(telemetry)
+    this.buffer.push(data)
 
     // Atualiza estado mais recente da máquina (para dashboard)
-    this.latestState.set(data.machineId, {
-      data: telemetry,
+    this.latestState.set(machineId, {
+      data,
       receivedAt: Date.now(),
     })
 
@@ -168,11 +167,20 @@ class TelemetryBuffer {
   }
 
   /**
-   * Limpa estado de uma máquina (usar ao deletar máquina).
+   * Limpa estado real-time de uma máquina (usar ao deletar máquina).
+   * Os dados pendentes no buffer serão persistidos normalmente no próximo flush.
    */
   clearMachine(machineId: number): void {
     this.latestState.delete(machineId)
-    this.buffer = this.buffer.filter((t) => t.machineId !== machineId)
+  }
+
+  /**
+   * Descarta todos os dados pendentes e limpa o estado real-time.
+   * Usar apenas em testes para evitar contaminação entre cenários.
+   */
+  reset(): void {
+    this.buffer = []
+    this.latestState.clear()
   }
 }
 

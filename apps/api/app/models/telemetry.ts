@@ -1,14 +1,13 @@
-import { DateTime } from 'luxon'
 import { BaseModel, column, belongsTo } from '@adonisjs/lucid/orm'
 import type { BelongsTo } from '@adonisjs/lucid/types/relations'
-import Machine from '#models/machine'
+import Allocation from '#models/allocation'
 
 export default class Telemetry extends BaseModel {
   @column({ isPrimary: true })
   declare id: number
 
   @column()
-  declare machineId: number
+  declare allocationId: number
 
   // --- HARDWARE (Escala 0-1000) ---
   @column() declare cpuUsage: number
@@ -26,10 +25,9 @@ export default class Telemetry extends BaseModel {
   @column() declare moboTemperature: number | null
   @column() declare loggedUserName: string | null
 
-  @column.dateTime({ autoCreate: true })
-  declare createdAt: DateTime
+  // Sem createdAt: o ID auto-increment serve como sequência temporal (1 telemetria/segundo)
 
   // --- RELACIONAMENTO ---
-  @belongsTo(() => Machine)
-  declare machine: BelongsTo<typeof Machine>
+  @belongsTo(() => Allocation)
+  declare allocation: BelongsTo<typeof Allocation>
 }

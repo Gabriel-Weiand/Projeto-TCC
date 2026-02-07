@@ -244,11 +244,9 @@ export default class AllocationsController {
       })
     }
 
-    // Busca telemetrias do período
+    // Busca telemetrias da alocação (agora diretamente pelo allocationId)
     const telemetries = await Telemetry.query()
-      .where('machineId', allocation.machineId)
-      .where('createdAt', '>=', allocation.startTime.toISO()!)
-      .where('createdAt', '<=', allocation.endTime.toISO()!)
+      .where('allocationId', allocation.id)
 
     if (telemetries.length === 0) {
       return response.notFound({
@@ -303,8 +301,8 @@ export default class AllocationsController {
    * Calcula métricas agregadas a partir das telemetrias.
    */
   private calculateMetrics(telemetries: Telemetry[], allocation: Allocation) {
-    // Funções auxiliares
-    const avg = (values: number[]) => Math.round(values.reduce((a, b) => a + b, 0) / values.length)
+    // Funções auxiliares (float: sem arredondamento para inteiro)
+    const avg = (values: number[]) => values.reduce((a, b) => a + b, 0) / values.length
     const max = (values: number[]) => Math.max(...values)
 
     // Extrai valores

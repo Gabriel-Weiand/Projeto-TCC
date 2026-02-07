@@ -557,12 +557,28 @@ test.group('Agent API', (group) => {
 
   test('telemetry deve aceitar dados de telemetria', async ({ client, assert }) => {
     // Arrange
+    const user = await User.create({
+      fullName: 'Teste Telemetria',
+      email: 'telemetria@teste.com',
+      password: 'senha123',
+      role: 'user',
+    })
+
     const machine = await Machine.create({
       name: 'PC-AGENT-13',
       cpuModel: 'Intel i5',
       totalRamGb: 8,
       totalDiskGb: 256,
       status: 'offline',
+    })
+
+    // Cria alocação ativa para que a telemetria seja aceita
+    await Allocation.create({
+      userId: user.id,
+      machineId: machine.id,
+      startTime: DateTime.now().minus({ hours: 1 }),
+      endTime: DateTime.now().plus({ hours: 1 }),
+      status: 'approved',
     })
 
     // Act
