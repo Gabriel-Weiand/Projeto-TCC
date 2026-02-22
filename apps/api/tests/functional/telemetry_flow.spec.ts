@@ -87,6 +87,8 @@ test.group('Fluxo Completo de Telemetria', (group) => {
 
     const machine = await Machine.create({
       name: 'PC-LAB-FLOW-01',
+      macAddress: 'AA:BB:CC:04:01:01',
+      description: 'Máquina fluxo completo telemetria',
       cpuModel: 'Intel Core i7-12700K',
       gpuModel: 'NVIDIA RTX 3060',
       totalRamGb: 32,
@@ -167,6 +169,8 @@ test.group('Fluxo Completo de Telemetria', (group) => {
 
     const machine = await Machine.create({
       name: 'PC-DUP-01',
+      macAddress: 'AA:BB:CC:04:01:02',
+      description: 'Máquina teste flush duplo',
       status: 'available',
     })
 
@@ -224,6 +228,8 @@ test.group('Telemetria Data-Heavy', (group) => {
     for (let m = 0; m < 10; m++) {
       const machine = await Machine.create({
         name: `PC-HEAVY-${String(m + 1).padStart(2, '0')}`,
+        macAddress: `AA:BB:CC:04:02:${String(m + 1).padStart(2, '0')}`,
+        description: `Máquina heavy test ${m + 1}`,
         cpuModel: 'AMD Ryzen 9 5900X',
         totalRamGb: 64,
         totalDiskGb: 1024,
@@ -277,6 +283,8 @@ test.group('Telemetria Data-Heavy', (group) => {
 
     const machine = await Machine.create({
       name: 'PC-DIRETO-01',
+      macAddress: 'AA:BB:CC:04:01:03',
+      description: 'Máquina insert direto',
       cpuModel: 'Intel i9-13900K',
       totalRamGb: 64,
       totalDiskGb: 2048,
@@ -343,6 +351,8 @@ test.group('AllocationMetric - Resumo de Sessão', (group) => {
 
     const machine = await Machine.create({
       name: 'PC-RESUMO-01',
+      macAddress: 'AA:BB:CC:04:01:04',
+      description: 'Máquina resumo de sessão',
       cpuModel: 'Intel i7-12700K',
       totalRamGb: 32,
       totalDiskGb: 512,
@@ -420,6 +430,8 @@ test.group('AllocationMetric - Resumo de Sessão', (group) => {
 
     const machine = await Machine.create({
       name: 'PC-CALC-01',
+      macAddress: 'AA:BB:CC:04:01:05',
+      description: 'Máquina cálculo manual',
       status: 'available',
     })
 
@@ -523,7 +535,12 @@ test.group('AllocationMetric - Resumo de Sessão', (group) => {
       role: 'admin',
     })
 
-    const machine = await Machine.create({ name: 'PC-NODUP', status: 'available' })
+    const machine = await Machine.create({
+      name: 'PC-NODUP',
+      macAddress: 'AA:BB:CC:04:01:06',
+      description: 'Máquina teste duplicação',
+      status: 'available',
+    })
 
     const allocation = await Allocation.create({
       userId: admin.id,
@@ -553,7 +570,12 @@ test.group('AllocationMetric - Resumo de Sessão', (group) => {
       role: 'admin',
     })
 
-    const machine = await Machine.create({ name: 'PC-NOTEL', status: 'available' })
+    const machine = await Machine.create({
+      name: 'PC-NOTEL',
+      macAddress: 'AA:BB:CC:04:01:07',
+      description: 'Máquina teste sem telemetrias',
+      status: 'available',
+    })
 
     const allocation = await Allocation.create({
       userId: admin.id,
@@ -594,7 +616,12 @@ test.group('AllocationMetric - Resumo de Sessão', (group) => {
       role: 'user',
     })
 
-    const machine = await Machine.create({ name: 'PC-READ', status: 'available' })
+    const machine = await Machine.create({
+      name: 'PC-READ',
+      macAddress: 'AA:BB:CC:04:01:08',
+      description: 'Máquina teste leitura resumo',
+      status: 'available',
+    })
 
     const allocation = await Allocation.create({
       userId: user1.id,
@@ -642,7 +669,12 @@ test.group('Manutenção - Exclusão de Telemetrias e Métricas', (group) => {
       role: 'admin',
     })
 
-    const machine = await Machine.create({ name: 'PC-DEL-01', status: 'available' })
+    const machine = await Machine.create({
+      name: 'PC-DEL-01',
+      macAddress: 'AA:BB:CC:04:01:09',
+      description: 'Máquina teste exclusão telemetria',
+      status: 'available',
+    })
 
     const allocation = await Allocation.create({
       userId: admin.id,
@@ -678,7 +710,12 @@ test.group('Manutenção - Exclusão de Telemetrias e Métricas', (group) => {
       role: 'admin',
     })
 
-    const machine = await Machine.create({ name: 'PC-DELMET', status: 'available' })
+    const machine = await Machine.create({
+      name: 'PC-DELMET',
+      macAddress: 'AA:BB:CC:04:01:0A',
+      description: 'Máquina teste exclusão métrica',
+      status: 'available',
+    })
 
     const allocation = await Allocation.create({
       userId: admin.id,
@@ -724,7 +761,12 @@ test.group('Manutenção - Exclusão de Telemetrias e Métricas', (group) => {
       role: 'user',
     })
 
-    const machine = await Machine.create({ name: 'PC-CASCADE', status: 'available' })
+    const machine = await Machine.create({
+      name: 'PC-CASCADE',
+      macAddress: 'AA:BB:CC:04:01:0B',
+      description: 'Máquina teste cascade',
+      status: 'available',
+    })
 
     const allocation = await Allocation.create({
       userId: user.id,
@@ -813,6 +855,8 @@ test.group('Fluxo End-to-End via API do Agente', (group) => {
 
     const machine = await Machine.create({
       name: 'PC-E2E-01',
+      macAddress: 'AA:BB:CC:04:01:0C',
+      description: 'Máquina end-to-end agente',
       cpuModel: 'AMD Ryzen 7 5800X',
       gpuModel: 'RTX 3070',
       totalRamGb: 32,
@@ -836,6 +880,7 @@ test.group('Fluxo End-to-End via API do Agente', (group) => {
       const telResponse = await client
         .post('/api/agent/telemetry')
         .header('Authorization', `Bearer ${machine.token}`)
+        .header('X-Machine-Mac', machine.macAddress)
         .json(telData)
 
       telResponse.assertStatus(204)
@@ -886,6 +931,8 @@ test.group('Fluxo End-to-End via API do Agente', (group) => {
   test('telemetria sem alocação ativa é descartada (não persiste)', async ({ client, assert }) => {
     const machine = await Machine.create({
       name: 'PC-NO-ALLOC',
+      macAddress: 'AA:BB:CC:04:01:0D',
+      description: 'Máquina teste sem alocação',
       status: 'offline',
     })
 
@@ -893,6 +940,7 @@ test.group('Fluxo End-to-End via API do Agente', (group) => {
     const response = await client
       .post('/api/agent/telemetry')
       .header('Authorization', `Bearer ${machine.token}`)
+      .header('X-Machine-Mac', machine.macAddress)
       .json(generateTelemetry(0, 0.5))
 
     // Deve retornar 204 (aceita mas descarta)

@@ -8,7 +8,7 @@ export default class extends BaseSchema {
       table.increments('id')
 
       table.string('name', 50).notNullable()
-      table.string('description', 255).nullable()
+      table.string('description', 255).notNullable()
 
       // A API KEY DO AGENTE
       table.string('token', 128).notNullable().unique().index()
@@ -21,7 +21,7 @@ export default class extends BaseSchema {
 
       // Identificadores de Rede
       table.string('ip_address', 45).nullable() // IPv4 ou IPv6
-      table.string('mac_address', 17).nullable() // AA:BB:CC:DD:EE:FF
+      table.string('mac_address', 17).notNullable().unique() // AA:BB:CC:DD:EE:FF - Chave de autenticação do agente
 
       // Status da máquina
       table.enum('status', ['available', 'occupied', 'maintenance', 'offline']).defaultTo('offline')

@@ -26,16 +26,16 @@ export default class extends BaseSchema {
       table.integer('gpu_temp').unsigned().notNullable()
 
       table.integer('ram_usage').unsigned().notNullable()
-      table.integer('disk_usage').unsigned().notNullable() // % de uso do disco ativo
+      table.integer('disk_usage').unsigned().nullable() // % de uso do disco ativo (opcional)
 
       // --- REDE (Mbps) ---
-      table.integer('download_usage').unsigned().notNullable()
-      table.integer('upload_usage').unsigned().notNullable()
+      table.integer('download_usage').unsigned().nullable() // Opcional: nem sempre disponível
+      table.integer('upload_usage').unsigned().nullable() // Opcional: nem sempre disponível
 
       table.integer('mobo_temperature').unsigned().nullable()
 
-      // Contexto
-      table.string('logged_user_name').nullable()
+      // Contexto - Essencial para auditoria
+      table.string('logged_user_name').notNullable()
 
       // Sem created_at: o ID auto-increment serve como sequência temporal (1 telemetria/segundo)
     })

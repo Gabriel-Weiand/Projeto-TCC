@@ -311,9 +311,9 @@ export default class AllocationsController {
     const gpuUsages = telemetries.map((t) => t.gpuUsage)
     const gpuTemps = telemetries.map((t) => t.gpuTemp)
     const ramUsages = telemetries.map((t) => t.ramUsage)
-    const diskUsages = telemetries.map((t) => t.diskUsage)
-    const downloadUsages = telemetries.map((t) => t.downloadUsage)
-    const uploadUsages = telemetries.map((t) => t.uploadUsage)
+    const diskUsages = telemetries.map((t) => t.diskUsage).filter((t): t is number => t !== null)
+    const downloadUsages = telemetries.map((t) => t.downloadUsage).filter((t): t is number => t !== null)
+    const uploadUsages = telemetries.map((t) => t.uploadUsage).filter((t): t is number => t !== null)
     const moboTemps = telemetries.map((t) => t.moboTemperature).filter((t): t is number => t !== null)
 
     // Calcula duração em minutos
@@ -334,16 +334,16 @@ export default class AllocationsController {
       avgRamUsage: avg(ramUsages),
       maxRamUsage: max(ramUsages),
 
-      avgDiskUsage: avg(diskUsages),
-      maxDiskUsage: max(diskUsages),
+      avgDiskUsage: diskUsages.length > 0 ? avg(diskUsages) : null,
+      maxDiskUsage: diskUsages.length > 0 ? max(diskUsages) : null,
 
-      avgDownloadUsage: avg(downloadUsages),
-      maxDownloadUsage: max(downloadUsages),
-      avgUploadUsage: avg(uploadUsages),
-      maxUploadUsage: max(uploadUsages),
+      avgDownloadUsage: downloadUsages.length > 0 ? avg(downloadUsages) : null,
+      maxDownloadUsage: downloadUsages.length > 0 ? max(downloadUsages) : null,
+      avgUploadUsage: uploadUsages.length > 0 ? avg(uploadUsages) : null,
+      maxUploadUsage: uploadUsages.length > 0 ? max(uploadUsages) : null,
 
-      avgMoboTemp: moboTemps.length > 0 ? avg(moboTemps) : 0,
-      maxMoboTemp: moboTemps.length > 0 ? max(moboTemps) : 0,
+      avgMoboTemp: moboTemps.length > 0 ? avg(moboTemps) : null,
+      maxMoboTemp: moboTemps.length > 0 ? max(moboTemps) : null,
 
       sessionDurationMinutes,
     }

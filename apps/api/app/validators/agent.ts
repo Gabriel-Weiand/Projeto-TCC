@@ -31,11 +31,7 @@ export const syncSpecsValidator = vine.compile(
     totalRamGb: vine.number().positive().max(1024).optional(),
     totalDiskGb: vine.number().positive().max(100000).optional(),
     ipAddress: vine.string().trim().maxLength(45).optional(),
-    macAddress: vine
-      .string()
-      .trim()
-      .regex(/^([0-9A-Fa-f]{2}:){5}[0-9A-Fa-f]{2}$/)
-      .optional(),
+    // macAddress não é sincronizável: é definido na criação e usado na autenticação
   })
 )
 

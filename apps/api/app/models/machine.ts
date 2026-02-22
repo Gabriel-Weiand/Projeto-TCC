@@ -12,7 +12,7 @@ export default class Machine extends BaseModel {
   declare name: string
 
   @column()
-  declare description: string | null
+  declare description: string
 
   @column({ serializeAs: null }) // Não expor token na API
   declare token: string
@@ -33,7 +33,7 @@ export default class Machine extends BaseModel {
   declare ipAddress: string | null
 
   @column()
-  declare macAddress: string | null
+  declare macAddress: string
 
   @column()
   declare status: 'available' | 'occupied' | 'maintenance' | 'offline'

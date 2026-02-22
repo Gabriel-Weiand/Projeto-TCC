@@ -32,19 +32,19 @@ export default class extends BaseSchema {
       table.float('avg_ram_usage')
       table.float('max_ram_usage')
 
-      // --- DISCO ---
-      table.float('avg_disk_usage')
-      table.float('max_disk_usage')
+      // --- DISCO (nullable: nem sempre disponível) ---
+      table.float('avg_disk_usage').nullable()
+      table.float('max_disk_usage').nullable()
 
-      // --- REDE (Download/Upload) ---
-      table.float('avg_download_usage') // Mbps
-      table.float('max_download_usage')
-      table.float('avg_upload_usage')
-      table.float('max_upload_usage')
+      // --- REDE (nullable: nem sempre disponível) ---
+      table.float('avg_download_usage').nullable()
+      table.float('max_download_usage').nullable()
+      table.float('avg_upload_usage').nullable()
+      table.float('max_upload_usage').nullable()
 
-      // --- PLACA MÃE ---
-      table.float('avg_mobo_temp')
-      table.float('max_mobo_temp')
+      // --- PLACA MÃE (nullable: nem sempre disponível) ---
+      table.float('avg_mobo_temp').nullable()
+      table.float('max_mobo_temp').nullable()
 
       // --- OUTROS ---
       table.integer('session_duration_minutes').unsigned() // Duração total

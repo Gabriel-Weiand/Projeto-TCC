@@ -554,7 +554,6 @@ export default class AgentController {
         totalRamGb: machine.totalRamGb,
         totalDiskGb: machine.totalDiskGb,
         ipAddress: machine.ipAddress,
-        macAddress: machine.macAddress,
       },
     })
   }

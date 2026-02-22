@@ -12,6 +12,8 @@ test.group('Agent API', (group) => {
     // Arrange
     const machine = await Machine.create({
       name: 'PC-AGENT-01',
+      macAddress: 'AA:BB:CC:02:01:01',
+      description: 'Agente teste heartbeat',
       cpuModel: 'Intel i5',
       totalRamGb: 8,
       totalDiskGb: 256,
@@ -22,6 +24,7 @@ test.group('Agent API', (group) => {
     const response = await client
       .post('/api/agent/heartbeat')
       .header('Authorization', `Bearer ${machine.token}`)
+      .header('X-Machine-Mac', machine.macAddress)
 
     // Assert
     response.assertStatus(200)
@@ -50,6 +53,8 @@ test.group('Agent API', (group) => {
 
     const machine = await Machine.create({
       name: 'PC-AGENT-02',
+      macAddress: 'AA:BB:CC:02:01:02',
+      description: 'Agente teste heartbeat com alocação',
       cpuModel: 'Intel i5',
       totalRamGb: 8,
       totalDiskGb: 256,
@@ -69,6 +74,7 @@ test.group('Agent API', (group) => {
     const response = await client
       .post('/api/agent/heartbeat')
       .header('Authorization', `Bearer ${machine.token}`)
+      .header('X-Machine-Mac', machine.macAddress)
 
     // Assert
     response.assertStatus(200)
@@ -91,6 +97,8 @@ test.group('Agent API', (group) => {
 
     const machine = await Machine.create({
       name: 'PC-AGENT-03',
+      macAddress: 'AA:BB:CC:02:01:03',
+      description: 'Agente teste validate-user autorizado',
       cpuModel: 'Intel i5',
       totalRamGb: 8,
       totalDiskGb: 256,
@@ -110,6 +118,7 @@ test.group('Agent API', (group) => {
     const response = await client
       .post('/api/agent/validate-user')
       .header('Authorization', `Bearer ${machine.token}`)
+      .header('X-Machine-Mac', machine.macAddress)
       .json({
         email: 'teste@teste.com',
         password: 'senha123',
@@ -138,6 +147,8 @@ test.group('Agent API', (group) => {
 
     const machine = await Machine.create({
       name: 'PC-AGENT-04',
+      macAddress: 'AA:BB:CC:02:01:04',
+      description: 'Agente teste validate-user negado',
       cpuModel: 'Intel i5',
       totalRamGb: 8,
       totalDiskGb: 256,
@@ -150,6 +161,7 @@ test.group('Agent API', (group) => {
     const response = await client
       .post('/api/agent/validate-user')
       .header('Authorization', `Bearer ${machine.token}`)
+      .header('X-Machine-Mac', machine.macAddress)
       .json({
         email: 'teste@teste.com',
         password: 'senha123',
@@ -167,6 +179,8 @@ test.group('Agent API', (group) => {
     // Arrange
     const machine = await Machine.create({
       name: 'PC-AGENT-05',
+      macAddress: 'AA:BB:CC:02:01:05',
+      description: 'Agente teste credenciais inválidas',
       cpuModel: 'Intel i5',
       totalRamGb: 8,
       totalDiskGb: 256,
@@ -177,6 +191,7 @@ test.group('Agent API', (group) => {
     const response = await client
       .post('/api/agent/validate-user')
       .header('Authorization', `Bearer ${machine.token}`)
+      .header('X-Machine-Mac', machine.macAddress)
       .json({
         email: 'naoexiste@teste.com',
         password: 'senhaqualquer',
@@ -201,6 +216,8 @@ test.group('Agent API', (group) => {
 
     const machine = await Machine.create({
       name: 'PC-MANUTENCAO',
+      macAddress: 'AA:BB:CC:02:01:06',
+      description: 'Agente teste máquina em manutenção',
       cpuModel: 'Intel i5',
       totalRamGb: 8,
       totalDiskGb: 256,
@@ -211,6 +228,7 @@ test.group('Agent API', (group) => {
     const response = await client
       .post('/api/agent/validate-user')
       .header('Authorization', `Bearer ${machine.token}`)
+      .header('X-Machine-Mac', machine.macAddress)
       .json({
         email: 'teste@teste.com',
         password: 'senha123',
@@ -228,6 +246,8 @@ test.group('Agent API', (group) => {
     // Arrange
     const machine = await Machine.create({
       name: 'PC-AGENT-06',
+      macAddress: 'AA:BB:CC:02:01:07',
+      description: 'Agente teste day-schedule',
       cpuModel: 'Intel i5',
       totalRamGb: 8,
       totalDiskGb: 256,
@@ -238,6 +258,7 @@ test.group('Agent API', (group) => {
     const response = await client
       .get('/api/agent/day-schedule')
       .header('Authorization', `Bearer ${machine.token}`)
+      .header('X-Machine-Mac', machine.macAddress)
 
     // Assert - verifica formato da resposta
     response.assertStatus(200)
@@ -252,6 +273,8 @@ test.group('Agent API', (group) => {
     // Arrange
     const machine = await Machine.create({
       name: 'PC-AGENT-06B',
+      macAddress: 'AA:BB:CC:02:01:08',
+      description: 'Agente teste day-schedule com data',
       cpuModel: 'Intel i5',
       totalRamGb: 8,
       totalDiskGb: 256,
@@ -264,6 +287,7 @@ test.group('Agent API', (group) => {
     const response = await client
       .get(`/api/agent/day-schedule?date=${tomorrow}`)
       .header('Authorization', `Bearer ${machine.token}`)
+      .header('X-Machine-Mac', machine.macAddress)
 
     // Assert
     response.assertStatus(200)
@@ -274,6 +298,8 @@ test.group('Agent API', (group) => {
     // Arrange
     const machine = await Machine.create({
       name: 'PC-MANUTENCAO-2',
+      macAddress: 'AA:BB:CC:02:01:09',
+      description: 'Agente teste heartbeat manutenção',
       cpuModel: 'Intel i5',
       totalRamGb: 8,
       totalDiskGb: 256,
@@ -284,6 +310,7 @@ test.group('Agent API', (group) => {
     const response = await client
       .post('/api/agent/heartbeat')
       .header('Authorization', `Bearer ${machine.token}`)
+      .header('X-Machine-Mac', machine.macAddress)
 
     // Assert
     response.assertStatus(200)
@@ -306,6 +333,8 @@ test.group('Agent API', (group) => {
 
     const machine = await Machine.create({
       name: 'PC-AGENT-09',
+      macAddress: 'AA:BB:CC:02:01:0A',
+      description: 'Agente teste heartbeat sem alocação',
       cpuModel: 'Intel i5',
       totalRamGb: 8,
       totalDiskGb: 256,
@@ -318,6 +347,7 @@ test.group('Agent API', (group) => {
     const response = await client
       .post(`/api/agent/heartbeat?loggedUserId=${user.id}`)
       .header('Authorization', `Bearer ${machine.token}`)
+      .header('X-Machine-Mac', machine.macAddress)
 
     // Assert
     response.assertStatus(200)
@@ -331,6 +361,8 @@ test.group('Agent API', (group) => {
     // Arrange
     const machine = await Machine.create({
       name: 'PC-QUICK-TEST',
+      macAddress: 'AA:BB:CC:02:01:0B',
+      description: 'Agente teste quick-allocate info',
       cpuModel: 'Intel i5',
       totalRamGb: 8,
       totalDiskGb: 256,
@@ -341,6 +373,7 @@ test.group('Agent API', (group) => {
     const response = await client
       .post('/api/agent/heartbeat')
       .header('Authorization', `Bearer ${machine.token}`)
+      .header('X-Machine-Mac', machine.macAddress)
 
     // Assert
     response.assertStatus(200)
@@ -360,6 +393,8 @@ test.group('Agent API', (group) => {
 
     const machine = await Machine.create({
       name: 'PC-QUICK-01',
+      macAddress: 'AA:BB:CC:02:01:0C',
+      description: 'Agente teste quick-allocate',
       cpuModel: 'Intel i5',
       totalRamGb: 8,
       totalDiskGb: 256,
@@ -370,6 +405,7 @@ test.group('Agent API', (group) => {
     const response = await client
       .post('/api/agent/quick-allocate')
       .header('Authorization', `Bearer ${machine.token}`)
+      .header('X-Machine-Mac', machine.macAddress)
       .json({
         email: 'teste@teste.com',
         password: 'senha123',
@@ -404,6 +440,8 @@ test.group('Agent API', (group) => {
 
     const machine = await Machine.create({
       name: 'PC-QUICK-02',
+      macAddress: 'AA:BB:CC:02:01:0D',
+      description: 'Agente teste quick-allocate tempo insuficiente',
       cpuModel: 'Intel i5',
       totalRamGb: 8,
       totalDiskGb: 256,
@@ -423,6 +461,7 @@ test.group('Agent API', (group) => {
     const response = await client
       .post('/api/agent/quick-allocate')
       .header('Authorization', `Bearer ${machine.token}`)
+      .header('X-Machine-Mac', machine.macAddress)
       .json({
         email: 'teste@teste.com',
         password: 'senha123',
@@ -440,6 +479,8 @@ test.group('Agent API', (group) => {
     // Arrange
     const machine = await Machine.create({
       name: 'PC-QUICK-03',
+      macAddress: 'AA:BB:CC:02:01:0E',
+      description: 'Agente teste quick-allocate credenciais inválidas',
       cpuModel: 'Intel i5',
       totalRamGb: 8,
       totalDiskGb: 256,
@@ -450,6 +491,7 @@ test.group('Agent API', (group) => {
     const response = await client
       .post('/api/agent/quick-allocate')
       .header('Authorization', `Bearer ${machine.token}`)
+      .header('X-Machine-Mac', machine.macAddress)
       .json({
         email: 'naoexiste@teste.com',
         password: 'senhaerrada',
@@ -467,6 +509,8 @@ test.group('Agent API', (group) => {
     // Arrange
     const machine = await Machine.create({
       name: 'PC-AGENT-10',
+      macAddress: 'AA:BB:CC:02:01:0F',
+      description: 'Agente teste report-login',
       cpuModel: 'Intel i5',
       totalRamGb: 8,
       totalDiskGb: 256,
@@ -477,6 +521,7 @@ test.group('Agent API', (group) => {
     const response = await client
       .post('/api/agent/report-login')
       .header('Authorization', `Bearer ${machine.token}`)
+      .header('X-Machine-Mac', machine.macAddress)
       .json({
         username: 'aluno.silva',
       })
@@ -496,6 +541,8 @@ test.group('Agent API', (group) => {
     // Arrange
     const machine = await Machine.create({
       name: 'PC-AGENT-11',
+      macAddress: 'AA:BB:CC:02:01:10',
+      description: 'Agente teste report-logout',
       cpuModel: 'Intel i5',
       totalRamGb: 8,
       totalDiskGb: 256,
@@ -507,6 +554,7 @@ test.group('Agent API', (group) => {
     const response = await client
       .post('/api/agent/report-logout')
       .header('Authorization', `Bearer ${machine.token}`)
+      .header('X-Machine-Mac', machine.macAddress)
 
     // Assert
     response.assertStatus(200)
@@ -523,6 +571,8 @@ test.group('Agent API', (group) => {
     // Arrange
     const machine = await Machine.create({
       name: 'PC-AGENT-12',
+      macAddress: 'AA:BB:CC:02:01:11',
+      description: 'Agente teste sync-specs',
       status: 'available',
     })
 
@@ -530,13 +580,13 @@ test.group('Agent API', (group) => {
     const response = await client
       .put('/api/agent/sync-specs')
       .header('Authorization', `Bearer ${machine.token}`)
+      .header('X-Machine-Mac', machine.macAddress)
       .json({
         cpuModel: 'AMD Ryzen 9 5900X',
         gpuModel: 'NVIDIA RTX 4080',
         totalRamGb: 64,
         totalDiskGb: 2048,
         ipAddress: '192.168.1.100',
-        macAddress: 'AA:BB:CC:DD:EE:FF',
       })
 
     // Assert
@@ -566,6 +616,8 @@ test.group('Agent API', (group) => {
 
     const machine = await Machine.create({
       name: 'PC-AGENT-13',
+      macAddress: 'AA:BB:CC:02:01:12',
+      description: 'Agente teste telemetria',
       cpuModel: 'Intel i5',
       totalRamGb: 8,
       totalDiskGb: 256,
@@ -585,6 +637,7 @@ test.group('Agent API', (group) => {
     const response = await client
       .post('/api/agent/telemetry')
       .header('Authorization', `Bearer ${machine.token}`)
+      .header('X-Machine-Mac', machine.macAddress)
       .json({
         cpuUsage: 450,
         cpuTemp: 650,
@@ -594,6 +647,7 @@ test.group('Agent API', (group) => {
         diskUsage: 300,
         downloadUsage: 50.5,
         uploadUsage: 10.2,
+        loggedUserName: 'aluno.teste',
       })
 
     // Assert
@@ -620,6 +674,7 @@ test.group('Agent API', (group) => {
     const response = await client
       .post('/api/agent/heartbeat')
       .header('Authorization', 'Bearer token_invalido_123')
+      .header('X-Machine-Mac', 'AA:BB:CC:00:00:01')
 
     // Assert
     response.assertStatus(401)

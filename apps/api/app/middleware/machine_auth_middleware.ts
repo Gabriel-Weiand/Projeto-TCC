@@ -22,6 +22,16 @@ export default class MachineAuthMiddleware {
       })
     }
 
+    // Verifica MAC Address obrigatório
+    const macAddress = ctx.request.header('x-machine-mac')?.trim()
+
+    if (!macAddress) {
+      return ctx.response.unauthorized({
+        code: 'MISSING_MAC',
+        message: 'X-Machine-Mac header is required',
+      })
+    }
+
     // Busca no cache primeiro, só vai ao banco se necessário
     const machine = await machineCache.getByToken(token)
 
@@ -29,6 +39,14 @@ export default class MachineAuthMiddleware {
       return ctx.response.unauthorized({
         code: 'INVALID_TOKEN',
         message: 'Invalid machine credentials',
+      })
+    }
+
+    // Verifica se o MAC Address corresponde ao registrado
+    if (machine.macAddress.toLowerCase() !== macAddress.toLowerCase()) {
+      return ctx.response.unauthorized({
+        code: 'MAC_MISMATCH',
+        message: 'MAC address does not match the registered machine',
       })
     }
 

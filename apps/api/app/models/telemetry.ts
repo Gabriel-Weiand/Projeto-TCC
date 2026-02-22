@@ -15,15 +15,15 @@ export default class Telemetry extends BaseModel {
   @column() declare gpuUsage: number
   @column() declare gpuTemp: number
   @column() declare ramUsage: number
-  @column() declare diskUsage: number
+  @column() declare diskUsage: number | null
 
-  // --- REDE (Mbps) ---
-  @column() declare downloadUsage: number
-  @column() declare uploadUsage: number
+  // --- REDE (Mbps) - Opcional ---
+  @column() declare downloadUsage: number | null
+  @column() declare uploadUsage: number | null
 
   // --- EXTRAS ---
   @column() declare moboTemperature: number | null
-  @column() declare loggedUserName: string | null
+  @column() declare loggedUserName: string
 
   // Sem createdAt: o ID auto-increment serve como sequência temporal (1 telemetria/segundo)
 

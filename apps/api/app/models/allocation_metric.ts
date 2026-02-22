@@ -26,19 +26,19 @@ export default class AllocationMetric extends BaseModel {
   @column() declare avgRamUsage: number
   @column() declare maxRamUsage: number
 
-  // --- DISCO ---
-  @column() declare avgDiskUsage: number
-  @column() declare maxDiskUsage: number
+  // --- DISCO (nullable: nem sempre disponível) ---
+  @column() declare avgDiskUsage: number | null
+  @column() declare maxDiskUsage: number | null
 
-  // --- REDE ---
-  @column() declare avgDownloadUsage: number
-  @column() declare maxDownloadUsage: number
-  @column() declare avgUploadUsage: number
-  @column() declare maxUploadUsage: number
+  // --- REDE (nullable: nem sempre disponível) ---
+  @column() declare avgDownloadUsage: number | null
+  @column() declare maxDownloadUsage: number | null
+  @column() declare avgUploadUsage: number | null
+  @column() declare maxUploadUsage: number | null
 
-  // --- MOBO ---
-  @column() declare avgMoboTemp: number
-  @column() declare maxMoboTemp: number
+  // --- MOBO (nullable: nem sempre disponível) ---
+  @column() declare avgMoboTemp: number | null
+  @column() declare maxMoboTemp: number | null
 
   @column()
   declare sessionDurationMinutes: number

@@ -7,7 +7,14 @@ import vine from '@vinejs/vine'
 export const createMachineValidator = vine.compile(
   vine.object({
     name: vine.string().trim().minLength(2).maxLength(50),
-    description: vine.string().trim().maxLength(255).optional(),
+    description: vine.string().trim().maxLength(255),
+
+    // MAC Address - obrigatório para vincular à autenticação do agente
+    macAddress: vine
+      .string()
+      .trim()
+      .regex(/^([0-9A-Fa-f]{2}:){5}[0-9A-Fa-f]{2}$/),
+
 
     // Hardware specs (opcionais - podem ser preenchidos depois pelo agente)
     cpuModel: vine.string().trim().maxLength(100).optional(),
@@ -17,11 +24,6 @@ export const createMachineValidator = vine.compile(
 
     // Rede (opcionais)
     ipAddress: vine.string().trim().maxLength(45).optional(),
-    macAddress: vine
-      .string()
-      .trim()
-      .regex(/^([0-9A-Fa-f]{2}:){5}[0-9A-Fa-f]{2}$/)
-      .optional(),
 
     // Status inicial
     status: vine
@@ -37,7 +39,7 @@ export const createMachineValidator = vine.compile(
 export const updateMachineValidator = vine.compile(
   vine.object({
     name: vine.string().trim().minLength(2).maxLength(50).optional(),
-    description: vine.string().trim().maxLength(255).nullable().optional(),
+    description: vine.string().trim().maxLength(255).optional(),
 
     cpuModel: vine.string().trim().maxLength(100).nullable().optional(),
     gpuModel: vine.string().trim().maxLength(100).nullable().optional(),

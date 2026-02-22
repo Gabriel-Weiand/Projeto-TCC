@@ -16,15 +16,16 @@ export const telemetryReportValidator = vine.compile(
 
     // Memória e Disco (%)
     ramUsage: vine.number().min(0).max(1000),
-    diskUsage: vine.number().min(0).max(1000),
+    diskUsage: vine.number().min(0).max(1000).nullable().optional(),
 
-    // Rede (Mbps - sem limite rígido)
-    downloadUsage: vine.number().min(0),
-    uploadUsage: vine.number().min(0),
+    // Rede (Mbps - sem limite rígido, opcional)
+    downloadUsage: vine.number().min(0).nullable().optional(),
+    uploadUsage: vine.number().min(0).nullable().optional(),
 
     // Extras (opcionais)
     moboTemperature: vine.number().min(0).max(1500).nullable().optional(),
-    loggedUserName: vine.string().trim().maxLength(100).nullable().optional(),
+    // Usuário logado é obrigatório para auditoria
+    loggedUserName: vine.string().trim().maxLength(100),
   })
 )
 

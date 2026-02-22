@@ -8,11 +8,11 @@ interface TelemetryData {
   gpuUsage: number
   gpuTemp: number
   ramUsage: number
-  diskUsage: number
-  downloadUsage: number
-  uploadUsage: number
+  diskUsage?: number | null
+  downloadUsage?: number | null
+  uploadUsage?: number | null
   moboTemperature?: number | null
-  loggedUserName?: string | null
+  loggedUserName: string
 }
 
 interface MachineLatestState {
