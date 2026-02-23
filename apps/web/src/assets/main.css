@@ -1,0 +1,175 @@
+/* ============================================
+   Sistema de Laboratórios — CSS Global
+   Tema escuro minimalista
+   ============================================ */
+
+:root {
+  --bg-primary: #0a0a0f;
+  --bg-secondary: #12121a;
+  --bg-card: #16161f;
+  --bg-input: #1a1a25;
+  --bg-hover: #1e1e2a;
+
+  --border: #2a2a3a;
+  --border-focus: #4a6cf7;
+  --border-subtle: #1e1e2e;
+
+  --text-primary: #e8e8ec;
+  --text-secondary: #8888a0;
+  --text-muted: #555568;
+
+  --accent: #4a6cf7;
+  --accent-hover: #5b7dff;
+  --accent-soft: rgba(74, 108, 247, 0.12);
+
+  --success: #34d399;
+  --warning: #fbbf24;
+  --danger: #f87171;
+  --info: #60a5fa;
+
+  --radius: 8px;
+  --radius-lg: 12px;
+
+  --font: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+  --transition: 150ms ease;
+}
+
+*, *::before, *::after {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+html {
+  font-size: 16px;
+}
+
+body {
+  font-family: var(--font);
+  background: var(--bg-primary);
+  color: var(--text-primary);
+  line-height: 1.6;
+  cursor: default;
+  -webkit-font-smoothing: antialiased;
+  min-height: 100vh;
+  user-select: none;
+}
+
+#app {
+  min-height: 100vh;
+}
+
+/* ---- Links ---- */
+a {
+  color: var(--accent);
+  text-decoration: none;
+  transition: color var(--transition);
+}
+a:hover {
+  color: var(--accent-hover);
+}
+
+/* ---- Inputs ---- */
+input, select, textarea {
+  font-family: var(--font);
+  font-size: 1rem;
+  color: var(--text-primary);
+  background: var(--bg-input);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 0.75rem 1rem;
+  outline: none;
+  transition: border-color var(--transition);
+  width: 100%;
+}
+
+input, select, textarea {
+  cursor: text;
+  user-select: text;
+}
+
+input::placeholder {
+  color: var(--text-muted);
+}
+
+input:focus, select:focus, textarea:focus {
+  border-color: var(--border-focus);
+}
+
+/* ---- Buttons ---- */
+button {
+  font-family: var(--font);
+  font-size: 1rem;
+  cursor: pointer;
+  border: none;
+  border-radius: var(--radius);
+  padding: 0.75rem 1.5rem;
+  transition: all var(--transition);
+}
+
+.btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.5rem;
+  font-weight: 500;
+}
+
+.btn-primary {
+  background: var(--accent);
+  color: #fff;
+}
+.btn-primary:hover:not(:disabled) {
+  background: var(--accent-hover);
+}
+.btn-primary:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.btn-ghost {
+  background: transparent;
+  color: var(--text-secondary);
+  border: 1px solid var(--border);
+}
+.btn-ghost:hover {
+  background: var(--bg-hover);
+  color: var(--text-primary);
+}
+
+.btn-danger {
+  background: transparent;
+  color: var(--danger);
+  border: 1px solid transparent;
+}
+.btn-danger:hover {
+  background: rgba(248, 113, 113, 0.1);
+}
+
+.btn-sm {
+  font-size: 0.85rem;
+  padding: 0.4rem 0.8rem;
+}
+
+/* ---- Utility ---- */
+.text-muted { color: var(--text-muted); }
+.text-secondary { color: var(--text-secondary); }
+.text-success { color: var(--success); }
+.text-warning { color: var(--warning); }
+.text-danger { color: var(--danger); }
+
+.mt-1 { margin-top: 0.5rem; }
+.mt-2 { margin-top: 1rem; }
+.mt-3 { margin-top: 1.5rem; }
+
+/* ---- Scrollbar ---- */
+::-webkit-scrollbar {
+  width: 6px;
+}
+::-webkit-scrollbar-track {
+  background: var(--bg-primary);
+}
+::-webkit-scrollbar-thumb {
+  background: var(--border);
+  border-radius: 3px;
+}
