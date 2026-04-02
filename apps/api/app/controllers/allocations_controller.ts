@@ -14,22 +14,24 @@ export default class AllocationsController {
    * Lista alocações com filtros opcionais.
    * - User normal: vê apenas suas próprias alocações
    * - Admin: vê todas
-   * 
+   *
    * GET /api/v1/allocations
    */
   async index({ auth, request, response }: HttpContext) {
     const user = auth.user!
-    const { userId, machineId, status, page = 1, limit = 20 } = 
-      await request.validateUsing(listAllocationsValidator)
+    const {
+      userId,
+      machineId,
+      status,
+      page = 1,
+      limit = 20,
+    } = await request.validateUsing(listAllocationsValidator)
 
-    let query = Allocation.query()
-      .preload('user')
-      .preload('machine')
-      .orderBy('startTime', 'desc')
+    let query = Allocation.query().preload('user').preload('machine').orderBy('startTime', 'desc')
 
-    // User normal só vê suas próprias alocações
+    // User normal só vê suas próprias alocações (excluindo as ocultas)
     if (user.role !== 'admin') {
-      query = query.where('userId', user.id)
+      query = query.where('userId', user.id).where('userHidden', false)
     } else if (userId) {
       // Admin pode filtrar por userId
       query = query.where('userId', userId)
@@ -47,7 +49,7 @@ export default class AllocationsController {
    * Cria uma nova alocação (reserva).
    * - User normal: cria alocação para si mesmo (userId vem do auth)
    * - Admin: pode criar alocação para qualquer usuário
-   * 
+   *
    * POST /api/v1/allocations
    */
   async store({ auth, request, response }: HttpContext) {
@@ -90,7 +92,7 @@ export default class AllocationsController {
       const existingEnd = allocation.endTime.toMillis()
       // Conflito: nova alocação precisa começar 5min depois da anterior terminar
       // e terminar 5min antes da próxima começar
-      return (newStart < existingEnd + GAP_MS) && (newEnd + GAP_MS > existingStart)
+      return newStart < existingEnd + GAP_MS && newEnd + GAP_MS > existingStart
     })
 
     if (conflict) {
@@ -115,7 +117,7 @@ export default class AllocationsController {
    * Atualiza uma alocação (status, horário, etc).
    * - User normal: só pode cancelar suas próprias alocações (approved → cancelled)
    * - Admin: pode alterar qualquer alocação para qualquer status
-   * 
+   *
    * PATCH /api/v1/allocations/:id
    */
   async update({ auth, params, request, response }: HttpContext) {
@@ -141,11 +143,11 @@ export default class AllocationsController {
         })
       }
 
-      // Só pode cancelar se estiver aprovada
-      if (data.status === 'cancelled' && allocation.status !== 'approved') {
+      // Só pode cancelar se estiver pendente ou aprovada
+      if (data.status === 'cancelled' && !['approved', 'pending'].includes(allocation.status)) {
         return response.forbidden({
           code: 'CANNOT_CANCEL',
-          message: 'Só é possível cancelar alocações com status aprovado.',
+          message: 'Só é possível cancelar alocações com status pendente ou aprovado.',
         })
       }
 
@@ -168,8 +170,56 @@ export default class AllocationsController {
   }
 
   /**
+   * Soft-delete de uma alocação pelo usuário.
+   * Oculta a alocação do histórico do usuário, mas mantém o registro para o admin.
+   * - Se a alocação está pendente/aprovada e ainda não começou → cancela + oculta
+   * - Se a alocação já foi finalizada/cancelada/negada → apenas oculta
+   * - Não permite ocultar alocação em andamento
+   *
+   * DELETE /api/v1/allocations/:id
+   */
+  async softDelete({ auth, params, response }: HttpContext) {
+    const user = auth.user!
+    const allocation = await Allocation.findOrFail(params.id)
+
+    // Verificar propriedade (admin pode fazer soft-delete em qualquer uma)
+    if (user.role !== 'admin' && allocation.userId !== user.id) {
+      return response.forbidden({
+        code: 'NOT_OWNER',
+        message: 'Você só pode remover suas próprias alocações.',
+      })
+    }
+
+    const now = Date.now()
+    const startMs = allocation.startTime.toMillis()
+    const endMs = allocation.endTime.toMillis()
+
+    // Verificar se está em andamento (já começou mas não terminou)
+    if (now >= startMs && now < endMs && ['approved'].includes(allocation.status)) {
+      return response.forbidden({
+        code: 'ALLOCATION_IN_PROGRESS',
+        message: 'Não é possível remover uma alocação em andamento.',
+      })
+    }
+
+    // Se pendente ou aprovada e ainda não começou → cancela automaticamente
+    if (['pending', 'approved'].includes(allocation.status) && now < startMs) {
+      allocation.status = 'cancelled'
+    }
+
+    allocation.userHidden = true
+    await allocation.save()
+
+    return response.ok({
+      message: 'Alocação removida do seu histórico.',
+      id: allocation.id,
+      status: allocation.status,
+    })
+  }
+
+  /**
    * Histórico de alocações de um usuário.
-   * 
+   *
    * GET /api/v1/users/:id/allocations
    */
   async userHistory({ params, request, response }: HttpContext) {
@@ -189,7 +239,7 @@ export default class AllocationsController {
    * Histórico de alocações de uma máquina.
    * - User normal: vê apenas horários (anonimizado)
    * - Admin: vê tudo incluindo dados do usuário
-   * 
+   *
    * GET /api/v1/machines/:id/allocations
    */
   async machineHistory({ auth, params, request, response }: HttpContext) {
@@ -228,7 +278,7 @@ export default class AllocationsController {
   /**
    * Gera resumo/métricas de uma sessão (alocação).
    * Consolida telemetrias do período em AllocationMetric.
-   * 
+   *
    * POST /api/v1/allocations/:id/summary
    */
   async summarizeSession({ params, response }: HttpContext) {
@@ -245,8 +295,7 @@ export default class AllocationsController {
     }
 
     // Busca telemetrias da alocação (agora diretamente pelo allocationId)
-    const telemetries = await Telemetry.query()
-      .where('allocationId', allocation.id)
+    const telemetries = await Telemetry.query().where('allocationId', allocation.id)
 
     if (telemetries.length === 0) {
       return response.notFound({
@@ -270,7 +319,7 @@ export default class AllocationsController {
    * Retorna o resumo/métricas de uma sessão.
    * - User normal: só pode ver suas próprias alocações
    * - Admin: pode ver todas
-   * 
+   *
    * GET /api/v1/allocations/:id/summary
    */
   async getSessionSummary({ auth, params, response }: HttpContext) {
@@ -312,9 +361,15 @@ export default class AllocationsController {
     const gpuTemps = telemetries.map((t) => t.gpuTemp)
     const ramUsages = telemetries.map((t) => t.ramUsage)
     const diskUsages = telemetries.map((t) => t.diskUsage).filter((t): t is number => t !== null)
-    const downloadUsages = telemetries.map((t) => t.downloadUsage).filter((t): t is number => t !== null)
-    const uploadUsages = telemetries.map((t) => t.uploadUsage).filter((t): t is number => t !== null)
-    const moboTemps = telemetries.map((t) => t.moboTemperature).filter((t): t is number => t !== null)
+    const downloadUsages = telemetries
+      .map((t) => t.downloadUsage)
+      .filter((t): t is number => t !== null)
+    const uploadUsages = telemetries
+      .map((t) => t.uploadUsage)
+      .filter((t): t is number => t !== null)
+    const moboTemps = telemetries
+      .map((t) => t.moboTemperature)
+      .filter((t): t is number => t !== null)
 
     // Calcula duração em minutos
     const durationMs = allocation.endTime.diff(allocation.startTime).milliseconds

@@ -8,19 +8,49 @@ import { DateTime } from 'luxon'
 
 export default class MachinesController {
   /**
+   * Normaliza telemetria bruta (escala 0-1000 / 0-1500) para valores legíveis.
+   * Usage: 0-1000 → 0-100 (porcentagem)
+   * Temp:  0-1500 → 0-150 (°C)
+   * Rede:  Mbps (sem conversão)
+   */
+  private normalizeTelemetry(raw: Record<string, unknown> | null) {
+    if (!raw) return null
+    return {
+      cpuUsage: Number(raw.cpuUsage ?? 0) / 10,
+      cpuTemp: Number(raw.cpuTemp ?? 0) / 10,
+      gpuUsage: Number(raw.gpuUsage ?? 0) / 10,
+      gpuTemp: Number(raw.gpuTemp ?? 0) / 10,
+      ramUsage: Number(raw.ramUsage ?? 0) / 10,
+      diskUsage: raw.diskUsage != null ? Number(raw.diskUsage) / 10 : null,
+      downloadUsage: raw.downloadUsage ?? null,
+      uploadUsage: raw.uploadUsage ?? null,
+      moboTemperature: raw.moboTemperature != null ? Number(raw.moboTemperature) / 10 : null,
+      timestamp: new Date().toISOString(),
+    }
+  }
+
+  /**
    * Lista todas as máquinas.
    *
    * GET /api/v1/machines
    */
-  async index({ response }: HttpContext) {
+  async index({ auth, response }: HttpContext) {
+    const user = auth.user!
     const machines = await Machine.query().orderBy('name', 'asc')
 
     // Adiciona telemetria real-time de cada máquina
     const machinesWithTelemetry = machines.map((machine) => {
-      const latestTelemetry = telemetryBuffer.getLatest(machine.id)
+      const raw = telemetryBuffer.getLatest(machine.id)
+      const serialized = machine.serialize()
+
+      // Oculta macAddress para usuários normais
+      if (user.role !== 'admin') {
+        delete serialized.macAddress
+      }
+
       return {
-        ...machine.serialize(),
-        latestTelemetry,
+        ...serialized,
+        latestTelemetry: this.normalizeTelemetry(raw as Record<string, unknown>),
       }
     })
 
@@ -47,21 +77,31 @@ export default class MachinesController {
 
   /**
    * Exibe detalhes de uma máquina.
-   * Admin pode ver o token atual para configurar o agente.
+   * - Admin: vê o token para configurar o agente
+   * - User normal: vê specs e telemetria (sem token)
    *
    * GET /api/v1/machines/:id
    */
-  async show({ params, response }: HttpContext) {
+  async show({ auth, params, response }: HttpContext) {
+    const user = auth.user!
     const machine = await Machine.findOrFail(params.id)
 
-    // Adiciona telemetria real-time
-    const latestTelemetry = telemetryBuffer.getLatest(machine.id)
+    // Adiciona telemetria real-time (normalizada)
+    const raw = telemetryBuffer.getLatest(machine.id)
 
-    return response.ok({
+    const serialized: Record<string, unknown> = {
       ...machine.serialize(),
-      token: machine.token, // Admin pode ver o token
-      latestTelemetry,
-    })
+      latestTelemetry: this.normalizeTelemetry(raw as Record<string, unknown>),
+    }
+
+    // Apenas admin pode ver o token e macAddress
+    if (user.role === 'admin') {
+      serialized.token = machine.token
+    } else {
+      delete serialized.macAddress
+    }
+
+    return response.ok(serialized)
   }
 
   /**
@@ -136,15 +176,15 @@ export default class MachinesController {
     const { page = 1, limit = 100 } = request.qs()
 
     // Busca alocações da máquina e carrega suas telemetrias
-    const allocations = await Allocation.query()
-      .where('machineId', machine.id)
-      .select('id')
+    const allocations = await Allocation.query().where('machineId', machine.id).select('id')
 
     const allocationIds = allocations.map((a) => a.id)
 
     if (allocationIds.length === 0) {
       return response.ok({
-        realtime: telemetryBuffer.getLatest(machine.id),
+        realtime: this.normalizeTelemetry(
+          telemetryBuffer.getLatest(machine.id) as Record<string, unknown>
+        ),
         history: { data: [], meta: { total: 0, perPage: limit, currentPage: page } },
       })
     }
@@ -157,11 +197,11 @@ export default class MachinesController {
       .orderBy('id', 'desc')
       .paginate(page, limit)
 
-    // Adiciona dado real-time no topo
+    // Adiciona dado real-time no topo (normalizado)
     const latestRealtime = telemetryBuffer.getLatest(machine.id)
 
     return response.ok({
-      realtime: latestRealtime,
+      realtime: this.normalizeTelemetry(latestRealtime as Record<string, unknown>),
       history: telemetries,
     })
   }

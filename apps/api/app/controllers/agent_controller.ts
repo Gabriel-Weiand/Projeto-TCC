@@ -13,9 +13,10 @@ import { telemetryBuffer } from '#services/telemetry_buffer'
 import { machineCache } from '#services/machine_cache'
 
 /**
- * Duração padrão de uma alocação rápida em minutos.
+ * Duração padrão de uma alocação rápida em minutos (quando não especificada).
+ * Sem limite máximo fixo — a duração real é limitada pelo gap até a próxima alocação.
  */
-const QUICK_ALLOCATION_DURATION_MINUTES = 60
+const QUICK_ALLOCATION_DURATION_MINUTES = 120
 
 /**
  * Tempo mínimo em minutos antes da próxima alocação para permitir alocação rápida.
@@ -47,9 +48,9 @@ export default class AgentController {
 
     const allocations = await query
 
-    return allocations.find(
-      (a) => a.startTime.toMillis() <= now && a.endTime.toMillis() >= now
-    ) || null
+    return (
+      allocations.find((a) => a.startTime.toMillis() <= now && a.endTime.toMillis() >= now) || null
+    )
   }
 
   /**
@@ -122,20 +123,20 @@ export default class AgentController {
       const allocEnd = a.endTime.toMillis()
       // Conflito considerando gap: nova alocação precisa terminar 5min antes da próxima
       // e começar 5min depois da anterior
-      return (startMs < allocEnd + gapMs) && (endMs + gapMs > allocStart)
+      return startMs < allocEnd + gapMs && endMs + gapMs > allocStart
     })
   }
 
   /**
    * Heartbeat - Rota principal de polling do agente.
    * Atualiza último contato, retorna status da máquina e informações de controle.
-   * 
+   *
    * Esta rota consolida heartbeat + should-block + info de alocação rápida.
    * O agente deve chamar periodicamente (a cada 30s) e também quando precisa
    * verificar se deve bloquear.
-   * 
+   *
    * POST /api/agent/heartbeat
-   * 
+   *
    * Query params opcionais:
    *   - loggedUserId: ID do usuário logado no SO (para verificar se deve bloquear)
    */
@@ -158,6 +159,13 @@ export default class AgentController {
       machine.id,
       loggedUserId ? Number(loggedUserId) : undefined
     )
+
+    // Se não há alocação ativa mas máquina está como 'occupied', corrige automaticamente
+    if (!currentAllocation && machine.status === 'occupied') {
+      machine.status = 'available'
+      machine.loggedUser = null
+      await machine.save()
+    }
 
     // Busca próxima alocação da máquina
     const nextAllocation = await this.findNextAllocation(machine.id)
@@ -206,9 +214,7 @@ export default class AgentController {
             userEmail: currentAllocation.user?.email,
             startTime: currentAllocation.startTime,
             endTime: currentAllocation.endTime,
-            remainingMinutes: Math.floor(
-              currentAllocation.endTime.diff(now, 'minutes').minutes
-            ),
+            remainingMinutes: Math.floor(currentAllocation.endTime.diff(now, 'minutes').minutes),
           }
         : null,
       // Próxima alocação - SEM nome do usuário (privacidade na tela de login)
@@ -238,7 +244,7 @@ export default class AgentController {
   /**
    * Valida credenciais de um usuário e verifica se tem alocação ativa.
    * Usado quando o usuário tenta logar na máquina física.
-   * 
+   *
    * POST /api/agent/validate-user
    */
   async validateUser({ authenticatedMachine, request, response }: HttpContext) {
@@ -314,19 +320,22 @@ export default class AgentController {
    * Retorna agenda do dia da máquina.
    * Mostra apenas horários das alocações (SEM nome dos usuários) para privacidade.
    * Usado para mostrar calendário na tela de login do agente.
-   * 
+   *
    * GET /api/agent/day-schedule
-   * 
+   *
    * Query params opcionais:
    *   - date: Data no formato YYYY-MM-DD (padrão: hoje)
+   *   - tz: Fuso horário IANA (ex: America/Sao_Paulo). Define os limites do "dia".
+   *         Se omitido, usa UTC.
    */
   async daySchedule({ authenticatedMachine, request, response }: HttpContext) {
     const machine = authenticatedMachine!
     const now = DateTime.now()
 
     // Permite consultar data específica (útil para ver amanhã, etc)
-    const { date } = request.qs()
-    const targetDate = date ? DateTime.fromISO(date) : now
+    const { date, tz } = request.qs()
+    const zone = tz || 'UTC'
+    const targetDate = date ? DateTime.fromISO(date, { zone }) : now.setZone(zone)
 
     if (!targetDate.isValid) {
       return response.badRequest({ error: 'Formato de data inválido. Use YYYY-MM-DD.' })
@@ -354,20 +363,18 @@ export default class AgentController {
   /**
    * Cria uma alocação rápida (on-the-spot).
    * Permite que um usuário crie uma alocação instantânea se houver disponibilidade.
-   * 
+   *
    * Regras:
    * - Deve ter pelo menos 20 minutos até a próxima alocação
    * - Duração máxima de 60 minutos (ou até 5min antes da próxima alocação)
    * - Requer credenciais válidas do usuário
    * - Gap de 5 minutos obrigatório entre alocações
-   * 
+   *
    * POST /api/agent/quick-allocate
    */
   async quickAllocate({ authenticatedMachine, request, response }: HttpContext) {
     const machine = authenticatedMachine!
-    const { email, password, durationMinutes } = await request.validateUsing(
-      quickAllocateValidator
-    )
+    const { email, password, durationMinutes } = await request.validateUsing(quickAllocateValidator)
     const now = DateTime.now()
 
     // === 1. Valida credenciais ===
@@ -421,11 +428,6 @@ export default class AgentController {
 
     // === 5. Calcula duração efetiva ===
     let effectiveDuration = durationMinutes || QUICK_ALLOCATION_DURATION_MINUTES
-
-    // Limita ao máximo permitido
-    if (effectiveDuration > QUICK_ALLOCATION_DURATION_MINUTES) {
-      effectiveDuration = QUICK_ALLOCATION_DURATION_MINUTES
-    }
 
     // Se há próxima alocação, ajusta para respeitar gap de 5min
     if (nextAllocation) {
@@ -487,7 +489,7 @@ export default class AgentController {
 
   /**
    * Reporta que um usuário logou no SO da máquina.
-   * 
+   *
    * POST /api/agent/report-login
    */
   async reportLogin({ authenticatedMachine, request, response }: HttpContext) {
@@ -509,7 +511,7 @@ export default class AgentController {
 
   /**
    * Reporta que o usuário deslogou do SO da máquina.
-   * 
+   *
    * POST /api/agent/report-logout
    */
   async reportLogout({ authenticatedMachine, response }: HttpContext) {
@@ -531,7 +533,7 @@ export default class AgentController {
 
   /**
    * Sincroniza especificações de hardware detectadas pelo agente.
-   * 
+   *
    * PUT /api/agent/sync-specs
    */
   async syncSpecs({ authenticatedMachine, request, response }: HttpContext) {
@@ -562,7 +564,7 @@ export default class AgentController {
    * Recebe telemetria do agente.
    * Os dados vão para o buffer e são persistidos periodicamente.
    * Telemetria só é aceita se houver uma alocação ativa na máquina.
-   * 
+   *
    * POST /api/agent/telemetry
    */
   async telemetry({ authenticatedMachine, request, response }: HttpContext) {

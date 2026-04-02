@@ -29,8 +29,18 @@ def _auto_detect_mac() -> str:
     return ''
 
 
+def _validate_server_url(url: str) -> str:
+    """Valida e normaliza a URL do servidor."""
+    url = url.strip().rstrip('/')
+    if not url:
+        return 'http://localhost:3333'
+    if not url.startswith(('http://', 'https://')):
+        url = 'http://' + url
+    return url
+
+
 # === Servidor ===
-SERVER_URL = os.getenv('SERVER_URL', 'http://localhost:3333')
+SERVER_URL = _validate_server_url(os.getenv('SERVER_URL', 'http://localhost:3333'))
 MACHINE_TOKEN = os.getenv('MACHINE_TOKEN', '')
 
 # === MAC Address (auto-detectado se não configurado) ===

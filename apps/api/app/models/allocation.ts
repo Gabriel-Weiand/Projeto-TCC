@@ -28,6 +28,9 @@ export default class Allocation extends BaseModel {
   @column()
   declare status: 'pending' | 'approved' | 'denied' | 'cancelled' | 'finished'
 
+  @column()
+  declare userHidden: boolean
+
   @column.dateTime({ autoCreate: true })
   declare createdAt: DateTime
 

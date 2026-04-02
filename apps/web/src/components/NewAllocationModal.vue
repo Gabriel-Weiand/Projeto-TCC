@@ -1,131 +1,135 @@
 <script setup lang="ts">
-import { ref } from "vue";
-import type { Machine } from "@/types";
+import { ref, reactive } from "vue";
 import { useAllocationsStore } from "@/stores/allocations";
+import type { Machine } from "@/types";
 
-const props = defineProps<{
-  machines: Machine[];
-  selectedDate: string;
-}>();
+const props = defineProps<{ machines: Machine[] }>();
+const emit = defineEmits<{ close: []; created: [] }>();
 
-const emit = defineEmits<{
-  close: [];
-  created: [];
-}>();
+const allocations = useAllocationsStore();
 
-const allocStore = useAllocationsStore();
+const form = reactive({
+  machineId: "" as string | number,
+  date: "",
+  startTime: "",
+  endTime: "",
+  reason: "",
+});
 
-const machineId = ref<number | null>(null);
-const startHour = ref("08:00");
-const endHour = ref("10:00");
-const reason = ref("");
+const saving = ref(false);
 const error = ref("");
-const loading = ref(false);
-
-// Apenas máquinas disponíveis
-const availableMachines = props.machines.filter(
-  (m) => m.status !== "maintenance",
-);
 
 async function handleCreate() {
   error.value = "";
 
-  if (!machineId.value) {
-    error.value = "Selecione uma máquina.";
+  if (!form.machineId || !form.date || !form.startTime || !form.endTime) {
+    error.value = "Preencha todos os campos obrigatórios.";
     return;
   }
 
-  const startTime = `${props.selectedDate}T${startHour.value}:00.000-03:00`;
-  const endTime = `${props.selectedDate}T${endHour.value}:00.000-03:00`;
+  const startTime = `${form.date}T${form.startTime}:00`;
+  const endTime = `${form.date}T${form.endTime}:00`;
 
   if (startTime >= endTime) {
-    error.value = "Horário final deve ser após o inicial.";
+    error.value = "Horário de início deve ser antes do fim.";
     return;
   }
 
-  loading.value = true;
+  saving.value = true;
   try {
-    await allocStore.createAllocation({
-      machineId: machineId.value,
+    await allocations.createAllocation({
+      machineId: Number(form.machineId),
       startTime,
       endTime,
-      reason: reason.value || undefined,
+      reason: form.reason || undefined,
     });
     emit("created");
   } catch (err: any) {
-    const data = err.response?.data;
-    if (data?.code === "ALLOCATION_CONFLICT") {
-      error.value =
-        "Conflito: já existe uma reserva neste horário para esta máquina.";
-    } else if (data?.code === "MACHINE_IN_MAINTENANCE") {
-      error.value = "Máquina está em manutenção.";
-    } else if (err.response?.status === 422) {
-      const msgs = data?.errors?.map((e: any) => e.message).join(", ");
-      error.value = msgs || "Dados inválidos.";
-    } else {
-      error.value = "Erro ao criar reserva.";
-    }
+    const status = err.response?.status;
+    if (status === 409) error.value = "Conflito de horário com outra reserva.";
+    else if (status === 422)
+      error.value = "Dados inválidos. Verifique os campos.";
+    else error.value = "Erro ao criar reserva.";
   } finally {
-    loading.value = false;
+    saving.value = false;
   }
 }
 </script>
 
 <template>
-  <div class="modal-overlay" @click.self="emit('close')">
-    <div class="modal-card">
-      <div class="modal-header">
-        <h3>Nova Reserva</h3>
-        <button class="btn-close" @click="emit('close')">✕</button>
+  <Teleport to="body">
+    <div class="modal-overlay" @click.self="emit('close')">
+      <div class="modal-glass fade-in">
+        <div class="modal-header">
+          <h2 class="modal-title">Nova Reserva</h2>
+          <button class="btn-close" @click="emit('close')">✕</button>
+        </div>
+
+        <form class="modal-body" @submit.prevent="handleCreate">
+          <div class="field">
+            <label class="field-label">Máquina</label>
+            <select v-model="form.machineId">
+              <option value="" disabled>Selecione...</option>
+              <option
+                v-for="m in props.machines.filter(
+                  (m) => m.status !== 'maintenance',
+                )"
+                :key="m.id"
+                :value="m.id"
+              >
+                {{ m.name }} —
+                {{
+                  m.status === "available"
+                    ? "🟢 Disponível"
+                    : m.status === "occupied"
+                      ? "🟡 Ocupada"
+                      : "🔴 Offline"
+                }}
+              </option>
+            </select>
+          </div>
+
+          <div class="field">
+            <label class="field-label">Data</label>
+            <input v-model="form.date" type="date" />
+          </div>
+
+          <div class="field-row">
+            <div class="field">
+              <label class="field-label">Início</label>
+              <input v-model="form.startTime" type="time" />
+            </div>
+            <div class="field">
+              <label class="field-label">Fim</label>
+              <input v-model="form.endTime" type="time" />
+            </div>
+          </div>
+
+          <div class="field">
+            <label class="field-label"
+              >Motivo <span class="text-muted">(opcional)</span></label
+            >
+            <textarea
+              v-model="form.reason"
+              rows="2"
+              placeholder="Ex: Treinamento de modelo ML"
+            ></textarea>
+          </div>
+
+          <p v-if="error" class="error-text">{{ error }}</p>
+
+          <div class="modal-actions">
+            <button type="button" class="btn btn-ghost" @click="emit('close')">
+              Cancelar
+            </button>
+            <button type="submit" class="btn btn-primary" :disabled="saving">
+              {{ saving ? "Criando..." : "Criar Reserva" }}
+            </button>
+          </div>
+        </form>
       </div>
-
-      <form @submit.prevent="handleCreate" class="modal-body">
-        <label class="field">
-          <span class="field-label">Máquina</span>
-          <select v-model="machineId">
-            <option :value="null" disabled>Selecione...</option>
-            <option v-for="m in availableMachines" :key="m.id" :value="m.id">
-              {{ m.name }} — {{ m.description }}
-            </option>
-          </select>
-        </label>
-
-        <div class="field-row">
-          <label class="field">
-            <span class="field-label">Início</span>
-            <input type="time" v-model="startHour" />
-          </label>
-          <label class="field">
-            <span class="field-label">Fim</span>
-            <input type="time" v-model="endHour" />
-          </label>
-        </div>
-
-        <label class="field">
-          <span class="field-label"
-            >Motivo <span class="text-muted">(opcional)</span></span
-          >
-          <input
-            type="text"
-            v-model="reason"
-            placeholder="Ex: Trabalho de IA"
-            maxlength="255"
-          />
-        </label>
-
-        <p v-if="error" class="modal-error">{{ error }}</p>
-
-        <div class="modal-actions">
-          <button type="button" class="btn btn-ghost" @click="emit('close')">
-            Cancelar
-          </button>
-          <button type="submit" class="btn btn-primary" :disabled="loading">
-            {{ loading ? "Criando..." : "Reservar" }}
-          </button>
-        </div>
-      </form>
     </div>
-  </div>
+  </Teleport>
 </template>
 
 <style scoped>
@@ -133,6 +137,7 @@ async function handleCreate() {
   position: fixed;
   inset: 0;
   background: rgba(0, 0, 0, 0.6);
+  backdrop-filter: blur(4px);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -140,65 +145,34 @@ async function handleCreate() {
   padding: 1rem;
 }
 
-.modal-card {
-  background: var(--bg-card);
+.modal-glass {
+  background: var(--bg-card-solid);
   border: 1px solid var(--border);
-  border-radius: var(--radius-lg);
+  border-radius: var(--radius-xl);
+  box-shadow: var(--shadow-elevated);
   width: 100%;
-  max-width: 440px;
+  max-width: 460px;
+  max-height: 90vh;
+  overflow-y: auto;
 }
 
 .modal-header {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 1rem 1.25rem;
+  padding: 1.25rem 1.5rem;
   border-bottom: 1px solid var(--border-subtle);
 }
-.modal-header h3 {
-  font-size: 1.15rem;
-  font-weight: 700;
-}
-
-.btn-close {
-  background: none;
-  color: var(--text-muted);
+.modal-title {
   font-size: 1.1rem;
-  padding: 0.25rem 0.5rem;
-}
-.btn-close:hover {
-  color: var(--text-primary);
+  font-weight: 600;
 }
 
 .modal-body {
-  padding: 1.25rem;
+  padding: 1.5rem;
   display: flex;
   flex-direction: column;
   gap: 1rem;
-}
-
-.field {
-  display: flex;
-  flex-direction: column;
-  gap: 0.3rem;
-}
-.field-label {
-  font-size: 0.85rem;
-  font-weight: 500;
-  color: var(--text-secondary);
-}
-
-.field-row {
-  display: flex;
-  gap: 1rem;
-}
-.field-row .field {
-  flex: 1;
-}
-
-.modal-error {
-  color: var(--danger);
-  font-size: 0.85rem;
 }
 
 .modal-actions {

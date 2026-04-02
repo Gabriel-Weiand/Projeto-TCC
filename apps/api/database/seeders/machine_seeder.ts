@@ -2,6 +2,8 @@ import { BaseSeeder } from '@adonisjs/lucid/seeders'
 import Machine from '#models/machine'
 
 export default class extends BaseSeeder {
+  static environment = ['via_index']
+
   async run() {
     const machines = await Machine.createMany([
       // Máquinas de alto desempenho
@@ -70,10 +72,10 @@ export default class extends BaseSeeder {
 
     // Exibe os tokens gerados para facilitar testes
     console.log('\n📟 Tokens das máquinas (salve para testes do Agent):')
-    console.log('=' .repeat(80))
+    console.log('='.repeat(80))
     for (const machine of machines) {
       console.log(`${machine.name}: ${machine.token}`)
     }
-    console.log('=' .repeat(80) + '\n')
+    console.log('='.repeat(80) + '\n')
   }
 }

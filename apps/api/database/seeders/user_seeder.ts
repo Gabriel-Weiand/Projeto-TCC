@@ -2,6 +2,8 @@ import { BaseSeeder } from '@adonisjs/lucid/seeders'
 import User from '#models/user'
 
 export default class extends BaseSeeder {
+  static environment = ['via_index']
+
   async run() {
     await User.createMany([
       // Admin principal

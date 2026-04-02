@@ -10,7 +10,6 @@ export const useAuthStore = defineStore("auth", () => {
   const isAuthenticated = computed(() => !!token.value);
   const isAdmin = computed(() => user.value?.role === "admin");
 
-  // Carrega estado persistido
   function loadFromStorage() {
     const savedToken = localStorage.getItem("token");
     const savedUser = localStorage.getItem("user");
@@ -25,13 +24,10 @@ export const useAuthStore = defineStore("auth", () => {
       email,
       password,
     });
-
     token.value = data.value;
     user.value = data.user;
-
     localStorage.setItem("token", data.value);
     localStorage.setItem("user", JSON.stringify(data.user));
-
     return data;
   }
 
@@ -39,7 +35,7 @@ export const useAuthStore = defineStore("auth", () => {
     try {
       await api.delete("/api/v1/logout");
     } catch {
-      // Ignora erros — limpa local de qualquer forma
+      /* ignore */
     }
     token.value = null;
     user.value = null;
@@ -57,6 +53,16 @@ export const useAuthStore = defineStore("auth", () => {
     }
   }
 
+  async function updateProfile(
+    id: number,
+    payload: { fullName?: string; email?: string; password?: string },
+  ) {
+    const { data } = await api.put<User>(`/api/v1/users/${id}`, payload);
+    user.value = data;
+    localStorage.setItem("user", JSON.stringify(data));
+    return data;
+  }
+
   return {
     user,
     token,
@@ -66,5 +72,6 @@ export const useAuthStore = defineStore("auth", () => {
     login,
     logout,
     fetchMe,
+    updateProfile,
   };
 });

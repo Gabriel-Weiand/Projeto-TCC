@@ -18,6 +18,7 @@ const UtilsController = () => import('#controllers/utils_controller')
 router
   .group(() => {
     router.get('alive', [UtilsController, 'alive']).as('utils.alive')
+    router.get('time', [UtilsController, 'time']).as('utils.time')
   })
   .prefix('api')
 
@@ -61,13 +62,16 @@ router
           .as('users.update')
           .where('id', router.matchers.number())
 
-        // --- Machines (Admin Only - except GET list) ---
-        router.get('/machines', [MachinesController, 'index']).as('machines.index') // Public
+        // --- Machines (GET list + show: General | Mutations: Admin Only) ---
+        router.get('/machines', [MachinesController, 'index']).as('machines.index')
+        router
+          .get('/machines/:id', [MachinesController, 'show'])
+          .as('machines.show')
+          .where('id', router.matchers.number())
 
         router
           .group(() => {
             router.post('/', [MachinesController, 'store']).as('machines.store')
-            router.get('/:id', [MachinesController, 'show']).as('machines.show')
             router.put('/:id', [MachinesController, 'update']).as('machines.update')
             router.delete('/:id', [MachinesController, 'destroy']).as('machines.destroy')
             router.get('/:id/telemetry', [MachinesController, 'telemetry']).as('machines.telemetry')
@@ -91,6 +95,9 @@ router
             router.post('/', [AllocationsController, 'store']).as('allocations.store') // General
             router.get('/', [AllocationsController, 'index']).as('allocations.index') // General
             router.patch('/:id', [AllocationsController, 'update']).as('allocations.update') // General
+            router
+              .delete('/:id', [AllocationsController, 'softDelete'])
+              .as('allocations.softDelete') // General (user soft-delete)
             router
               .get('/:id/summary', [AllocationsController, 'getSessionSummary'])
               .as('allocations.summary.show') // General

@@ -13,6 +13,8 @@ import getpass
 import socket
 import time
 import logging
+import glob
+import subprocess
 
 logger = logging.getLogger('agent.hardware')
 
@@ -29,7 +31,29 @@ try:
     _HAS_NVIDIA = True
     logger.info('GPU NVIDIA detectada via pynvml')
 except Exception:
-    logger.info('Sem GPU NVIDIA detectada (pynvml indisponível). Métricas de GPU serão zero.')
+    logger.info('Sem GPU NVIDIA detectada via pynvml.')
+
+# ============================================================
+# GPU AMD (via sysfs no Linux)
+# ============================================================
+_AMD_GPU_PATH = None
+
+def _find_amd_gpu_sysfs() -> str | None:
+    """Procura o caminho sysfs de uma GPU AMD com gpu_busy_percent."""
+    for path in sorted(glob.glob('/sys/class/drm/card*/device/gpu_busy_percent')):
+        try:
+            with open(path) as f:
+                f.read().strip()
+            return path.rsplit('/', 1)[0]  # retorna o diretório device/
+        except Exception:
+            continue
+    return None
+
+_AMD_GPU_PATH = _find_amd_gpu_sysfs()
+if _AMD_GPU_PATH:
+    logger.info(f'GPU AMD detectada: {_AMD_GPU_PATH}')
+elif not _HAS_NVIDIA:
+    logger.info('Nenhuma GPU detectada. Métricas de GPU serão zero.')
 
 
 # ============================================================
@@ -100,26 +124,46 @@ def get_cpu_temp() -> int:
 
 def get_gpu_usage() -> int:
     """Retorna uso de GPU na escala 0-1000."""
-    if not _HAS_NVIDIA:
-        return 0
-    try:
-        handle = pynvml.nvmlDeviceGetHandleByIndex(0)
-        util = pynvml.nvmlDeviceGetUtilizationRates(handle)
-        return int(util.gpu * 10)
-    except Exception:
-        return 0
+    # NVIDIA via pynvml
+    if _HAS_NVIDIA:
+        try:
+            handle = pynvml.nvmlDeviceGetHandleByIndex(0)
+            util = pynvml.nvmlDeviceGetUtilizationRates(handle)
+            return int(util.gpu * 10)
+        except Exception:
+            pass
+    # AMD via sysfs
+    if _AMD_GPU_PATH:
+        try:
+            with open(f'{_AMD_GPU_PATH}/gpu_busy_percent') as f:
+                return int(float(f.read().strip()) * 10)
+        except Exception:
+            pass
+    return 0
 
 
 def get_gpu_temp() -> int:
     """Retorna temperatura da GPU na escala 0-1500."""
-    if not _HAS_NVIDIA:
-        return 0
+    # NVIDIA via pynvml
+    if _HAS_NVIDIA:
+        try:
+            handle = pynvml.nvmlDeviceGetHandleByIndex(0)
+            temp = pynvml.nvmlDeviceGetTemperature(handle, pynvml.NVML_TEMPERATURE_GPU)
+            return int(temp * 10)
+        except Exception:
+            pass
+    # AMD via psutil sensors (amdgpu/edge)
     try:
-        handle = pynvml.nvmlDeviceGetHandleByIndex(0)
-        temp = pynvml.nvmlDeviceGetTemperature(handle, pynvml.NVML_TEMPERATURE_GPU)
-        return int(temp * 10)
+        temps = psutil.sensors_temperatures()
+        if 'amdgpu' in temps and temps['amdgpu']:
+            # Prefer 'edge' sensor (die temp), fallback to first
+            for entry in temps['amdgpu']:
+                if entry.label == 'edge':
+                    return int(entry.current * 10)
+            return int(temps['amdgpu'][0].current * 10)
     except Exception:
-        return 0
+        pass
+    return 0
 
 
 def get_ram_usage() -> int:
@@ -204,12 +248,28 @@ def get_system_specs() -> dict:
         if cpu:
             specs['cpuModel'] = cpu
 
-    # GPU Model (NVIDIA)
+    # GPU Model (NVIDIA ou AMD)
     if _HAS_NVIDIA:
         try:
             handle = pynvml.nvmlDeviceGetHandleByIndex(0)
             name = pynvml.nvmlDeviceGetName(handle)
             specs['gpuModel'] = name if isinstance(name, str) else name.decode()
+        except Exception:
+            pass
+    elif _AMD_GPU_PATH:
+        try:
+            result = subprocess.run(
+                ['lspci'],
+                capture_output=True, text=True, timeout=5,
+            )
+            for line in result.stdout.splitlines():
+                lower = line.lower()
+                if ('vga' in lower or '3d' in lower or 'display' in lower) and 'amd' in lower:
+                    # Extrai o nome após o tipo de dispositivo
+                    parts = line.split(': ', 1)
+                    if len(parts) > 1:
+                        specs['gpuModel'] = parts[1].strip()
+                    break
         except Exception:
             pass
 

@@ -1,74 +1,123 @@
 <script setup lang="ts">
-import { onMounted } from "vue";
+import { ref, computed, onMounted } from "vue";
 import { useMachinesStore } from "@/stores/machines";
+import type { Machine } from "@/types";
+import { useRouter } from "vue-router";
 
-const machinesStore = useMachinesStore();
+const store = useMachinesStore();
+const router = useRouter();
+const loading = ref(true);
+const search = ref("");
 
-onMounted(() => {
-  machinesStore.fetchMachines();
+onMounted(async () => {
+  try {
+    await store.fetchMachines();
+  } finally {
+    loading.value = false;
+  }
 });
 
-function statusIcon(status: string): string {
+const filtered = computed(() => {
+  const q = search.value.toLowerCase();
+  if (!q) return store.machines;
+  return store.machines.filter(
+    (m) =>
+      m.name.toLowerCase().includes(q) ||
+      (m.description && m.description.toLowerCase().includes(q)) ||
+      m.status.toLowerCase().includes(q),
+  );
+});
+
+function statusBadge(s: string) {
   const map: Record<string, string> = {
-    available: "🟢",
-    occupied: "🔴",
-    maintenance: "🟡",
-    offline: "⚫",
+    available: "badge-success",
+    occupied: "badge-warning",
+    maintenance: "badge-info",
+    offline: "badge-danger",
   };
-  return map[status] || "⚪";
+  return map[s] || "badge-muted";
 }
 
-function statusLabel(status: string): string {
+function statusLabel(s: string) {
   const map: Record<string, string> = {
     available: "Disponível",
     occupied: "Ocupada",
     maintenance: "Manutenção",
     offline: "Offline",
   };
-  return map[status] || status;
+  return map[s] || s;
+}
+
+function goToDetail(m: Machine) {
+  router.push({ name: "machine-detail", params: { id: m.id } });
 }
 </script>
 
 <template>
-  <div class="machines-page">
-    <h2 class="page-title">Máquinas do Laboratório</h2>
-
-    <div v-if="machinesStore.loading" class="text-muted mt-2">
-      Carregando...
+  <div class="fade-in">
+    <div class="page-header">
+      <h1 class="page-title">Máquinas</h1>
+      <div class="search-wrap">
+        <input
+          v-model="search"
+          type="text"
+          placeholder="Buscar máquinas..."
+          class="search-input"
+        />
+      </div>
     </div>
 
-    <div v-else class="machine-grid">
-      <div v-for="m in machinesStore.machines" :key="m.id" class="machine-card">
-        <div class="machine-header">
-          <span class="machine-name">{{ m.name }}</span>
-          <span class="machine-status"
-            >{{ statusIcon(m.status) }} {{ statusLabel(m.status) }}</span
-          >
+    <div v-if="loading" class="empty-state">Carregando...</div>
+    <div v-else-if="filtered.length === 0" class="empty-state">
+      Nenhuma máquina encontrada.
+    </div>
+
+    <div v-else class="machines-grid">
+      <div
+        v-for="m in filtered"
+        :key="m.id"
+        class="card machine-card"
+        @click="goToDetail(m)"
+      >
+        <div class="mc-header">
+          <h3 class="mc-name">{{ m.name }}</h3>
+          <span :class="['badge', statusBadge(m.status)]">{{
+            statusLabel(m.status)
+          }}</span>
         </div>
-        <p class="machine-desc">{{ m.description }}</p>
-        <div class="machine-specs">
-          <div v-if="m.cpuModel" class="spec">
+        <p class="mc-desc">{{ m.description || "Sem descrição" }}</p>
+
+        <div class="mc-specs">
+          <div v-if="m.cpuModel" class="spec-item">
             <span class="spec-label">CPU</span>
-            <span>{{ m.cpuModel }}</span>
+            <span class="spec-value">{{ m.cpuModel }}</span>
           </div>
-          <div v-if="m.gpuModel" class="spec">
+          <div v-if="m.gpuModel" class="spec-item">
             <span class="spec-label">GPU</span>
-            <span>{{ m.gpuModel }}</span>
+            <span class="spec-value">{{ m.gpuModel }}</span>
           </div>
-          <div class="spec-row">
-            <div v-if="m.totalRamGb" class="spec">
-              <span class="spec-label">RAM</span>
-              <span>{{ m.totalRamGb }} GB</span>
-            </div>
-            <div v-if="m.totalDiskGb" class="spec">
-              <span class="spec-label">Disco</span>
-              <span>{{ m.totalDiskGb }} GB</span>
-            </div>
+          <div v-if="m.totalRamGb" class="spec-item">
+            <span class="spec-label">RAM</span>
+            <span class="spec-value">{{ m.totalRamGb }} GB</span>
           </div>
-          <div v-if="m.loggedUser" class="spec">
-            <span class="spec-label">Usuário logado</span>
-            <span>{{ m.loggedUser }}</span>
+          <div v-if="m.totalDiskGb" class="spec-item">
+            <span class="spec-label">Disco</span>
+            <span class="spec-value">{{ m.totalDiskGb }} GB</span>
           </div>
+        </div>
+
+        <div class="mc-footer">
+          <span
+            v-if="m.loggedUser"
+            class="text-secondary"
+            style="font-size: 0.8rem"
+          >
+            Usuário: {{ m.loggedUser }}
+          </span>
+          <span v-else class="text-muted" style="font-size: 0.8rem"
+            >Sem usuário logado</span
+          >
+          <span class="mc-arrow">→</span>
         </div>
       </div>
     </div>
@@ -76,76 +125,87 @@ function statusLabel(status: string): string {
 </template>
 
 <style scoped>
-.page-title {
-  font-size: 1.4rem;
-  font-weight: 700;
-  margin-bottom: 1.5rem;
+.search-wrap {
+  max-width: 280px;
+}
+.search-input {
+  font-size: 0.88rem;
+  padding: 0.55rem 0.9rem;
 }
 
-.machine-grid {
+.machines-grid {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
   gap: 1rem;
 }
 
 .machine-card {
-  background: var(--bg-card);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-lg);
-  padding: 1.25rem 1.5rem;
+  cursor: pointer;
+  display: flex;
+  flex-direction: column;
+  gap: 0.6rem;
+  transition:
+    border-color var(--transition),
+    transform var(--transition),
+    box-shadow var(--transition);
+}
+.machine-card:hover {
+  border-color: rgba(124, 108, 240, 0.2);
+  transform: translateY(-2px);
+  box-shadow: var(--shadow-elevated);
 }
 
-.machine-header {
+.mc-header {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  margin-bottom: 0.5rem;
 }
-
-.machine-name {
-  font-weight: 700;
-  font-size: 1.1rem;
+.mc-name {
+  font-size: 1.05rem;
+  font-weight: 600;
 }
-
-.machine-status {
+.mc-desc {
   font-size: 0.85rem;
-  color: var(--text-secondary);
-}
-
-.machine-desc {
-  font-size: 0.9rem;
   color: var(--text-muted);
-  margin-bottom: 0.85rem;
+  line-height: 1.4;
 }
-
-.machine-specs {
+.mc-specs {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 0.35rem 1rem;
+}
+.spec-item {
   display: flex;
   flex-direction: column;
-  gap: 0.4rem;
 }
-
-.spec {
+.spec-label {
+  font-size: 0.7rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--text-muted);
+}
+.spec-value {
+  font-size: 0.82rem;
+  color: var(--text-secondary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.mc-footer {
   display: flex;
   align-items: center;
-  gap: 0.5rem;
-  font-size: 0.85rem;
+  justify-content: space-between;
+  margin-top: auto;
+  padding-top: 0.5rem;
+  border-top: 1px solid var(--border-subtle);
 }
-
-.spec-label {
-  background: var(--bg-input);
-  padding: 0.2rem 0.55rem;
-  border-radius: 4px;
-  font-weight: 600;
-  font-size: 0.72rem;
-  color: var(--text-secondary);
-  text-transform: uppercase;
-  letter-spacing: 0.03em;
-  min-width: 45px;
-  text-align: center;
+.mc-arrow {
+  color: var(--accent);
+  font-size: 1rem;
+  transition: transform var(--transition);
 }
-
-.spec-row {
-  display: flex;
-  gap: 1rem;
+.machine-card:hover .mc-arrow {
+  transform: translateX(3px);
 }
 </style>

@@ -155,7 +155,7 @@ class APIClient:
 
     # ----- Quick Allocate (preparado para uso futuro) -----
 
-    def quick_allocate(self, email: str, password: str, duration_minutes: int = 60) -> dict | None:
+    def quick_allocate(self, email: str, password: str, duration_minutes: int | None = None) -> dict | None:
         """
         Cria uma alocação rápida diretamente do agente.
 
@@ -163,16 +163,40 @@ class APIClient:
         Body: { email, password, durationMinutes? }
         """
         try:
+            payload = {'email': email, 'password': password}
+            if duration_minutes:
+                payload['durationMinutes'] = duration_minutes
             resp = self.session.post(
                 self._url('quick-allocate'),
-                json={
-                    'email': email,
-                    'password': password,
-                    'durationMinutes': duration_minutes,
-                },
+                json=payload,
                 timeout=self.timeout,
             )
             return resp.json()
         except Exception as e:
             logger.error(f'Quick allocate falhou: {e}')
+            return None
+
+    # ----- Agenda do dia -----
+
+    def day_schedule(self, date: str | None = None, tz: str | None = None) -> dict | None:
+        """
+        Retorna agenda do dia da máquina.
+
+        GET /api/agent/day-schedule?date=YYYY-MM-DD&tz=America/Sao_Paulo
+        """
+        try:
+            params = {}
+            if date:
+                params['date'] = date
+            if tz:
+                params['tz'] = tz
+            resp = self.session.get(
+                self._url('day-schedule'),
+                params=params,
+                timeout=self.timeout,
+            )
+            resp.raise_for_status()
+            return resp.json()
+        except Exception as e:
+            logger.error(f'Day schedule falhou: {e}')
             return None

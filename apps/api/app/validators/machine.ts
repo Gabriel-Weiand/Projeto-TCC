@@ -15,7 +15,6 @@ export const createMachineValidator = vine.compile(
       .trim()
       .regex(/^([0-9A-Fa-f]{2}:){5}[0-9A-Fa-f]{2}$/),
 
-
     // Hardware specs (opcionais - podem ser preenchidos depois pelo agente)
     cpuModel: vine.string().trim().maxLength(100).optional(),
     gpuModel: vine.string().trim().maxLength(100).optional(),
@@ -26,9 +25,7 @@ export const createMachineValidator = vine.compile(
     ipAddress: vine.string().trim().maxLength(45).optional(),
 
     // Status inicial
-    status: vine
-      .enum(['available', 'occupied', 'maintenance', 'offline'] as const)
-      .optional(),
+    status: vine.enum(['available', 'occupied', 'maintenance', 'offline'] as const).optional(),
   })
 )
 
@@ -51,11 +48,8 @@ export const updateMachineValidator = vine.compile(
       .string()
       .trim()
       .regex(/^([0-9A-Fa-f]{2}:){5}[0-9A-Fa-f]{2}$/)
-      .nullable()
       .optional(),
 
-    status: vine
-      .enum(['available', 'occupied', 'maintenance', 'offline'] as const)
-      .optional(),
+    status: vine.enum(['available', 'occupied', 'maintenance', 'offline'] as const).optional(),
   })
 )

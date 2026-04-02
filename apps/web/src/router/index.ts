@@ -26,9 +26,41 @@ const router = createRouter({
           component: () => import("@/views/MachinesView.vue"),
         },
         {
+          path: "machines/:id",
+          name: "machine-detail",
+          component: () => import("@/views/MachineDetailView.vue"),
+          props: true,
+        },
+        {
           path: "profile",
           name: "profile",
           component: () => import("@/views/ProfileView.vue"),
+        },
+
+        // Admin routes
+        {
+          path: "admin",
+          name: "admin-dashboard",
+          component: () => import("@/views/admin/AdminDashboardView.vue"),
+          meta: { admin: true },
+        },
+        {
+          path: "admin/users",
+          name: "admin-users",
+          component: () => import("@/views/admin/AdminUsersView.vue"),
+          meta: { admin: true },
+        },
+        {
+          path: "admin/machines",
+          name: "admin-machines",
+          component: () => import("@/views/admin/AdminMachinesView.vue"),
+          meta: { admin: true },
+        },
+        {
+          path: "admin/allocations",
+          name: "admin-allocations",
+          component: () => import("@/views/admin/AdminAllocationsView.vue"),
+          meta: { admin: true },
         },
       ],
     },
@@ -44,6 +76,10 @@ router.beforeEach((to) => {
   }
 
   if (to.meta.guest && auth.isAuthenticated) {
+    return { name: "home" };
+  }
+
+  if (to.meta.admin && !auth.isAdmin) {
     return { name: "home" };
   }
 });

@@ -43,6 +43,6 @@ export const quickAllocateValidator = vine.compile(
   vine.object({
     email: vine.string().email().normalizeEmail(),
     password: vine.string().minLength(1),
-    durationMinutes: vine.number().positive().max(60).optional(),
+    durationMinutes: vine.number().positive().optional(),
   })
 )
