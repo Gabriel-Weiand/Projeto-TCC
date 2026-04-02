@@ -4,7 +4,7 @@ import { DateTime } from 'luxon'
 export default class UtilsController {
   /**
    * Health check - Verifica se a API está funcionando.
-   * 
+   *
    * GET /api/alive
    */
   async alive({ response }: HttpContext) {
