@@ -46,3 +46,36 @@ export const quickAllocateValidator = vine.compile(
     durationMinutes: vine.number().positive().optional(),
   })
 )
+
+/**
+ * Validator para report de setup de sessão SSH pelo agente.
+ * O agente informa que gerou a chave e a chave privada para entrega ao frontend.
+ */
+export const sshSetupReportValidator = vine.compile(
+  vine.object({
+    allocationId: vine.number().positive(),
+    systemUsername: vine.string().trim().maxLength(64),
+    publicKeyFingerprint: vine.string().trim().maxLength(128),
+    privateKey: vine.string().trim().minLength(1),
+  })
+)
+
+/**
+ * Validator para report de teardown de sessão SSH pelo agente.
+ */
+export const sshTeardownReportValidator = vine.compile(
+  vine.object({
+    allocationId: vine.number().positive(),
+  })
+)
+
+/**
+ * Validator para atualização de pesos cgroup pelo agente.
+ */
+export const cgroupReportValidator = vine.compile(
+  vine.object({
+    systemUsername: vine.string().trim().maxLength(64),
+    cpuWeight: vine.number().min(1).max(10000),
+    isOwner: vine.boolean(),
+  })
+)

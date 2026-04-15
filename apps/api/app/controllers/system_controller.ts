@@ -2,6 +2,7 @@ import type { HttpContext } from '@adonisjs/core/http'
 import Telemetry from '#models/telemetry'
 import Allocation from '#models/allocation'
 import AllocationMetric from '#models/allocation_metric'
+import { DateTime } from 'luxon'
 import {
   pruneTelemetriesValidator,
   pruneAllocationsValidator,
@@ -18,9 +19,12 @@ export default class SystemController {
   async pruneTelemetries({ request, response }: HttpContext) {
     const { before, machineId } = await request.validateUsing(pruneTelemetriesValidator)
 
+    // Converte JS Date para formato SQL compatível com o SQLite
+    const beforeDt = DateTime.fromJSDate(before)
+
     // Busca alocações anteriores à data (finalizadas/canceladas)
     let allocQuery = Allocation.query()
-      .where('endTime', '<', before)
+      .where('endTime', '<', beforeDt.toSQL()!)
       .whereIn('status', ['finished', 'cancelled'])
 
     if (machineId) {
@@ -56,8 +60,10 @@ export default class SystemController {
     const { before, status = ['finished', 'cancelled'], userId, machineId } = 
       await request.validateUsing(pruneAllocationsValidator)
 
+    const beforeDt = DateTime.fromJSDate(before)
+
     let query = Allocation.query()
-      .where('endTime', '<', before)
+      .where('endTime', '<', beforeDt.toSQL()!)
       .whereIn('status', status)
 
     if (userId) {
@@ -84,8 +90,10 @@ export default class SystemController {
   async pruneMetrics({ request, response }: HttpContext) {
     const { before } = await request.validateUsing(pruneMetricsValidator)
 
+    const beforeDt = DateTime.fromJSDate(before)
+
     const deleted = await AllocationMetric.query()
-      .where('createdAt', '<', before)
+      .where('createdAt', '<', beforeDt.toSQL()!)
       .delete()
 
     return response.ok({

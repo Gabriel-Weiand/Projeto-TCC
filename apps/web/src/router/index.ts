@@ -57,6 +57,13 @@ const router = createRouter({
           meta: { admin: true },
         },
         {
+          path: "admin/machines/:id",
+          name: "admin-machine-detail",
+          component: () => import("@/views/admin/AdminMachineDetailView.vue"),
+          props: true,
+          meta: { admin: true },
+        },
+        {
           path: "admin/allocations",
           name: "admin-allocations",
           component: () => import("@/views/admin/AdminAllocationsView.vue"),

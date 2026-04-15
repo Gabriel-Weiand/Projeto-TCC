@@ -154,7 +154,7 @@ O sistema segue uma arquitetura distribuída cliente-servidor com três componen
      │  POST /api/agent/heartbeat   │                              │
      │  {telemetry: {...}}          │                              │
      │─────────────────────────────>│                              │
-     │                              │   Verificar API Key          │
+     │                              │   Verificar Agent Key        │
      │                              │   (MachineCache)             │
      │                              │                              │
      │                              │   Buscar alocação ativa      │
@@ -270,19 +270,20 @@ apps/api/
 └─────────────────────────────────────────────────────────────┘
 ```
 
-#### Autenticação de Máquinas (API Key)
+#### Autenticação de Máquinas (Agent Key)
 
 ```
 ┌─────────────────────────────────────────────────────────────┐
 │                   AUTENTICAÇÃO DE MÁQUINAS                   │
 ├─────────────────────────────────────────────────────────────┤
 │                                                              │
-│  • Cada máquina possui uma API Key única de 512 bits        │
-│  • Header: X-Machine-Api-Key: <api_key>                     │
+│  • Cada máquina possui um Agent Key único de 512 bits       │
+│  • Headers: Authorization: Bearer <token>                    │
+│             X-Machine-Mac: <mac_address>                     │
 │  • Cache de 5 minutos para reduzir consultas ao banco       │
 │  • Usado apenas nas rotas /api/agent/*                      │
 │                                                              │
-│  Geração da API Key:                                        │
+│  Geração do Agent Key:                                       │
 │  ┌────────────────────────────────────────────────────────┐ │
 │  │ const apiKey = string.generateRandom(64) // 512 bits  │ │
 │  └────────────────────────────────────────────────────────┘ │

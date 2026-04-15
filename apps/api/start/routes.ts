@@ -76,6 +76,9 @@ router
             router.delete('/:id', [MachinesController, 'destroy']).as('machines.destroy')
             router.get('/:id/telemetry', [MachinesController, 'telemetry']).as('machines.telemetry')
             router
+              .get('/:id/telemetry/stream', [MachinesController, 'telemetryStream'])
+              .as('machines.telemetryStream')
+            router
               .post('/:id/regenerate-token', [MachinesController, 'regenerateToken'])
               .as('machines.regenerateToken')
           })
@@ -168,6 +171,24 @@ router
     // --- Sync & Telemetria ---
     router.put('sync-specs', [AgentController, 'syncSpecs']).as('agent.syncSpecs')
     router.post('telemetry', [AgentController, 'telemetry']).as('agent.telemetry')
+
+    // --- SSH Session Management (Server Agent) ---
+    router.post('ssh/setup', [AgentController, 'sshSetupReport']).as('agent.ssh.setup')
+    router.post('ssh/teardown', [AgentController, 'sshTeardownReport']).as('agent.ssh.teardown')
+    router.get('ssh/pending', [AgentController, 'sshPendingRequests']).as('agent.ssh.pending')
   })
   .prefix('api/agent')
   .use(middleware.machineAuth())
+
+/**
+ * API v1 - SSH Access Routes (authenticated user requests)
+ */
+router
+  .group(() => {
+    router
+      .post('allocations/:id/ssh-access', [AllocationsController, 'requestSshAccess'])
+      .as('allocations.sshAccess')
+      .where('id', router.matchers.number())
+  })
+  .prefix('api/v1')
+  .use(middleware.auth())

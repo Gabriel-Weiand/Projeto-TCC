@@ -1,9 +1,12 @@
 <script setup lang="ts">
 import { ref, onMounted, onUnmounted, computed } from "vue";
+import { useRouter } from "vue-router";
 import { useMachinesStore } from "@/stores/machines";
 import { useAllocationsStore } from "@/stores/allocations";
 import { useUsersStore } from "@/stores/users";
 import type { Machine } from "@/types";
+
+const router = useRouter();
 
 const machinesStore = useMachinesStore();
 const allocationsStore = useAllocationsStore();
@@ -119,7 +122,10 @@ function statusLabel(s: string) {
         <div
           v-for="m in machinesStore.machines"
           :key="m.id"
-          class="card machine-status-card"
+          class="card machine-status-card clickable"
+          @click="
+            router.push({ name: 'admin-machine-detail', params: { id: m.id } })
+          "
         >
           <div class="ms-top">
             <span class="ms-dot" :style="{ background: statusColor(m) }"></span>
@@ -196,6 +202,17 @@ function statusLabel(s: string) {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
   gap: 0.75rem;
+}
+
+.clickable {
+  cursor: pointer;
+  transition:
+    border-color 0.15s,
+    box-shadow 0.15s;
+}
+.clickable:hover {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 1px var(--accent);
 }
 
 .machine-status-card {

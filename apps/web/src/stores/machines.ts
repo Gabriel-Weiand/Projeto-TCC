@@ -59,6 +59,22 @@ export const useMachinesStore = defineStore("machines", () => {
     return data;
   }
 
+  async function fetchTelemetryStream(
+    id: number,
+    count?: number,
+  ): Promise<{
+    machineId: number;
+    entries: import("@/types").RealtimeTelemetry[];
+    total: number;
+  }> {
+    const params: Record<string, unknown> = {};
+    if (count) params.count = count;
+    const { data } = await api.get(`/api/v1/machines/${id}/telemetry/stream`, {
+      params,
+    });
+    return data;
+  }
+
   return {
     machines,
     loading,
@@ -69,5 +85,6 @@ export const useMachinesStore = defineStore("machines", () => {
     deleteMachine,
     fetchMachineAllocations,
     regenerateToken,
+    fetchTelemetryStream,
   };
 });

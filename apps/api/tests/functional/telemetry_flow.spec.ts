@@ -958,3 +958,364 @@ test.group('Fluxo End-to-End via API do Agente', (group) => {
     assert.isNotNull(machine.lastSeenAt)
   })
 })
+
+// ============================================================================
+// RING BUFFER: Entradas recentes por máquina (para playback no frontend)
+// ============================================================================
+
+test.group('Ring Buffer de Telemetria', (group) => {
+  group.each.setup(() => {
+    telemetryBuffer.reset()
+    return testUtils.db().withGlobalTransaction()
+  })
+
+  test('ring buffer armazena entradas recentes por máquina', async ({ assert }) => {
+    const user = await User.create({
+      fullName: 'Aluno Ring',
+      email: 'aluno.ring@teste.com',
+      password: 'senha123',
+      role: 'user',
+    })
+
+    const machine = await Machine.create({
+      name: 'PC-RING-01',
+      macAddress: 'AA:BB:CC:05:01:01',
+      description: 'Máquina ring buffer',
+      status: 'available',
+    })
+
+    const allocation = await Allocation.create({
+      userId: user.id,
+      machineId: machine.id,
+      startTime: DateTime.now().minus({ minutes: 5 }),
+      endTime: DateTime.now().plus({ minutes: 55 }),
+      status: 'approved',
+    })
+
+    // Adiciona 10 entradas
+    for (let i = 0; i < 10; i++) {
+      telemetryBuffer.add(machine.id, {
+        allocationId: allocation.id,
+        ...generateTelemetry(i, 0.5),
+      })
+    }
+
+    const recent = telemetryBuffer.getRecent(machine.id)
+    assert.equal(recent.length, 10)
+
+    // Primeira entrada deve ter o allocationId correto
+    assert.equal(recent[0].allocationId, allocation.id)
+    assert.equal(recent[9].allocationId, allocation.id)
+  })
+
+  test('ring buffer respeita limite máximo (30 entradas)', async ({ assert }) => {
+    const user = await User.create({
+      fullName: 'Aluno RingMax',
+      email: 'aluno.ringmax@teste.com',
+      password: 'senha123',
+      role: 'user',
+    })
+
+    const machine = await Machine.create({
+      name: 'PC-RING-MAX',
+      macAddress: 'AA:BB:CC:05:01:02',
+      description: 'Máquina ring buffer max',
+      status: 'available',
+    })
+
+    const allocation = await Allocation.create({
+      userId: user.id,
+      machineId: machine.id,
+      startTime: DateTime.now().minus({ minutes: 5 }),
+      endTime: DateTime.now().plus({ minutes: 55 }),
+      status: 'approved',
+    })
+
+    // Adiciona 50 entradas (excede o limite de 30)
+    for (let i = 0; i < 50; i++) {
+      telemetryBuffer.add(machine.id, {
+        allocationId: allocation.id,
+        ...generateTelemetry(i, 0.5),
+      })
+    }
+
+    const recent = telemetryBuffer.getRecent(machine.id)
+    assert.equal(recent.length, 30)
+
+    // Deve manter as últimas 30 (tick 20 a 49)
+    // Os valores de cpuUsage variam por tick, confirma que é sequencial
+    assert.equal(recent[0].allocationId, allocation.id)
+    assert.equal(recent[29].allocationId, allocation.id)
+  })
+
+  test('getRecent com count retorna quantidade solicitada', async ({ assert }) => {
+    const user = await User.create({
+      fullName: 'Aluno RingCount',
+      email: 'aluno.ringcount@teste.com',
+      password: 'senha123',
+      role: 'user',
+    })
+
+    const machine = await Machine.create({
+      name: 'PC-RING-COUNT',
+      macAddress: 'AA:BB:CC:05:01:03',
+      description: 'Máquina ring buffer count',
+      status: 'available',
+    })
+
+    const allocation = await Allocation.create({
+      userId: user.id,
+      machineId: machine.id,
+      startTime: DateTime.now().minus({ minutes: 5 }),
+      endTime: DateTime.now().plus({ minutes: 55 }),
+      status: 'approved',
+    })
+
+    for (let i = 0; i < 20; i++) {
+      telemetryBuffer.add(machine.id, {
+        allocationId: allocation.id,
+        ...generateTelemetry(i, 0.5),
+      })
+    }
+
+    // Pede apenas 5
+    const recent5 = telemetryBuffer.getRecent(machine.id, 5)
+    assert.equal(recent5.length, 5)
+
+    // Pede mais do que tem → retorna tudo
+    const recentAll = telemetryBuffer.getRecent(machine.id, 100)
+    assert.equal(recentAll.length, 20)
+  })
+
+  test('getRecent retorna array vazio para máquina sem dados', async ({ assert }) => {
+    const recent = telemetryBuffer.getRecent(999)
+    assert.deepEqual(recent, [])
+  })
+
+  test('ring buffer isolado por máquina', async ({ assert }) => {
+    const user = await User.create({
+      fullName: 'Aluno Isolado',
+      email: 'aluno.isolado@teste.com',
+      password: 'senha123',
+      role: 'user',
+    })
+
+    const machine1 = await Machine.create({
+      name: 'PC-ISO-01',
+      macAddress: 'AA:BB:CC:05:01:04',
+      description: 'Máquina isolamento 1',
+      status: 'available',
+    })
+
+    const machine2 = await Machine.create({
+      name: 'PC-ISO-02',
+      macAddress: 'AA:BB:CC:05:01:05',
+      description: 'Máquina isolamento 2',
+      status: 'available',
+    })
+
+    const alloc1 = await Allocation.create({
+      userId: user.id,
+      machineId: machine1.id,
+      startTime: DateTime.now().minus({ minutes: 5 }),
+      endTime: DateTime.now().plus({ minutes: 55 }),
+      status: 'approved',
+    })
+
+    const alloc2 = await Allocation.create({
+      userId: user.id,
+      machineId: machine2.id,
+      startTime: DateTime.now().minus({ minutes: 5 }),
+      endTime: DateTime.now().plus({ minutes: 55 }),
+      status: 'approved',
+    })
+
+    // Adiciona 5 na máquina 1, 3 na máquina 2
+    for (let i = 0; i < 5; i++) {
+      telemetryBuffer.add(machine1.id, {
+        allocationId: alloc1.id,
+        ...generateTelemetry(i, 0.3),
+      })
+    }
+    for (let i = 0; i < 3; i++) {
+      telemetryBuffer.add(machine2.id, {
+        allocationId: alloc2.id,
+        ...generateTelemetry(i, 0.7),
+      })
+    }
+
+    assert.equal(telemetryBuffer.getRecent(machine1.id).length, 5)
+    assert.equal(telemetryBuffer.getRecent(machine2.id).length, 3)
+  })
+
+  test('clearMachine limpa ring buffer', async ({ assert }) => {
+    const user = await User.create({
+      fullName: 'Aluno Clear',
+      email: 'aluno.clear@teste.com',
+      password: 'senha123',
+      role: 'user',
+    })
+
+    const machine = await Machine.create({
+      name: 'PC-CLEAR-01',
+      macAddress: 'AA:BB:CC:05:01:06',
+      description: 'Máquina clear ring',
+      status: 'available',
+    })
+
+    const allocation = await Allocation.create({
+      userId: user.id,
+      machineId: machine.id,
+      startTime: DateTime.now().minus({ minutes: 5 }),
+      endTime: DateTime.now().plus({ minutes: 55 }),
+      status: 'approved',
+    })
+
+    for (let i = 0; i < 10; i++) {
+      telemetryBuffer.add(machine.id, {
+        allocationId: allocation.id,
+        ...generateTelemetry(i, 0.5),
+      })
+    }
+
+    assert.equal(telemetryBuffer.getRecent(machine.id).length, 10)
+    telemetryBuffer.clearMachine(machine.id)
+    assert.equal(telemetryBuffer.getRecent(machine.id).length, 0)
+    assert.isNull(telemetryBuffer.getLatest(machine.id))
+  })
+})
+
+// ============================================================================
+// STREAM ENDPOINT: GET /api/v1/machines/:id/telemetry/stream
+// ============================================================================
+
+test.group('Telemetry Stream Endpoint', (group) => {
+  group.each.setup(() => {
+    telemetryBuffer.reset()
+    return testUtils.db().withGlobalTransaction()
+  })
+
+  test('stream retorna entradas do ring buffer normalizadas', async ({ client, assert }) => {
+    const admin = await User.create({
+      fullName: 'Admin Stream',
+      email: 'admin.stream@teste.com',
+      password: 'senha123',
+      role: 'admin',
+    })
+
+    const user = await User.create({
+      fullName: 'Aluno Stream',
+      email: 'aluno.stream@teste.com',
+      password: 'senha123',
+      role: 'user',
+    })
+
+    const machine = await Machine.create({
+      name: 'PC-STREAM-01',
+      macAddress: 'AA:BB:CC:05:02:01',
+      description: 'Máquina stream test',
+      status: 'available',
+    })
+
+    const allocation = await Allocation.create({
+      userId: user.id,
+      machineId: machine.id,
+      startTime: DateTime.now().minus({ minutes: 5 }),
+      endTime: DateTime.now().plus({ minutes: 55 }),
+      status: 'approved',
+    })
+
+    // Popula ring buffer com 15 entradas
+    for (let i = 0; i < 15; i++) {
+      telemetryBuffer.add(machine.id, {
+        allocationId: allocation.id,
+        ...generateTelemetry(i, 0.5),
+      })
+    }
+
+    const response = await client
+      .get(`/api/v1/machines/${machine.id}/telemetry/stream`)
+      .loginAs(admin)
+
+    response.assertStatus(200)
+    const body = response.body()
+    assert.equal(body.machineId, machine.id)
+    assert.equal(body.total, 15)
+    assert.equal(body.entries.length, 15)
+
+    // Valores devem estar normalizados (0-100, não 0-1000)
+    const first = body.entries[0]
+    assert.isAtMost(first.cpuUsage, 100)
+    assert.isAtMost(first.ramUsage, 100)
+    assert.property(first, 'timestamp')
+  })
+
+  test('stream com count limita entradas', async ({ client, assert }) => {
+    const admin = await User.create({
+      fullName: 'Admin StreamCnt',
+      email: 'admin.streamcnt@teste.com',
+      password: 'senha123',
+      role: 'admin',
+    })
+
+    const machine = await Machine.create({
+      name: 'PC-STREAM-CNT',
+      macAddress: 'AA:BB:CC:05:02:02',
+      description: 'Máquina stream count',
+      status: 'available',
+    })
+
+    const user = await User.create({
+      fullName: 'Aluno StreamCnt',
+      email: 'aluno.streamcnt@teste.com',
+      password: 'senha123',
+      role: 'user',
+    })
+
+    const allocation = await Allocation.create({
+      userId: user.id,
+      machineId: machine.id,
+      startTime: DateTime.now().minus({ minutes: 5 }),
+      endTime: DateTime.now().plus({ minutes: 55 }),
+      status: 'approved',
+    })
+
+    for (let i = 0; i < 20; i++) {
+      telemetryBuffer.add(machine.id, {
+        allocationId: allocation.id,
+        ...generateTelemetry(i, 0.5),
+      })
+    }
+
+    const response = await client
+      .get(`/api/v1/machines/${machine.id}/telemetry/stream?count=5`)
+      .loginAs(admin)
+
+    response.assertStatus(200)
+    assert.equal(response.body().total, 5)
+  })
+
+  test('stream retorna vazio para máquina sem telemetria', async ({ client, assert }) => {
+    const admin = await User.create({
+      fullName: 'Admin StreamEmpty',
+      email: 'admin.streamempty@teste.com',
+      password: 'senha123',
+      role: 'admin',
+    })
+
+    const machine = await Machine.create({
+      name: 'PC-STREAM-EMPTY',
+      macAddress: 'AA:BB:CC:05:02:03',
+      description: 'Máquina stream vazia',
+      status: 'offline',
+    })
+
+    const response = await client
+      .get(`/api/v1/machines/${machine.id}/telemetry/stream`)
+      .loginAs(admin)
+
+    response.assertStatus(200)
+    assert.equal(response.body().total, 0)
+    assert.deepEqual(response.body().entries, [])
+  })
+})

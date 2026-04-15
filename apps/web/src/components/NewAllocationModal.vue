@@ -19,6 +19,10 @@ const form = reactive({
 const saving = ref(false);
 const error = ref("");
 
+function toLocalIso(date: string, time: string): string {
+  return new Date(`${date}T${time}:00`).toISOString();
+}
+
 async function handleCreate() {
   error.value = "";
 
@@ -27,20 +31,20 @@ async function handleCreate() {
     return;
   }
 
-  const startTime = `${form.date}T${form.startTime}:00`;
-  const endTime = `${form.date}T${form.endTime}:00`;
-
-  if (startTime >= endTime) {
+  if (form.startTime >= form.endTime) {
     error.value = "Horário de início deve ser antes do fim.";
     return;
   }
+
+  const startTime = toLocalIso(form.date, form.startTime);
+  const endTime = toLocalIso(form.date, form.endTime);
 
   saving.value = true;
   try {
     await allocations.createAllocation({
       machineId: Number(form.machineId),
-      startTime,
-      endTime,
+      startTime,  // Convertido para UTC via toLocalIso
+      endTime,    // Convertido para UTC via toLocalIso
       reason: form.reason || undefined,
     });
     emit("created");

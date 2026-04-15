@@ -216,6 +216,17 @@ function copyToken() {
             </td>
             <td>
               <div style="display: flex; gap: 0.35rem; flex-wrap: wrap">
+                <button
+                  class="btn btn-ghost btn-sm text-accent"
+                  @click="
+                    $router.push({
+                      name: 'admin-machine-detail',
+                      params: { id: m.id },
+                    })
+                  "
+                >
+                  Ver
+                </button>
                 <button class="btn btn-ghost btn-sm" @click="openEdit(m)">
                   Editar
                 </button>

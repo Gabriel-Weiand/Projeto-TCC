@@ -52,7 +52,7 @@ O projeto adota uma estrutura de **Monorepo** organizada, onde a API Central orq
 
 1. **Backend (API Central):** Desenvolvido em **AdonisJS 6**, atua como a fonte da verdade. Gerencia duas frentes de autenticação:
    - _Usuários:_ Autenticação via tokens (JWT-like) com hash SHA-256
-   - _Agentes:_ Autenticação via API Keys de 512 bits
+   - _Agentes:_ Autenticação via Agent Keys (Bearer Token) de 512 bits
 2. **Frontend (Web):** Interface para alunos solicitarem uso e administradores gerenciarem o parque.
 3. **Agent (Máquinas Gerenciadas):** Software local (Daemon) que consulta a API para saber se deve permitir o uso ao hardware e reporta telemetria.
 
@@ -167,7 +167,7 @@ O projeto adota uma estrutura de **Monorepo** organizada, onde a API Central orq
      │  POST /api/agent/heartbeat   │                              │
      │  {telemetry: {...}}          │                              │
      │─────────────────────────────>│                              │
-     │                              │   Verificar API Key          │
+     │                              │   Verificar Agent Key        │
      │                              │   (MachineCache)             │
      │                              │                              │
      │                              │   Buscar alocação ativa      │
@@ -337,12 +337,13 @@ As senhas dos usuários **nunca são armazenadas em texto plano** no banco de da
 │                   AUTENTICAÇÃO DE MÁQUINAS                  │
 ├─────────────────────────────────────────────────────────────┤
 │                                                             │
-│  • Cada máquina possui uma API Key única de 512 bits        │
-│  • Header: X-Machine-Api-Key: <api_key>                     │
+│  • Cada máquina possui um Agent Key único de 512 bits       │
+│  • Headers: Authorization: Bearer <token>                   │
+│             X-Machine-Mac: <mac_address>                     │
 │  • Cache de 5 minutos para reduzir consultas ao banco       │
 │  • Usado apenas nas rotas /api/agent/*                      │
 │                                                             │
-│  Geração da API Key:                                        │
+│  Geração do Agent Key:                                      │
 │  ┌────────────────────────────────────────────────────────┐ │
 │  │ const apiKey = string.generateRandom(64) // 512 bits   │ │
 │  │ // Exemplo: "d08248929bf8bcae92a2e204219c7941..."      │ │
@@ -696,7 +697,7 @@ Histórico de alocações de um usuário específico.
 
 ##### `POST /api/v1/machines`
 
-Cadastrar máquina e gerar API Key para o agente.
+Cadastrar máquina e gerar Agent Key para o agente.
 
 **Permissão:** Admin
 
@@ -1099,6 +1100,7 @@ Soft-delete de uma alocação. Oculta do histórico do usuário, mas mantém o r
 **Permissão:** Geral (usuário só pode remover suas próprias alocações)
 
 **Comportamento:**
+
 - Alocação `pendente`/`aprovada` que ainda não começou → cancela automaticamente + oculta
 - Alocação `finalizada`/`cancelada`/`negada` → apenas oculta do histórico
 - Alocação em andamento → bloqueado (não pode remover)

@@ -26,6 +26,9 @@ export const createMachineValidator = vine.compile(
 
     // Status inicial
     status: vine.enum(['available', 'occupied', 'maintenance', 'offline'] as const).optional(),
+
+    // Usuário local do sistema (para agente servidor SSH/cgroups)
+    systemUsername: vine.string().trim().maxLength(64).optional(),
   })
 )
 
@@ -51,5 +54,8 @@ export const updateMachineValidator = vine.compile(
       .optional(),
 
     status: vine.enum(['available', 'occupied', 'maintenance', 'offline'] as const).optional(),
+
+    // Usuário local do sistema (para agente servidor SSH/cgroups)
+    systemUsername: vine.string().trim().maxLength(64).nullable().optional(),
   })
 )

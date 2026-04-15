@@ -9,6 +9,7 @@ import cron from 'node-cron'
 import db from '@adonisjs/lucid/services/db'
 import { DateTime } from 'luxon'
 import logger from '@adonisjs/core/services/logger'
+import { autoFinalizeExpired } from '#services/allocation_summarizer'
 
 /**
  * Remove tokens de acesso expirados do banco de dados.
@@ -38,12 +39,29 @@ function schedulePruneTokens() {
 }
 
 /**
+ * Finaliza automaticamente alocações aprovadas cujo horário já expirou.
+ * Roda a cada 5 minutos.
+ */
+function scheduleAutoFinalize() {
+  cron.schedule('*/5 * * * *', async () => {
+    try {
+      const count = await autoFinalizeExpired()
+      if (count > 0) {
+        logger.info(`[Scheduler] Auto-finalized ${count} expired allocation(s)`)
+      }
+    } catch (error) {
+      logger.error('[Scheduler] Failed to auto-finalize:', error)
+    }
+  })
+
+  logger.info('[Scheduler] Auto-finalize scheduled every 5 minutes')
+}
+
+/**
  * Inicializa todos os schedulers.
  * Chamado no boot do servidor.
  */
 export function initScheduler() {
   schedulePruneTokens()
-  
-  // Adicione outras tarefas agendadas aqui no futuro
-  // scheduleOtherTask()
+  scheduleAutoFinalize()
 }

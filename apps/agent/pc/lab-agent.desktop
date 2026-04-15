@@ -1,0 +1,12 @@
+[Desktop Entry]
+Type=Application
+Name=Lab Agent - Sistema de Laboratórios
+Comment=Agente de monitoramento e controle de acesso do laboratório
+Exec=AGENT_VENV_PYTHON AGENT_MAIN_PY
+Path=AGENT_DIR
+Hidden=false
+NoDisplay=true
+X-GNOME-Autostart-enabled=true
+X-GNOME-Autostart-Delay=3
+Terminal=false
+Categories=System;

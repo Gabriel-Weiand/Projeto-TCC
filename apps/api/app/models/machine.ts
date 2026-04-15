@@ -48,6 +48,10 @@ export default class Machine extends BaseModel {
   @column()
   declare loggedUser: string | null
 
+  // Usuário do sistema operacional mapeado (para agente servidor SSH/cgroups)
+  @column()
+  declare systemUsername: string | null
+
   @column.dateTime({ autoCreate: true })
   declare createdAt: DateTime
 

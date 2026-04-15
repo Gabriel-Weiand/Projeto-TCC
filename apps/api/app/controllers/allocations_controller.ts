@@ -1,8 +1,11 @@
 import type { HttpContext } from '@adonisjs/core/http'
+import { DateTime } from 'luxon'
 import Allocation from '#models/allocation'
 import AllocationMetric from '#models/allocation_metric'
-import Telemetry from '#models/telemetry'
 import Machine from '#models/machine'
+import SshSession from '#models/ssh_session'
+import { sshKeyStore } from '#controllers/agent_controller'
+import { summarizeAllocation } from '#services/allocation_summarizer'
 import {
   createAllocationValidator,
   updateAllocationValidator,
@@ -294,25 +297,16 @@ export default class AllocationsController {
       })
     }
 
-    // Busca telemetrias da alocação (agora diretamente pelo allocationId)
-    const telemetries = await Telemetry.query().where('allocationId', allocation.id)
+    const metric = await summarizeAllocation(allocation)
 
-    if (telemetries.length === 0) {
+    if (!metric) {
       return response.notFound({
         code: 'NO_TELEMETRY',
         message: 'Não há dados de telemetria para este período.',
       })
     }
 
-    // Calcula métricas agregadas
-    const metrics = this.calculateMetrics(telemetries, allocation)
-
-    const allocationMetric = await AllocationMetric.create({
-      allocationId: allocation.id,
-      ...metrics,
-    })
-
-    return response.created(allocationMetric)
+    return response.created(metric)
   }
 
   /**
@@ -346,61 +340,97 @@ export default class AllocationsController {
     return response.ok(allocation.metric)
   }
 
+  // ============================================================
+  // SSH Access (Server Agent)
+  // ============================================================
+
   /**
-   * Calcula métricas agregadas a partir das telemetrias.
+   * Solicita acesso SSH para uma alocação ativa.
+   * Cria uma SshSession pendente que o agente servidor vai detectar via polling.
+   * Se a chave já estiver pronta, retorna o download imediatamente.
+   *
+   * POST /api/v1/allocations/:id/ssh-access
    */
-  private calculateMetrics(telemetries: Telemetry[], allocation: Allocation) {
-    // Funções auxiliares (float: sem arredondamento para inteiro)
-    const avg = (values: number[]) => values.reduce((a, b) => a + b, 0) / values.length
-    const max = (values: number[]) => Math.max(...values)
+  async requestSshAccess({ auth, params, response }: HttpContext) {
+    const user = auth.user!
+    const allocation = await Allocation.findOrFail(params.id)
 
-    // Extrai valores
-    const cpuUsages = telemetries.map((t) => t.cpuUsage)
-    const cpuTemps = telemetries.map((t) => t.cpuTemp)
-    const gpuUsages = telemetries.map((t) => t.gpuUsage)
-    const gpuTemps = telemetries.map((t) => t.gpuTemp)
-    const ramUsages = telemetries.map((t) => t.ramUsage)
-    const diskUsages = telemetries.map((t) => t.diskUsage).filter((t): t is number => t !== null)
-    const downloadUsages = telemetries
-      .map((t) => t.downloadUsage)
-      .filter((t): t is number => t !== null)
-    const uploadUsages = telemetries
-      .map((t) => t.uploadUsage)
-      .filter((t): t is number => t !== null)
-    const moboTemps = telemetries
-      .map((t) => t.moboTemperature)
-      .filter((t): t is number => t !== null)
-
-    // Calcula duração em minutos
-    const durationMs = allocation.endTime.diff(allocation.startTime).milliseconds
-    const sessionDurationMinutes = Math.round(durationMs / 60000)
-
-    return {
-      avgCpuUsage: avg(cpuUsages),
-      maxCpuUsage: max(cpuUsages),
-      avgCpuTemp: avg(cpuTemps),
-      maxCpuTemp: max(cpuTemps),
-
-      avgGpuUsage: avg(gpuUsages),
-      maxGpuUsage: max(gpuUsages),
-      avgGpuTemp: avg(gpuTemps),
-      maxGpuTemp: max(gpuTemps),
-
-      avgRamUsage: avg(ramUsages),
-      maxRamUsage: max(ramUsages),
-
-      avgDiskUsage: diskUsages.length > 0 ? avg(diskUsages) : null,
-      maxDiskUsage: diskUsages.length > 0 ? max(diskUsages) : null,
-
-      avgDownloadUsage: downloadUsages.length > 0 ? avg(downloadUsages) : null,
-      maxDownloadUsage: downloadUsages.length > 0 ? max(downloadUsages) : null,
-      avgUploadUsage: uploadUsages.length > 0 ? avg(uploadUsages) : null,
-      maxUploadUsage: uploadUsages.length > 0 ? max(uploadUsages) : null,
-
-      avgMoboTemp: moboTemps.length > 0 ? avg(moboTemps) : null,
-      maxMoboTemp: moboTemps.length > 0 ? max(moboTemps) : null,
-
-      sessionDurationMinutes,
+    // Verificar propriedade
+    if (user.role !== 'admin' && allocation.userId !== user.id) {
+      return response.forbidden({
+        code: 'NOT_OWNER',
+        message: 'Você só pode solicitar SSH para suas próprias alocações.',
+      })
     }
+
+    // Verificar se alocação está ativa agora
+    const now = DateTime.now().toMillis()
+    if (allocation.status !== 'approved' || allocation.startTime.toMillis() > now || allocation.endTime.toMillis() < now) {
+      return response.badRequest({
+        code: 'ALLOCATION_NOT_ACTIVE',
+        message: 'A alocação não está ativa no momento.',
+      })
+    }
+
+    // Verificar se a máquina tem system_username configurado
+    const machine = await Machine.findOrFail(allocation.machineId)
+    if (!machine.systemUsername) {
+      return response.badRequest({
+        code: 'NO_SYSTEM_USER',
+        message: 'Esta máquina não possui um usuário de sistema configurado para SSH.',
+      })
+    }
+
+    // Verificar se já existe sessão SSH ativa para esta alocação
+    let session = await SshSession.query()
+      .where('allocationId', allocation.id)
+      .where('status', 'active')
+      .first()
+
+    if (session && session.publicKeyFingerprint) {
+      // Chave já foi gerada pelo agente. Verificar se a privada ainda está disponível
+      const privateKey = sshKeyStore.get(session.id)
+      if (privateKey) {
+        // Entrega a chave e remove do store (single-use)
+        sshKeyStore.delete(session.id)
+        return response.ok({
+          status: 'ready',
+          privateKey,
+          systemUsername: session.systemUsername,
+          machineIp: machine.ipAddress,
+          expiresAt: allocation.endTime.toISO(),
+        })
+      }
+      return response.ok({
+        status: 'expired',
+        message: 'A chave já foi entregue ou expirou. Solicite novamente.',
+      })
+    }
+
+    if (session) {
+      // Sessão pendente mas agente ainda não gerou a chave
+      return response.ok({
+        status: 'pending',
+        message: 'Aguardando o agente gerar a chave SSH. Tente novamente em alguns segundos.',
+      })
+    }
+
+    // Criar nova sessão SSH pendente (agente vai detectar via polling)
+    session = await SshSession.create({
+      allocationId: allocation.id,
+      machineId: machine.id,
+      userId: user.id,
+      systemUsername: machine.systemUsername,
+      publicKeyFingerprint: '', // Será preenchido pelo agente
+      status: 'active',
+      expiresAt: allocation.endTime,
+    })
+
+    return response.created({
+      status: 'pending',
+      sessionId: session.id,
+      message: 'Solicitação de SSH enviada. O agente irá gerar a chave. Tente novamente em ~5 segundos.',
+    })
   }
+
 }

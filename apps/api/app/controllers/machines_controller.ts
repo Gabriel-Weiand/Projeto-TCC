@@ -13,18 +13,19 @@ export default class MachinesController {
    * Temp:  0-1500 → 0-150 (°C)
    * Rede:  Mbps (sem conversão)
    */
-  private normalizeTelemetry(raw: Record<string, unknown> | null) {
-    if (!raw) return null
+  private normalizeTelemetry(raw: unknown) {
+    if (!raw || typeof raw !== 'object') return null
+    const r = raw as Record<string, unknown>
     return {
-      cpuUsage: Number(raw.cpuUsage ?? 0) / 10,
-      cpuTemp: Number(raw.cpuTemp ?? 0) / 10,
-      gpuUsage: Number(raw.gpuUsage ?? 0) / 10,
-      gpuTemp: Number(raw.gpuTemp ?? 0) / 10,
-      ramUsage: Number(raw.ramUsage ?? 0) / 10,
-      diskUsage: raw.diskUsage != null ? Number(raw.diskUsage) / 10 : null,
-      downloadUsage: raw.downloadUsage ?? null,
-      uploadUsage: raw.uploadUsage ?? null,
-      moboTemperature: raw.moboTemperature != null ? Number(raw.moboTemperature) / 10 : null,
+      cpuUsage: Number(r.cpuUsage ?? 0) / 10,
+      cpuTemp: Number(r.cpuTemp ?? 0) / 10,
+      gpuUsage: Number(r.gpuUsage ?? 0) / 10,
+      gpuTemp: Number(r.gpuTemp ?? 0) / 10,
+      ramUsage: Number(r.ramUsage ?? 0) / 10,
+      diskUsage: r.diskUsage != null ? Number(r.diskUsage) / 10 : null,
+      downloadUsage: r.downloadUsage ?? null,
+      uploadUsage: r.uploadUsage ?? null,
+      moboTemperature: r.moboTemperature != null ? Number(r.moboTemperature) / 10 : null,
       timestamp: new Date().toISOString(),
     }
   }
@@ -50,7 +51,7 @@ export default class MachinesController {
 
       return {
         ...serialized,
-        latestTelemetry: this.normalizeTelemetry(raw as Record<string, unknown>),
+        latestTelemetry: this.normalizeTelemetry(raw),
       }
     })
 
@@ -91,7 +92,7 @@ export default class MachinesController {
 
     const serialized: Record<string, unknown> = {
       ...machine.serialize(),
-      latestTelemetry: this.normalizeTelemetry(raw as Record<string, unknown>),
+      latestTelemetry: this.normalizeTelemetry(raw),
     }
 
     // Apenas admin pode ver o token e macAddress
@@ -182,9 +183,7 @@ export default class MachinesController {
 
     if (allocationIds.length === 0) {
       return response.ok({
-        realtime: this.normalizeTelemetry(
-          telemetryBuffer.getLatest(machine.id) as Record<string, unknown>
-        ),
+        realtime: this.normalizeTelemetry(telemetryBuffer.getLatest(machine.id)),
         history: { data: [], meta: { total: 0, perPage: limit, currentPage: page } },
       })
     }
@@ -201,7 +200,7 @@ export default class MachinesController {
     const latestRealtime = telemetryBuffer.getLatest(machine.id)
 
     return response.ok({
-      realtime: this.normalizeTelemetry(latestRealtime as Record<string, unknown>),
+      realtime: this.normalizeTelemetry(latestRealtime),
       history: telemetries,
     })
   }
@@ -228,6 +227,29 @@ export default class MachinesController {
       machineName: machine.name,
       token: newToken,
       tokenRotatedAt: machine.tokenRotatedAt,
+    })
+  }
+
+  /**
+   * Retorna as últimas entradas de telemetria do ring buffer para playback.
+   * O frontend consome essas entradas 1/s para dar sensação de live.
+   *
+   * GET /api/v1/machines/:id/telemetry/stream
+   */
+  async telemetryStream({ params, request, response }: HttpContext) {
+    const machine = await Machine.findOrFail(params.id)
+    const { count } = request.qs()
+    const maxCount = count ? Math.min(Number(count), 30) : undefined
+
+    const recent = telemetryBuffer.getRecent(machine.id, maxCount)
+
+    // Normaliza cada entrada para valores legíveis
+    const normalized = recent.map((raw) => this.normalizeTelemetry(raw))
+
+    return response.ok({
+      machineId: machine.id,
+      entries: normalized,
+      total: normalized.length,
     })
   }
 }

@@ -1,4 +1,16 @@
-# Agente de Monitoramento — Sistema de Laboratórios
+# Agentes — Sistema de Laboratórios
+
+O sistema possui dois agentes, cada um para um tipo diferente de máquina:
+
+## 📁 Estrutura
+
+```
+apps/agent/
+├── pc/        ← Agente para PCs de laboratório (GUI com overlay de bloqueio)
+└── server/    ← Agente para servidores HPC/renderização (SSH + cgroups)
+```
+
+## `pc/` — Agente de PC (Laboratório)
 
 Agente Python instalado em cada computador do laboratório. Responsável por:
 
@@ -6,12 +18,25 @@ Agente Python instalado em cada computador do laboratório. Responsável por:
 - **Login de usuário** — interface gráfica integrada para validação de credenciais
 - **Alocação rápida** — permite ao aluno criar uma alocação instantânea direto do agente
 - **Heartbeat** — polling periódico (30 s) para verificar estado da máquina e alocações
-- **Telemetria** — coleta e envio de métricas de hardware (CPU, GPU, RAM, **disco**, rede) a cada 5 s
+- **Telemetria** — coleta e envio de métricas de hardware (CPU, GPU, RAM, disco, rede) a cada 5 s
 - **Sincronização de specs** — envia modelo de CPU/GPU, RAM total e disco ao servidor na inicialização
+
+➡ Veja [pc/README.md](pc/README.md) para detalhes.
+
+## `server/` — Agente de Servidor (HPC/Renderização)
+
+Agente daemon para servidores de alto desempenho que gerencia:
+
+- **Acesso SSH temporário** — Gera chaves ed25519 on-the-fly para sessões de alocação
+- **Controle de recursos (cgroups v2)** — Prioriza CPU do dono da alocação via pesos
+- **Telemetria** — Envia métricas de hardware (CPU, GPU, RAM, disco, rede)
+- **Heartbeat** — Mantém comunicação contínua com a API
+
+➡ Veja [server/README.md](server/README.md) para detalhes.
 
 ---
 
-## Requisitos
+## Requisitos Comuns
 
 | Componente          | Versão mínima                     |
 | ------------------- | --------------------------------- |
@@ -340,15 +365,16 @@ Todas as rotas do agente usam o prefixo `/api/agent/` e requerem:
 
 ### Rotas utilizadas
 
-| Método | Rota                        | Descrição                     |
-| ------ | --------------------------- | ----------------------------- |
-| POST   | `/api/agent/heartbeat`      | Polling periódico do estado   |
-| POST   | `/api/agent/validate-user`  | Valida credenciais do usuário |
-| POST   | `/api/agent/telemetry`      | Envia métricas de hardware    |
-| POST   | `/api/agent/report-login`   | Reporta login no SO           |
-| POST   | `/api/agent/report-logout`  | Reporta logout no SO          |
-| PUT    | `/api/agent/sync-specs`     | Sincroniza specs de hardware  |
-| POST   | `/api/agent/quick-allocate` | Cria alocação rápida          |
+| Método | Rota                        | Descrição                               |
+| ------ | --------------------------- | --------------------------------------- |
+| POST   | `/api/agent/heartbeat`      | Polling periódico do estado             |
+| POST   | `/api/agent/validate-user`  | Valida credenciais do usuário           |
+| GET    | `/api/agent/day-schedule`   | Retorna agenda do dia (sem nomes)       |
+| POST   | `/api/agent/quick-allocate` | Cria alocação rápida                    |
+| POST   | `/api/agent/report-login`   | Reporta login no SO                     |
+| POST   | `/api/agent/report-logout`  | Reporta logout no SO                    |
+| PUT    | `/api/agent/sync-specs`     | Sincroniza specs de hardware            |
+| POST   | `/api/agent/telemetry`      | Envia métricas de hardware (batch 5 s)  |
 
 ---
 
@@ -359,3 +385,21 @@ Todas as rotas do agente usam o prefixo `/api/agent/` e requerem:
 | CPU/GPU/RAM/Disco (uso) | 0–1000 | `750` = 75.0%        |
 | Temperaturas            | 0–1500 | `650` = 65.0 °C      |
 | Rede (download/upload)  | Mbps   | `125.5` = 125.5 Mbps |
+
+---
+
+## Desinstalação
+
+```bash
+cd apps/agent
+chmod +x uninstall.sh
+./uninstall.sh
+```
+
+O script remove:
+
+1. Autostart do GNOME (`~/.config/autostart/lab-agent.desktop`)
+2. Ambiente virtual Python (`venv/`)
+3. Arquivo de configuração (`.env`)
+
+Cada etapa pede confirmação antes de executar.

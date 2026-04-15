@@ -8,9 +8,12 @@ import {
   reportLoginValidator,
   syncSpecsValidator,
   quickAllocateValidator,
+  sshSetupReportValidator,
+  sshTeardownReportValidator,
 } from '#validators/agent'
 import { telemetryBuffer } from '#services/telemetry_buffer'
 import { machineCache } from '#services/machine_cache'
+import SshSession from '#models/ssh_session'
 
 /**
  * Duração padrão de uma alocação rápida em minutos (quando não especificada).
@@ -562,8 +565,8 @@ export default class AgentController {
 
   /**
    * Recebe telemetria do agente.
-   * Os dados vão para o buffer e são persistidos periodicamente.
-   * Telemetria só é aceita se houver uma alocação ativa na máquina.
+   * Estado real-time é SEMPRE atualizado (para dashboard).
+   * Persistência no banco ocorre apenas quando há alocação ativa.
    *
    * POST /api/agent/telemetry
    */
@@ -571,26 +574,22 @@ export default class AgentController {
     const machine = authenticatedMachine!
     const data = await request.validateUsing(telemetryReportValidator)
 
-    // Busca alocação ativa nesta máquina (qualquer usuário)
+    // SEMPRE atualiza estado real-time (latestState + ring buffer)
+    // para que o dashboard admin mostre telemetria de todas as máquinas
+    const realtimeData = { allocationId: 0, ...data }
+
+    // Persiste no banco apenas se houver alocação ativa
     const currentAllocation = await this.findCurrentAllocation(machine.id)
-
-    if (!currentAllocation) {
-      // Sem alocação ativa = telemetria descartada (não há contexto para persistência)
-      // Atualiza apenas o último contato
-      machine.lastSeenAt = DateTime.now()
-      if (machine.status === 'offline') {
-        machine.status = 'available'
-      }
-      await machine.save()
-
-      return response.noContent()
+    if (currentAllocation) {
+      // add() já chama updateRealtime() internamente
+      telemetryBuffer.add(machine.id, {
+        allocationId: currentAllocation.id,
+        ...data,
+      })
+    } else {
+      // Sem alocação: atualiza apenas o estado real-time (sem persistir)
+      telemetryBuffer.updateRealtime(machine.id, realtimeData)
     }
-
-    // Adiciona ao buffer com allocationId (não vai direto ao banco)
-    telemetryBuffer.add(machine.id, {
-      allocationId: currentAllocation.id,
-      ...data,
-    })
 
     // Atualiza último contato
     machine.lastSeenAt = DateTime.now()
@@ -601,4 +600,200 @@ export default class AgentController {
 
     return response.noContent()
   }
+
+  // ============================================================
+  // SSH Session Management (Server Agent)
+  // ============================================================
+
+  /**
+   * Retorna pedidos de SSH pendentes para esta máquina.
+   * O agente servidor faz polling nesta rota para saber quando precisa gerar chaves.
+   *
+   * GET /api/agent/ssh/pending
+   */
+  async sshPendingRequests({ authenticatedMachine, response }: HttpContext) {
+    const machine = authenticatedMachine!
+    const now = DateTime.now().toMillis()
+
+    // Busca alocações ativas que ainda não têm sessão SSH
+    const activeAllocations = await Allocation.query()
+      .where('machineId', machine.id)
+      .where('status', 'approved')
+      .preload('user')
+
+    const currentAllocations = activeAllocations.filter(
+      (a) => a.startTime.toMillis() <= now && a.endTime.toMillis() >= now
+    )
+
+    // Filtra as que já têm sessão SSH ativa
+    const pendingRequests = []
+    for (const alloc of currentAllocations) {
+      const existingSession = await SshSession.query()
+        .where('allocationId', alloc.id)
+        .where('status', 'active')
+        .first()
+
+      if (!existingSession && alloc.$extras._sshRequested) {
+        pendingRequests.push({
+          allocationId: alloc.id,
+          userId: alloc.userId,
+          userEmail: alloc.user?.email,
+          userName: alloc.user?.fullName,
+          systemUsername: machine.systemUsername,
+          endTime: alloc.endTime.toISO(),
+        })
+      }
+    }
+
+    // Busca também requests marcados na tabela ssh_sessions com status 'pending' não existente
+    // Abordagem alternativa: buscar por sessions com flag _sshRequested
+    // Simplificação: incluir qualquer alocação ativa com flag de request
+    const pendingSessions = await SshSession.query()
+      .where('machineId', machine.id)
+      .where('status', 'active')
+      .whereNull('publicKeyFingerprint')
+
+    // Na prática, o fluxo é: user solicita → API cria SshSession sem fingerprint →
+    // agent faz polling → gera chave → reporta setup com fingerprint
+    const pendingFromDb = []
+    for (const session of pendingSessions) {
+      const alloc = await Allocation.query()
+        .where('id', session.allocationId)
+        .preload('user')
+        .first()
+
+      if (alloc) {
+        pendingFromDb.push({
+          sessionId: session.id,
+          allocationId: session.allocationId,
+          userId: session.userId,
+          userEmail: alloc.user?.email,
+          userName: alloc.user?.fullName,
+          systemUsername: session.systemUsername,
+          endTime: alloc.endTime.toISO(),
+        })
+      }
+    }
+
+    return response.ok({ pending: pendingFromDb })
+  }
+
+  /**
+   * O agente reporta que configurou uma sessão SSH com sucesso.
+   * Envia a chave privada gerada para que a API entregue ao frontend.
+   *
+   * POST /api/agent/ssh/setup
+   */
+  async sshSetupReport({ authenticatedMachine, request, response }: HttpContext) {
+    const machine = authenticatedMachine!
+    const data = await request.validateUsing(sshSetupReportValidator)
+
+    // Verifica se a alocação pertence a esta máquina
+    const allocation = await Allocation.query()
+      .where('id', data.allocationId)
+      .where('machineId', machine.id)
+      .where('status', 'approved')
+      .first()
+
+    if (!allocation) {
+      return response.notFound({
+        code: 'ALLOCATION_NOT_FOUND',
+        message: 'Alocação não encontrada ou não pertence a esta máquina.',
+      })
+    }
+
+    // Atualiza a sessão pendente com o fingerprint
+    const session = await SshSession.query()
+      .where('allocationId', data.allocationId)
+      .where('machineId', machine.id)
+      .where('status', 'active')
+      .first()
+
+    if (!session) {
+      return response.notFound({
+        code: 'SESSION_NOT_FOUND',
+        message: 'Nenhuma sessão SSH pendente para esta alocação.',
+      })
+    }
+
+    session.publicKeyFingerprint = data.publicKeyFingerprint
+    session.systemUsername = data.systemUsername
+    await session.save()
+
+    // Armazena a chave privada temporariamente em memória para entrega ao frontend
+    // Usa um Map singleton para isso (chave expira junto com a sessão)
+    sshKeyStore.set(session.id, {
+      privateKey: data.privateKey,
+      expiresAt: Date.now() + 5 * 60 * 1000, // 5 minutos para download
+    })
+
+    return response.ok({
+      success: true,
+      sessionId: session.id,
+      message: 'Sessão SSH configurada com sucesso. Chave pronta para entrega.',
+    })
+  }
+
+  /**
+   * O agente reporta que removeu uma sessão SSH (cleanup).
+   *
+   * POST /api/agent/ssh/teardown
+   */
+  async sshTeardownReport({ authenticatedMachine, request, response }: HttpContext) {
+    const machine = authenticatedMachine!
+    const data = await request.validateUsing(sshTeardownReportValidator)
+
+    const sessions = await SshSession.query()
+      .where('allocationId', data.allocationId)
+      .where('machineId', machine.id)
+      .where('status', 'active')
+
+    for (const session of sessions) {
+      session.status = 'revoked'
+      session.revokedAt = DateTime.now()
+      await session.save()
+      sshKeyStore.delete(session.id)
+    }
+
+    return response.ok({
+      success: true,
+      revokedCount: sessions.length,
+      message: 'Sessões SSH revogadas com sucesso.',
+    })
+  }
 }
+
+// ============================================================
+// Store temporário de chaves privadas (em memória)
+// ============================================================
+
+interface StoredKey {
+  privateKey: string
+  expiresAt: number
+}
+
+class SshKeyStore {
+  private store = new Map<number, StoredKey>()
+
+  set(sessionId: number, data: StoredKey) {
+    this.store.set(sessionId, data)
+    // Auto-cleanup após expiração
+    setTimeout(() => this.store.delete(sessionId), data.expiresAt - Date.now())
+  }
+
+  get(sessionId: number): string | null {
+    const entry = this.store.get(sessionId)
+    if (!entry) return null
+    if (Date.now() > entry.expiresAt) {
+      this.store.delete(sessionId)
+      return null
+    }
+    return entry.privateKey
+  }
+
+  delete(sessionId: number) {
+    this.store.delete(sessionId)
+  }
+}
+
+export const sshKeyStore = new SshKeyStore()
