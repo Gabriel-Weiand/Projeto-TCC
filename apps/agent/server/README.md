@@ -1,6 +1,7 @@
 # Agente de Servidor (HPC/Renderização)
 
 Agente daemon para servidores de alto desempenho que gerencia:
+
 - **Acesso SSH temporário** — Gera chaves ed25519 on-the-fly para sessões de alocação
 - **Controle de recursos (cgroups v2)** — Prioriza CPU do dono da alocação via pesos
 - **Telemetria** — Envia métricas de hardware (CPU, GPU, RAM, disco, rede)
@@ -35,10 +36,10 @@ Agente daemon para servidores de alto desempenho que gerencia:
 
 Usa **pesos (weights)** ao invés de limites fixos:
 
-| Papel          | cpu.weight | Comportamento                              |
-|----------------|------------|---------------------------------------------|
+| Papel          | cpu.weight | Comportamento                               |
+| -------------- | ---------- | ------------------------------------------- |
 | Dono (alocado) | 1000       | Prioridade máxima quando compete por CPU    |
-| Convidado      | 10         | Usa 100% se sozinho, quase 0% se dono ativo|
+| Convidado      | 10         | Usa 100% se sozinho, quase 0% se dono ativo |
 | Sem alocação   | 100        | Padrão do Linux                             |
 
 **Resultado**: Processos leves (SSH, bash, ls, scp) do convidado NUNCA são interrompidos.

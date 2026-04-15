@@ -1,6 +1,6 @@
 /**
  * Scheduler - Tarefas agendadas que rodam junto com o servidor
- * 
+ *
  * Este arquivo é importado no boot do servidor e agenda tarefas
  * usando node-cron.
  */
@@ -22,10 +22,7 @@ function schedulePruneTokens() {
     try {
       const now = DateTime.now().toSQL()
 
-      const result = await db
-        .from('auth_access_tokens')
-        .where('expires_at', '<', now)
-        .delete()
+      const result = await db.from('auth_access_tokens').where('expires_at', '<', now).delete()
 
       if (result[0] > 0) {
         logger.info(`[Scheduler] Pruned ${result[0]} expired token(s)`)

@@ -365,16 +365,16 @@ Todas as rotas do agente usam o prefixo `/api/agent/` e requerem:
 
 ### Rotas utilizadas
 
-| Método | Rota                        | Descrição                               |
-| ------ | --------------------------- | --------------------------------------- |
-| POST   | `/api/agent/heartbeat`      | Polling periódico do estado             |
-| POST   | `/api/agent/validate-user`  | Valida credenciais do usuário           |
-| GET    | `/api/agent/day-schedule`   | Retorna agenda do dia (sem nomes)       |
-| POST   | `/api/agent/quick-allocate` | Cria alocação rápida                    |
-| POST   | `/api/agent/report-login`   | Reporta login no SO                     |
-| POST   | `/api/agent/report-logout`  | Reporta logout no SO                    |
-| PUT    | `/api/agent/sync-specs`     | Sincroniza specs de hardware            |
-| POST   | `/api/agent/telemetry`      | Envia métricas de hardware (batch 5 s)  |
+| Método | Rota                        | Descrição                              |
+| ------ | --------------------------- | -------------------------------------- |
+| POST   | `/api/agent/heartbeat`      | Polling periódico do estado            |
+| POST   | `/api/agent/validate-user`  | Valida credenciais do usuário          |
+| GET    | `/api/agent/day-schedule`   | Retorna agenda do dia (sem nomes)      |
+| POST   | `/api/agent/quick-allocate` | Cria alocação rápida                   |
+| POST   | `/api/agent/report-login`   | Reporta login no SO                    |
+| POST   | `/api/agent/report-logout`  | Reporta logout no SO                   |
+| PUT    | `/api/agent/sync-specs`     | Sincroniza specs de hardware           |
+| POST   | `/api/agent/telemetry`      | Envia métricas de hardware (batch 5 s) |
 
 ---
 

@@ -38,10 +38,7 @@ export default class extends BaseSchema {
       table.string('public_key_fingerprint', 128).notNullable()
 
       // Status da sessão SSH
-      table
-        .enum('status', ['active', 'expired', 'revoked'])
-        .defaultTo('active')
-        .notNullable()
+      table.enum('status', ['active', 'expired', 'revoked']).defaultTo('active').notNullable()
 
       table.timestamp('created_at').notNullable()
       table.timestamp('expires_at').notNullable()

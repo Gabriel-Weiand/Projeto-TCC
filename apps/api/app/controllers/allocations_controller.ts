@@ -365,7 +365,11 @@ export default class AllocationsController {
 
     // Verificar se alocação está ativa agora
     const now = DateTime.now().toMillis()
-    if (allocation.status !== 'approved' || allocation.startTime.toMillis() > now || allocation.endTime.toMillis() < now) {
+    if (
+      allocation.status !== 'approved' ||
+      allocation.startTime.toMillis() > now ||
+      allocation.endTime.toMillis() < now
+    ) {
       return response.badRequest({
         code: 'ALLOCATION_NOT_ACTIVE',
         message: 'A alocação não está ativa no momento.',
@@ -429,8 +433,8 @@ export default class AllocationsController {
     return response.created({
       status: 'pending',
       sessionId: session.id,
-      message: 'Solicitação de SSH enviada. O agente irá gerar a chave. Tente novamente em ~5 segundos.',
+      message:
+        'Solicitação de SSH enviada. O agente irá gerar a chave. Tente novamente em ~5 segundos.',
     })
   }
-
 }

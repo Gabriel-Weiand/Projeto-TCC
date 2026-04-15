@@ -43,8 +43,8 @@ async function handleCreate() {
   try {
     await allocations.createAllocation({
       machineId: Number(form.machineId),
-      startTime,  // Convertido para UTC via toLocalIso
-      endTime,    // Convertido para UTC via toLocalIso
+      startTime, // Convertido para UTC via toLocalIso
+      endTime, // Convertido para UTC via toLocalIso
       reason: form.reason || undefined,
     });
     emit("created");

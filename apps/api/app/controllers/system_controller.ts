@@ -13,7 +13,7 @@ export default class SystemController {
   /**
    * Remove telemetrias de alocações antigas.
    * Identifica alocações anteriores à data e remove suas telemetrias.
-   * 
+   *
    * DELETE /api/v1/system/prune/telemetries
    */
   async pruneTelemetries({ request, response }: HttpContext) {
@@ -41,9 +41,7 @@ export default class SystemController {
       })
     }
 
-    const deleted = await Telemetry.query()
-      .whereIn('allocationId', allocationIds)
-      .delete()
+    const deleted = await Telemetry.query().whereIn('allocationId', allocationIds).delete()
 
     return response.ok({
       message: 'Telemetrias removidas com sucesso.',
@@ -53,12 +51,16 @@ export default class SystemController {
 
   /**
    * Remove alocações antigas (finalizadas/canceladas).
-   * 
+   *
    * DELETE /api/v1/system/prune/allocations
    */
   async pruneAllocations({ request, response }: HttpContext) {
-    const { before, status = ['finished', 'cancelled'], userId, machineId } = 
-      await request.validateUsing(pruneAllocationsValidator)
+    const {
+      before,
+      status = ['finished', 'cancelled'],
+      userId,
+      machineId,
+    } = await request.validateUsing(pruneAllocationsValidator)
 
     const beforeDt = DateTime.fromJSDate(before)
 
@@ -84,7 +86,7 @@ export default class SystemController {
 
   /**
    * Remove métricas de alocações antigas.
-   * 
+   *
    * DELETE /api/v1/system/prune/metrics
    */
   async pruneMetrics({ request, response }: HttpContext) {
