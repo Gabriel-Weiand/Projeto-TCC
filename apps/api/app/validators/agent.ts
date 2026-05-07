@@ -1,22 +1,12 @@
 import vine from '@vinejs/vine'
 
 /**
- * Validator para validação de usuário no agente.
- * O agente envia credenciais do usuário que quer logar na máquina.
+ * Validator para o heartbeat do agente.
+ * O agente envia a lista de usuários atualmente conectados via SSH (lida via `who -q` / utmp).
  */
-export const validateUserValidator = vine.compile(
+export const heartbeatValidator = vine.compile(
   vine.object({
-    email: vine.string().email().normalizeEmail(),
-    password: vine.string().minLength(1),
-  })
-)
-
-/**
- * Validator para report de login no SO.
- */
-export const reportLoginValidator = vine.compile(
-  vine.object({
-    username: vine.string().trim().maxLength(100),
+    connectedUsers: vine.array(vine.string().trim().maxLength(64)).optional(),
   })
 )
 
@@ -32,18 +22,6 @@ export const syncSpecsValidator = vine.compile(
     totalDiskGb: vine.number().positive().max(100000).optional(),
     ipAddress: vine.string().trim().maxLength(45).optional(),
     // macAddress não é sincronizável: é definido na criação e usado na autenticação
-  })
-)
-
-/**
- * Validator para alocação rápida (quick-allocate).
- * Permite criar uma alocação instantânea diretamente do agente.
- */
-export const quickAllocateValidator = vine.compile(
-  vine.object({
-    email: vine.string().email().normalizeEmail(),
-    password: vine.string().minLength(1),
-    durationMinutes: vine.number().positive().optional(),
   })
 )
 

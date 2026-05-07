@@ -11,6 +11,7 @@ const TelemetriesController = () => import('#controllers/telemetries_controller'
 const AllocationMetricsController = () => import('#controllers/allocation_metrics_controller')
 const SystemController = () => import('#controllers/system_controller')
 const UtilsController = () => import('#controllers/utils_controller')
+const SshSessionsController = () => import('#controllers/ssh_sessions_controller')
 
 /**
  * Public Utils Routes (no auth required)
@@ -152,21 +153,8 @@ router
  */
 router
   .group(() => {
-    // --- Heartbeat (inclui should-block e info de quick-allocate) ---
+    // --- Heartbeat (inclui should-block e info da alocação atual) ---
     router.post('heartbeat', [AgentController, 'heartbeat']).as('agent.heartbeat')
-
-    // --- Validação de Usuário ---
-    router.post('validate-user', [AgentController, 'validateUser']).as('agent.validateUser')
-
-    // --- Agenda do dia (sem nomes dos usuários) ---
-    router.get('day-schedule', [AgentController, 'daySchedule']).as('agent.daySchedule')
-
-    // --- Alocação rápida (on-the-spot) ---
-    router.post('quick-allocate', [AgentController, 'quickAllocate']).as('agent.quickAllocate')
-
-    // --- Reports de Login/Logout no SO ---
-    router.post('report-login', [AgentController, 'reportLogin']).as('agent.reportLogin')
-    router.post('report-logout', [AgentController, 'reportLogout']).as('agent.reportLogout')
 
     // --- Sync & Telemetria ---
     router.put('sync-specs', [AgentController, 'syncSpecs']).as('agent.syncSpecs')
@@ -189,6 +177,17 @@ router
       .post('allocations/:id/ssh-access', [AllocationsController, 'requestSshAccess'])
       .as('allocations.sshAccess')
       .where('id', router.matchers.number())
+
+    // --- Gestão de sessões SSH (admin: lista e revoga) ---
+    router
+      .group(() => {
+        router.get('ssh-sessions', [SshSessionsController, 'index']).as('ssh.sessions.index')
+        router
+          .delete('ssh-sessions/:id', [SshSessionsController, 'destroy'])
+          .as('ssh.sessions.destroy')
+          .where('id', router.matchers.number())
+      })
+      .use(middleware.isAdmin())
   })
   .prefix('api/v1')
   .use(middleware.auth())

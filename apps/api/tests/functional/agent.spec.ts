@@ -24,7 +24,6 @@ test.group('Agent API', (group) => {
     const response = await client
       .post('/api/agent/heartbeat')
       .header('Authorization', `Bearer ${machine.token}`)
-      .header('X-Machine-Mac', machine.macAddress)
 
     // Assert
     response.assertStatus(200)
@@ -74,7 +73,6 @@ test.group('Agent API', (group) => {
     const response = await client
       .post('/api/agent/heartbeat')
       .header('Authorization', `Bearer ${machine.token}`)
-      .header('X-Machine-Mac', machine.macAddress)
 
     // Assert
     response.assertStatus(200)
@@ -84,214 +82,6 @@ test.group('Agent API', (group) => {
         userEmail: 'teste@teste.com',
       },
     })
-  })
-
-  test('validate-user deve autorizar usuário com alocação ativa', async ({ client }) => {
-    // Arrange
-    const user = await User.create({
-      fullName: 'Teste User',
-      email: 'teste@teste.com',
-      password: 'senha123',
-      role: 'user',
-    })
-
-    const machine = await Machine.create({
-      name: 'PC-AGENT-03',
-      macAddress: 'AA:BB:CC:02:01:03',
-      description: 'Agente teste validate-user autorizado',
-      cpuModel: 'Intel i5',
-      totalRamGb: 8,
-      totalDiskGb: 256,
-      status: 'available',
-    })
-
-    // Cria alocação ativa
-    await Allocation.create({
-      userId: user.id,
-      machineId: machine.id,
-      startTime: DateTime.now().minus({ hours: 1 }),
-      endTime: DateTime.now().plus({ hours: 1 }),
-      status: 'approved',
-    })
-
-    // Act
-    const response = await client
-      .post('/api/agent/validate-user')
-      .header('Authorization', `Bearer ${machine.token}`)
-      .header('X-Machine-Mac', machine.macAddress)
-      .json({
-        email: 'teste@teste.com',
-        password: 'senha123',
-      })
-
-    // Assert
-    response.assertStatus(200)
-    response.assertBodyContains({
-      allowed: true,
-      reason: 'AUTHORIZED',
-      user: {
-        id: user.id,
-        email: 'teste@teste.com',
-      },
-    })
-  })
-
-  test('validate-user deve negar usuário sem alocação ativa', async ({ client }) => {
-    // Arrange
-    await User.create({
-      fullName: 'Teste User',
-      email: 'teste@teste.com',
-      password: 'senha123',
-      role: 'user',
-    })
-
-    const machine = await Machine.create({
-      name: 'PC-AGENT-04',
-      macAddress: 'AA:BB:CC:02:01:04',
-      description: 'Agente teste validate-user negado',
-      cpuModel: 'Intel i5',
-      totalRamGb: 8,
-      totalDiskGb: 256,
-      status: 'available',
-    })
-
-    // Não cria alocação
-
-    // Act
-    const response = await client
-      .post('/api/agent/validate-user')
-      .header('Authorization', `Bearer ${machine.token}`)
-      .header('X-Machine-Mac', machine.macAddress)
-      .json({
-        email: 'teste@teste.com',
-        password: 'senha123',
-      })
-
-    // Assert
-    response.assertStatus(200)
-    response.assertBodyContains({
-      allowed: false,
-      reason: 'NO_ACTIVE_ALLOCATION',
-    })
-  })
-
-  test('validate-user deve rejeitar credenciais inválidas', async ({ client }) => {
-    // Arrange
-    const machine = await Machine.create({
-      name: 'PC-AGENT-05',
-      macAddress: 'AA:BB:CC:02:01:05',
-      description: 'Agente teste credenciais inválidas',
-      cpuModel: 'Intel i5',
-      totalRamGb: 8,
-      totalDiskGb: 256,
-      status: 'available',
-    })
-
-    // Act
-    const response = await client
-      .post('/api/agent/validate-user')
-      .header('Authorization', `Bearer ${machine.token}`)
-      .header('X-Machine-Mac', machine.macAddress)
-      .json({
-        email: 'naoexiste@teste.com',
-        password: 'senhaqualquer',
-      })
-
-    // Assert
-    response.assertStatus(401)
-    response.assertBodyContains({
-      allowed: false,
-      reason: 'INVALID_CREDENTIALS',
-    })
-  })
-
-  test('validate-user deve negar acesso em máquina em manutenção', async ({ client }) => {
-    // Arrange
-    await User.create({
-      fullName: 'Teste User',
-      email: 'teste@teste.com',
-      password: 'senha123',
-      role: 'user',
-    })
-
-    const machine = await Machine.create({
-      name: 'PC-MANUTENCAO',
-      macAddress: 'AA:BB:CC:02:01:06',
-      description: 'Agente teste máquina em manutenção',
-      cpuModel: 'Intel i5',
-      totalRamGb: 8,
-      totalDiskGb: 256,
-      status: 'maintenance',
-    })
-
-    // Act
-    const response = await client
-      .post('/api/agent/validate-user')
-      .header('Authorization', `Bearer ${machine.token}`)
-      .header('X-Machine-Mac', machine.macAddress)
-      .json({
-        email: 'teste@teste.com',
-        password: 'senha123',
-      })
-
-    // Assert
-    response.assertStatus(200)
-    response.assertBodyContains({
-      allowed: false,
-      reason: 'MACHINE_MAINTENANCE',
-    })
-  })
-
-  test('day-schedule deve retornar formato correto', async ({ client, assert }) => {
-    // Arrange
-    const machine = await Machine.create({
-      name: 'PC-AGENT-06',
-      macAddress: 'AA:BB:CC:02:01:07',
-      description: 'Agente teste day-schedule',
-      cpuModel: 'Intel i5',
-      totalRamGb: 8,
-      totalDiskGb: 256,
-      status: 'available',
-    })
-
-    // Act
-    const response = await client
-      .get('/api/agent/day-schedule')
-      .header('Authorization', `Bearer ${machine.token}`)
-      .header('X-Machine-Mac', machine.macAddress)
-
-    // Assert - verifica formato da resposta
-    response.assertStatus(200)
-    assert.property(response.body(), 'machineId')
-    assert.property(response.body(), 'machineName')
-    assert.property(response.body(), 'date')
-    assert.property(response.body(), 'slots')
-    assert.isArray(response.body().slots)
-  })
-
-  test('day-schedule deve aceitar parâmetro de data', async ({ client, assert }) => {
-    // Arrange
-    const machine = await Machine.create({
-      name: 'PC-AGENT-06B',
-      macAddress: 'AA:BB:CC:02:01:08',
-      description: 'Agente teste day-schedule com data',
-      cpuModel: 'Intel i5',
-      totalRamGb: 8,
-      totalDiskGb: 256,
-      status: 'available',
-    })
-
-    const tomorrow = DateTime.now().plus({ days: 1 }).toISODate()
-
-    // Act
-    const response = await client
-      .get(`/api/agent/day-schedule?date=${tomorrow}`)
-      .header('Authorization', `Bearer ${machine.token}`)
-      .header('X-Machine-Mac', machine.macAddress)
-
-    // Assert
-    response.assertStatus(200)
-    assert.equal(response.body().date, tomorrow)
   })
 
   test('heartbeat deve incluir shouldBlock true para máquina em manutenção', async ({ client }) => {
@@ -310,7 +100,6 @@ test.group('Agent API', (group) => {
     const response = await client
       .post('/api/agent/heartbeat')
       .header('Authorization', `Bearer ${machine.token}`)
-      .header('X-Machine-Mac', machine.macAddress)
 
     // Assert
     response.assertStatus(200)
@@ -324,13 +113,6 @@ test.group('Agent API', (group) => {
     client,
   }) => {
     // Arrange
-    const user = await User.create({
-      fullName: 'Teste User',
-      email: 'teste@teste.com',
-      password: 'senha123',
-      role: 'user',
-    })
-
     const machine = await Machine.create({
       name: 'PC-AGENT-09',
       macAddress: 'AA:BB:CC:02:01:0A',
@@ -341,13 +123,13 @@ test.group('Agent API', (group) => {
       status: 'available',
     })
 
-    // Não cria alocação ativa para o usuário
+    // Não cria alocação — qualquer usuário conectado deve ser bloqueado
 
-    // Act - Usa user.id para verificar que o usuário não tem alocação
+    // Act - Envia usuário conectado sem alocação ativa
     const response = await client
-      .post(`/api/agent/heartbeat?loggedUserId=${user.id}`)
+      .post('/api/agent/heartbeat')
       .header('Authorization', `Bearer ${machine.token}`)
-      .header('X-Machine-Mac', machine.macAddress)
+      .json({ connectedUsers: ['usuario.sem.alocacao'] })
 
     // Assert
     response.assertStatus(200)
@@ -357,214 +139,37 @@ test.group('Agent API', (group) => {
     })
   })
 
-  test('heartbeat deve incluir info de quickAllocate', async ({ client, assert }) => {
-    // Arrange
-    const machine = await Machine.create({
-      name: 'PC-QUICK-TEST',
-      macAddress: 'AA:BB:CC:02:01:0B',
-      description: 'Agente teste quick-allocate info',
-      cpuModel: 'Intel i5',
-      totalRamGb: 8,
-      totalDiskGb: 256,
-      status: 'available',
-    })
-
-    // Act
-    const response = await client
-      .post('/api/agent/heartbeat')
-      .header('Authorization', `Bearer ${machine.token}`)
-      .header('X-Machine-Mac', machine.macAddress)
-
-    // Assert
-    response.assertStatus(200)
-    assert.property(response.body(), 'quickAllocate')
-    assert.equal(response.body().quickAllocate.allowed, true)
-    assert.equal(response.body().quickAllocate.maxDurationMinutes, 60)
-  })
-
-  test('quick-allocate deve criar alocação instantânea', async ({ client, assert }) => {
-    // Arrange
-    const user = await User.create({
-      fullName: 'Teste User',
-      email: 'teste@teste.com',
-      password: 'senha123',
-      role: 'user',
-    })
-
-    const machine = await Machine.create({
-      name: 'PC-QUICK-01',
-      macAddress: 'AA:BB:CC:02:01:0C',
-      description: 'Agente teste quick-allocate',
-      cpuModel: 'Intel i5',
-      totalRamGb: 8,
-      totalDiskGb: 256,
-      status: 'available',
-    })
-
-    // Act
-    const response = await client
-      .post('/api/agent/quick-allocate')
-      .header('Authorization', `Bearer ${machine.token}`)
-      .header('X-Machine-Mac', machine.macAddress)
-      .json({
-        email: 'teste@teste.com',
-        password: 'senha123',
-        durationMinutes: 30,
-      })
-
-    // Assert
-    response.assertStatus(201)
-    response.assertBodyContains({
-      success: true,
-      reason: 'ALLOCATION_CREATED',
-    })
-    assert.equal(response.body().allocation.durationMinutes, 30)
-    assert.equal(response.body().user.id, user.id)
-
-    // Verifica que a alocação foi criada no banco
-    const allocation = await Allocation.find(response.body().allocation.id)
-    assert.isNotNull(allocation)
-    assert.equal(allocation!.userId, user.id)
-    assert.equal(allocation!.machineId, machine.id)
-    assert.equal(allocation!.status, 'approved')
-  })
-
-  test('quick-allocate deve rejeitar se próxima alocação muito próxima', async ({ client }) => {
-    // Arrange
-    const user = await User.create({
-      fullName: 'Teste User',
-      email: 'teste@teste.com',
-      password: 'senha123',
-      role: 'user',
-    })
-
-    const machine = await Machine.create({
-      name: 'PC-QUICK-02',
-      macAddress: 'AA:BB:CC:02:01:0D',
-      description: 'Agente teste quick-allocate tempo insuficiente',
-      cpuModel: 'Intel i5',
-      totalRamGb: 8,
-      totalDiskGb: 256,
-      status: 'available',
-    })
-
-    // Cria alocação que começa em 10 minutos (menos que o mínimo de 20)
-    await Allocation.create({
-      userId: user.id,
-      machineId: machine.id,
-      startTime: DateTime.now().plus({ minutes: 10 }),
-      endTime: DateTime.now().plus({ minutes: 70 }),
-      status: 'approved',
-    })
-
-    // Act
-    const response = await client
-      .post('/api/agent/quick-allocate')
-      .header('Authorization', `Bearer ${machine.token}`)
-      .header('X-Machine-Mac', machine.macAddress)
-      .json({
-        email: 'teste@teste.com',
-        password: 'senha123',
-      })
-
-    // Assert
-    response.assertStatus(409)
-    response.assertBodyContains({
-      success: false,
-      reason: 'INSUFFICIENT_TIME',
-    })
-  })
-
-  test('quick-allocate deve rejeitar credenciais inválidas', async ({ client }) => {
-    // Arrange
-    const machine = await Machine.create({
-      name: 'PC-QUICK-03',
-      macAddress: 'AA:BB:CC:02:01:0E',
-      description: 'Agente teste quick-allocate credenciais inválidas',
-      cpuModel: 'Intel i5',
-      totalRamGb: 8,
-      totalDiskGb: 256,
-      status: 'available',
-    })
-
-    // Act
-    const response = await client
-      .post('/api/agent/quick-allocate')
-      .header('Authorization', `Bearer ${machine.token}`)
-      .header('X-Machine-Mac', machine.macAddress)
-      .json({
-        email: 'naoexiste@teste.com',
-        password: 'senhaerrada',
-      })
-
-    // Assert
-    response.assertStatus(401)
-    response.assertBodyContains({
-      success: false,
-      reason: 'INVALID_CREDENTIALS',
-    })
-  })
-
-  test('report-login deve registrar usuário logado', async ({ client, assert }) => {
+  test('heartbeat deve atualizar loggedUser com usuários conectados via SSH', async ({
+    client,
+    assert,
+  }) => {
     // Arrange
     const machine = await Machine.create({
       name: 'PC-AGENT-10',
       macAddress: 'AA:BB:CC:02:01:0F',
-      description: 'Agente teste report-login',
+      description: 'Agente teste connectedUsers',
       cpuModel: 'Intel i5',
       totalRamGb: 8,
       totalDiskGb: 256,
       status: 'available',
     })
 
-    // Act
+    // Act - Agente reporta que 'aluno.silva' está conectado via SSH
     const response = await client
-      .post('/api/agent/report-login')
+      .post('/api/agent/heartbeat')
       .header('Authorization', `Bearer ${machine.token}`)
-      .header('X-Machine-Mac', machine.macAddress)
-      .json({
-        username: 'aluno.silva',
-      })
+      .json({ connectedUsers: ['aluno.silva'] })
 
     // Assert
     response.assertStatus(200)
     response.assertBodyContains({
-      registered: true,
+      connectedUsers: ['aluno.silva'],
+      connectedCount: 1,
     })
 
     await machine.refresh()
     assert.equal(machine.loggedUser, 'aluno.silva')
     assert.equal(machine.status, 'occupied')
-  })
-
-  test('report-logout deve limpar usuário logado', async ({ client, assert }) => {
-    // Arrange
-    const machine = await Machine.create({
-      name: 'PC-AGENT-11',
-      macAddress: 'AA:BB:CC:02:01:10',
-      description: 'Agente teste report-logout',
-      cpuModel: 'Intel i5',
-      totalRamGb: 8,
-      totalDiskGb: 256,
-      status: 'occupied',
-      loggedUser: 'aluno.silva',
-    })
-
-    // Act
-    const response = await client
-      .post('/api/agent/report-logout')
-      .header('Authorization', `Bearer ${machine.token}`)
-      .header('X-Machine-Mac', machine.macAddress)
-
-    // Assert
-    response.assertStatus(200)
-    response.assertBodyContains({
-      registered: true,
-    })
-
-    await machine.refresh()
-    assert.isNull(machine.loggedUser)
-    assert.equal(machine.status, 'available')
   })
 
   test('sync-specs deve atualizar especificações da máquina', async ({ client, assert }) => {
@@ -580,7 +185,6 @@ test.group('Agent API', (group) => {
     const response = await client
       .put('/api/agent/sync-specs')
       .header('Authorization', `Bearer ${machine.token}`)
-      .header('X-Machine-Mac', machine.macAddress)
       .json({
         cpuModel: 'AMD Ryzen 9 5900X',
         gpuModel: 'NVIDIA RTX 4080',
@@ -637,7 +241,6 @@ test.group('Agent API', (group) => {
     const response = await client
       .post('/api/agent/telemetry')
       .header('Authorization', `Bearer ${machine.token}`)
-      .header('X-Machine-Mac', machine.macAddress)
       .json({
         cpuUsage: 450,
         cpuTemp: 650,
@@ -674,7 +277,6 @@ test.group('Agent API', (group) => {
     const response = await client
       .post('/api/agent/heartbeat')
       .header('Authorization', 'Bearer token_invalido_123')
-      .header('X-Machine-Mac', 'AA:BB:CC:00:00:01')
 
     // Assert
     response.assertStatus(401)
@@ -682,4 +284,5 @@ test.group('Agent API', (group) => {
       code: 'INVALID_TOKEN',
     })
   })
+
 })
