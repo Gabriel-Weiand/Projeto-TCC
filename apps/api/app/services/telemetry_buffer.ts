@@ -1,19 +1,39 @@
 import Telemetry from '#models/telemetry'
 import logger from '@adonisjs/core/services/logger'
 
-interface TelemetryData {
+/** Dados escalares compactos — persistidos no banco (tabela telemetries). */
+export interface LeanTelemetryData {
   allocationId: number
   cpuUsage: number
   cpuTemp: number
+  cpuFreqMhz?: number
   gpuUsage: number
   gpuTemp: number
   ramUsage: number
+  swapUsage?: number | null
   diskUsage?: number | null
+  diskReadMbps?: number | null
+  diskWriteMbps?: number | null
   downloadUsage?: number | null
   uploadUsage?: number | null
   moboTemperature?: number | null
   loggedUserName: string
 }
+
+/** Dados granulares por core — mantidos só em memória para o dashboard. */
+export interface RichTelemetryData extends LeanTelemetryData {
+  cpuCoreUsage?: number[]
+  cpuCoreFreqMhz?: number[]
+  ramAvailableGb?: number
+  ramTotalGb?: number
+  nvmeTemp?: number | null
+  diskFreeGb?: number | null
+  diskTotalGb?: number | null
+  topProcesses?: { pid: number; name: string; cpuPct: number; ramPct: number }[]
+}
+
+// Alias para compatibilidade interna
+type TelemetryData = RichTelemetryData
 
 interface MachineLatestState {
   data: TelemetryData

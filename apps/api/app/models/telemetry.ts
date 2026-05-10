@@ -12,9 +12,11 @@ export default class Telemetry extends BaseModel {
   // --- HARDWARE (Escala 0-1000) ---
   @column() declare cpuUsage: number
   @column() declare cpuTemp: number
+  @column() declare cpuFreqMhz: number | null  // MHz inteiro, opcional
   @column() declare gpuUsage: number
   @column() declare gpuTemp: number
   @column() declare ramUsage: number
+  @column() declare swapUsage: number | null
   @column() declare diskUsage: number | null
 
   // --- REDE (Mbps) - Opcional ---

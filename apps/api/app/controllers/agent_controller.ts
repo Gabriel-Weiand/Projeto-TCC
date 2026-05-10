@@ -186,20 +186,23 @@ export default class AgentController {
    */
   async telemetry({ authenticatedMachine, request, response }: HttpContext) {
     const machine = authenticatedMachine!
-    const data = await request.validateUsing(telemetryReportValidator)
+    const { lean, rich } = await request.validateUsing(telemetryReportValidator)
 
-    // SEMPRE atualiza estado real-time (latestState + ring buffer)
-    // para que o dashboard admin mostre telemetria de todas as máquinas
-    const realtimeData = { allocationId: 0, ...data }
+    // Estado real-time usa os dados RICH (com cores, frequências, etc.)
+    // para que o dashboard admin tenha máximo de informação
+    const realtimeData = { allocationId: 0, ...rich }
 
     // Persiste no banco apenas se houver alocação ativa
+    // Persiste apenas o LEAN (escalares compactos) — sem arrays de cores
     const currentAllocation = await this.findCurrentAllocation(machine.id)
     if (currentAllocation) {
       // add() já chama updateRealtime() internamente
       telemetryBuffer.add(machine.id, {
         allocationId: currentAllocation.id,
-        ...data,
+        ...lean,
       })
+      // O estado real-time recebe o RICH para o dashboard
+      telemetryBuffer.updateRealtime(machine.id, { allocationId: currentAllocation.id, ...rich })
     } else {
       // Sem alocação: atualiza apenas o estado real-time (sem persistir)
       telemetryBuffer.updateRealtime(machine.id, realtimeData)

@@ -21,12 +21,14 @@ export default class extends BaseSchema {
 
       table.integer('cpu_usage').unsigned().notNullable()
       table.integer('cpu_temp').unsigned().notNullable()
+      table.integer('cpu_freq_mhz').unsigned().nullable()  // Frequência média (MHz)
 
       table.integer('gpu_usage').unsigned().notNullable()
       table.integer('gpu_temp').unsigned().notNullable()
 
       table.integer('ram_usage').unsigned().notNullable()
-      table.integer('disk_usage').unsigned().nullable() // % de uso do disco ativo (opcional)
+      table.integer('swap_usage').unsigned().nullable()    // % swap em escala 0-1000
+      table.integer('disk_usage').unsigned().nullable()    // % de uso do disco ativo (opcional)
 
       // --- REDE (Mbps) ---
       table.integer('download_usage').unsigned().nullable() // Opcional: nem sempre disponível

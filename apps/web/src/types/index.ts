@@ -50,6 +50,8 @@ export interface Allocation {
   reason: string | null;
   status: "pending" | "approved" | "denied" | "cancelled" | "finished";
   userHidden: boolean;
+  /** Presente quando a rota retorna dados anonimizados (usuário não-admin) */
+  isOwn?: boolean;
   createdAt: string;
   updatedAt: string | null;
   user?: User;

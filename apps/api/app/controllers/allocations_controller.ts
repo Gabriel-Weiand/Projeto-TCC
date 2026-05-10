@@ -262,6 +262,7 @@ export default class AllocationsController {
     const allocations = await query.paginate(page, limit)
 
     // Para user normal, retorna apenas dados anonimizados
+    // isOwn indica se a alocação pertence ao próprio usuário autenticado
     if (user.role !== 'admin') {
       const anonymized = allocations.serialize()
       anonymized.data = anonymized.data.map((allocation: Record<string, unknown>) => ({
@@ -270,7 +271,8 @@ export default class AllocationsController {
         startTime: allocation.startTime,
         endTime: allocation.endTime,
         status: allocation.status,
-        // Sem userId, user, reason, metric
+        isOwn: allocation.userId === user.id,
+        // Sem userId de terceiros, user, reason, metric
       }))
       return response.ok(anonymized)
     }
