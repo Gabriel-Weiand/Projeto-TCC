@@ -1,5 +1,6 @@
 <script setup lang="ts">
-import { ref, computed, onMounted, watch } from "vue";
+import CalendarGanttScroll from "@/components/CalendarGanttScroll.vue";
+import { ref, computed, onMounted } from "vue";
 import { useAllocationsStore } from "@/stores/allocations";
 import { useMachinesStore } from "@/stores/machines";
 import { useAuthStore } from "@/stores/auth";
@@ -14,207 +15,27 @@ const isAdmin = computed(() => auth.user?.role === "admin");
 const loading = ref(true);
 const showForm = ref(false);
 
-/* ---- Machine filter ---- */
-const machineFilter = ref<number | "all">("all");
+/* ---- Calendar allocations for Gantt ---- */
+const ganttAllocations = ref<Allocation[]>([]);
+const ganttLoading = ref(false);
 
-/* ---- Week calendar state ---- */
-const weekOffset = ref(0);
-const HOURS_START = 7;
-const HOURS_END = 23;
+// Calculo da margem vinda do topo para alinhar o painel lateral com a linha do tempo do Gantt
+const panelMarginTop = ref(0);
 
-const today = new Date();
-today.setHours(0, 0, 0, 0);
-
-const weekStart = computed(() => {
-  const d = new Date(today);
-  const day = d.getDay();
-  const diff = day === 0 ? 6 : day - 1;
-  d.setDate(d.getDate() - diff + weekOffset.value * 7);
-  return d;
-});
-
-const weekDays = computed(() => {
-  const days: Date[] = [];
-  for (let i = 0; i < 7; i++) {
-    const d = new Date(weekStart.value);
-    d.setDate(d.getDate() + i);
-    days.push(d);
-  }
-  return days;
-});
-
-const hours = computed(() => {
-  const h: number[] = [];
-  for (let i = HOURS_START; i <= HOURS_END; i++) h.push(i);
-  return h;
-});
-
-function fmtDayLabel(d: Date) {
-  const names = ["Dom", "Seg", "Ter", "Qua", "Qui", "Sex", "Sáb"];
-  return `${names[d.getDay()]} ${d.getDate().toString().padStart(2, "0")}/${(d.getMonth() + 1).toString().padStart(2, "0")}`;
-}
-
-function isToday(d: Date) {
-  const t = new Date();
-  return (
-    d.getDate() === t.getDate() &&
-    d.getMonth() === t.getMonth() &&
-    d.getFullYear() === t.getFullYear()
-  );
-}
-
-/* ---- Allocations mapped to calendar ---- */
-const calendarAllocations = ref<Allocation[]>([]);
-const loadingCalendar = ref(false);
-
-async function loadCalendarAllocations() {
-  loadingCalendar.value = true;
+async function loadGanttAllocations() {
+  ganttLoading.value = true;
   try {
-    if (machineFilter.value === "all") {
+    if (machinesStore.machines.length > 0) {
       const promises = machinesStore.machines.map((m) =>
-        machinesStore.fetchMachineAllocations(m.id, { limit: 100 }),
+        machinesStore.fetchMachineAllocations(m.id, { limit: 500 }),
       );
       const results = await Promise.all(promises);
-      calendarAllocations.value = results.flatMap((r) => r.data || []);
-    } else {
-      const result = await machinesStore.fetchMachineAllocations(
-        machineFilter.value,
-        { limit: 100 },
-      );
-      calendarAllocations.value = result.data || [];
+      ganttAllocations.value = results.flatMap((r) => r.data || []);
     }
   } finally {
-    loadingCalendar.value = false;
+    ganttLoading.value = false;
   }
 }
-
-function blocksForDay(day: Date) {
-  const dayStart = new Date(
-    day.getFullYear(),
-    day.getMonth(),
-    day.getDate(),
-    0,
-    0,
-    0,
-    0,
-  );
-  const dayEnd = new Date(
-    day.getFullYear(),
-    day.getMonth(),
-    day.getDate(),
-    23,
-    59,
-    59,
-    999,
-  );
-
-  const filtered = calendarAllocations.value.filter((a) => {
-    if (!["approved", "pending"].includes(a.status)) return false;
-    const s = new Date(a.startTime);
-    const e = new Date(a.endTime);
-    return s <= dayEnd && e >= dayStart;
-  });
-
-  // Calcula posição vertical de cada bloco
-  const items = filtered.map((a) => {
-    const s = new Date(a.startTime);
-    const e = new Date(a.endTime);
-    const clampedStart = Math.max(s.getTime(), dayStart.getTime());
-    const clampedEnd = Math.min(e.getTime(), dayEnd.getTime());
-
-    const startHour =
-      new Date(clampedStart).getHours() +
-      new Date(clampedStart).getMinutes() / 60;
-    const endHour =
-      new Date(clampedEnd).getHours() + new Date(clampedEnd).getMinutes() / 60;
-
-    const topPct =
-      ((Math.max(startHour, HOURS_START) - HOURS_START) /
-        (HOURS_END - HOURS_START + 1)) *
-      100;
-    const heightPct =
-      ((Math.min(endHour, HOURS_END + 1) - Math.max(startHour, HOURS_START)) /
-        (HOURS_END - HOURS_START + 1)) *
-      100;
-
-    const mn = machinesStore.machines.find((m) => m.id === a.machineId);
-    const machineName = mn ? mn.name : `#${a.machineId}`;
-    const userName = a.user?.fullName;
-    const label =
-      isAdmin.value && userName ? `${userName} — ${machineName}` : machineName;
-
-    return {
-      allocation: a,
-      topPct,
-      heightPct,
-      startH: Math.max(startHour, HOURS_START),
-      endH: Math.min(endHour, HOURS_END + 1),
-      label,
-      isPending: a.status === "pending",
-      col: 0,
-      totalCols: 1,
-    };
-  });
-
-  // Ordena por início, depois por duração descendente (maior primeiro)
-  items.sort(
-    (a, b) => a.startH - b.startH || b.endH - b.startH - (a.endH - a.startH),
-  );
-
-  // Atribuição de colunas: para cada item, encontra a primeira coluna livre
-  for (let i = 0; i < items.length; i++) {
-    const occupied = new Set<number>();
-    for (let j = 0; j < i; j++) {
-      // j sobrepõe i?
-      if (items[j].startH < items[i].endH && items[j].endH > items[i].startH) {
-        occupied.add(items[j].col);
-      }
-    }
-    let c = 0;
-    while (occupied.has(c)) c++;
-    items[i].col = c;
-  }
-
-  // Agrupa itens conectados por sobreposição para definir totalCols do grupo
-  const visited = new Array(items.length).fill(false);
-  for (let i = 0; i < items.length; i++) {
-    if (visited[i]) continue;
-    // BFS para encontrar todos os itens conectados transitivamente
-    const group: number[] = [];
-    const queue = [i];
-    visited[i] = true;
-    while (queue.length > 0) {
-      const cur = queue.shift()!;
-      group.push(cur);
-      for (let j = 0; j < items.length; j++) {
-        if (visited[j]) continue;
-        if (
-          items[j].startH < items[cur].endH &&
-          items[j].endH > items[cur].startH
-        ) {
-          visited[j] = true;
-          queue.push(j);
-        }
-      }
-    }
-    const maxCol = Math.max(...group.map((idx) => items[idx].col)) + 1;
-    for (const idx of group) {
-      items[idx].totalCols = maxCol;
-    }
-  }
-
-  return items.map((item) => ({
-    allocation: item.allocation,
-    top: `${item.topPct}%`,
-    height: `${Math.max(item.heightPct, 1.5)}%`,
-    left: `${(item.col / item.totalCols) * 100}%`,
-    width: `${(1 / item.totalCols) * 100}%`,
-    label: item.label,
-    isPending: item.isPending,
-  }));
-}
-
-watch(machineFilter, () => loadCalendarAllocations());
 
 onMounted(async () => {
   try {
@@ -224,18 +45,20 @@ onMounted(async () => {
       ),
       machinesStore.fetchMachines(),
     ]);
-    await loadCalendarAllocations();
+    await loadGanttAllocations();
   } finally {
     loading.value = false;
   }
 });
 
-/* ---- Inline form ---- */
+/* ---- Inline form (Multi-day allocations) ---- */
+// NOVO: Separamos data e horário tanto para início quanto para fim
 const form = ref({
   machineId: "" as string | number,
-  date: "",
-  startTime: "",
-  endTime: "",
+  startDate: "", // Data de início (ex: 2026-05-12)
+  startTime: "", // Hora de início (ex: 09:00)
+  endDate: "", // Data de finalização (ex: 2026-05-14)
+  endTime: "", // Hora de finalização (ex: 17:00)
   reason: "",
 });
 const formSaving = ref(false);
@@ -244,8 +67,9 @@ const formError = ref("");
 function openForm() {
   form.value = {
     machineId: "",
-    date: "",
+    startDate: "",
     startTime: "",
+    endDate: "",
     endTime: "",
     reason: "",
   };
@@ -253,31 +77,47 @@ function openForm() {
   showForm.value = true;
 }
 
+// NOVO: Função para converter data + hora em ISO 8601
 function toLocalIso(date: string, time: string): string {
   return new Date(`${date}T${time}:00`).toISOString();
 }
 
+// NOVO: Validação de datas e horários para multi-dia
 async function handleCreate() {
   formError.value = "";
+
+  // Verificar se todos os campos obrigatórios foram preenchidos
   if (
     !form.value.machineId ||
-    !form.value.date ||
+    !form.value.startDate ||
     !form.value.startTime ||
+    !form.value.endDate ||
     !form.value.endTime
   ) {
     formError.value = "Preencha todos os campos obrigatórios.";
     return;
   }
-  if (form.value.startTime >= form.value.endTime) {
-    formError.value = "Horário de início deve ser antes do fim.";
+
+  // Converter para Date para comparação
+  const startDateTime = new Date(
+    `${form.value.startDate}T${form.value.startTime}:00`,
+  );
+  const endDateTime = new Date(
+    `${form.value.endDate}T${form.value.endTime}:00`,
+  );
+
+  // Validar se data/hora de fim é após início
+  if (endDateTime <= startDateTime) {
+    formError.value = "Data/horário de finalização deve ser após o início.";
     return;
   }
+
   formSaving.value = true;
   try {
     await allocationsStore.createAllocation({
       machineId: Number(form.value.machineId),
-      startTime: toLocalIso(form.value.date, form.value.startTime),
-      endTime: toLocalIso(form.value.date, form.value.endTime),
+      startTime: toLocalIso(form.value.startDate, form.value.startTime),
+      endTime: toLocalIso(form.value.endDate, form.value.endTime),
       reason: form.value.reason || undefined,
     });
     showForm.value = false;
@@ -285,7 +125,7 @@ async function handleCreate() {
       allocationsStore.fetchAllocations(
         auth.user ? { userId: auth.user.id } : undefined,
       ),
-      loadCalendarAllocations(),
+      loadGanttAllocations(),
     ]);
   } catch (err: any) {
     const status = err.response?.status;
@@ -413,98 +253,28 @@ async function openStats(a: Allocation) {
   <div class="fade-in">
     <div class="page-header">
       <h1 class="page-title">Reservas</h1>
-      <button class="btn btn-primary" @click="openForm">+ Nova Reserva</button>
+      <button v-if="!showForm" class="btn btn-primary" @click="openForm">
+        + Nova Reserva
+      </button>
     </div>
 
-    <!-- ======== Calendar + Form Row ======== -->
+    <!-- ======== Calendar Gantt + Form Row ======== -->
     <div class="layout-row" :class="{ 'with-panel': showForm }">
-      <!-- Calendar -->
       <section class="layout-calendar">
-        <div class="cal-toolbar">
-          <div class="cal-nav">
-            <button class="btn btn-ghost btn-sm" @click="weekOffset--">
-              ←
-            </button>
-            <span class="cal-week-label">
-              {{ fmtDayLabel(weekDays[0]) }} — {{ fmtDayLabel(weekDays[6]) }}
-            </span>
-            <button class="btn btn-ghost btn-sm" @click="weekOffset++">
-              →
-            </button>
-            <button
-              v-if="weekOffset !== 0"
-              class="btn btn-ghost btn-sm"
-              @click="weekOffset = 0"
-            >
-              Hoje
-            </button>
-          </div>
-          <div class="cal-filter">
-            <select
-              v-model="machineFilter"
-              style="
-                max-width: 220px;
-                padding: 0.45rem 0.75rem;
-                font-size: 0.85rem;
-              "
-            >
-              <option value="all">Todas as máquinas</option>
-              <option
-                v-for="m in machinesStore.machines"
-                :key="m.id"
-                :value="m.id"
-              >
-                {{ m.name }}
-              </option>
-            </select>
-          </div>
-        </div>
-
-        <div class="cal-grid-wrap">
-          <div
-            class="cal-grid"
-            :style="{ '--total-hours': HOURS_END - HOURS_START + 1 }"
-          >
-            <div class="cal-hours-col">
-              <div class="cal-corner"></div>
-              <div v-for="h in hours" :key="h" class="cal-hour-label">
-                {{ String(h).padStart(2, "0") }}:00
-              </div>
-            </div>
-            <div
-              v-for="day in weekDays"
-              :key="day.toISOString()"
-              class="cal-day-col"
-              :class="{ 'is-today': isToday(day) }"
-            >
-              <div class="cal-day-header" :class="{ 'is-today': isToday(day) }">
-                {{ fmtDayLabel(day) }}
-              </div>
-              <div class="cal-day-body">
-                <div v-for="h in hours" :key="h" class="cal-hour-line"></div>
-                <div
-                  v-for="(block, bi) in blocksForDay(day)"
-                  :key="bi"
-                  class="cal-block"
-                  :class="{ pending: block.isPending }"
-                  :style="{
-                    top: block.top,
-                    height: block.height,
-                    left: block.left,
-                    width: block.width,
-                  }"
-                  :title="`${block.label} — ${fmtTime(block.allocation.startTime)} - ${fmtTime(block.allocation.endTime)}`"
-                >
-                  <span class="cal-block-text">{{ block.label }}</span>
-                </div>
-              </div>
-            </div>
-          </div>
-        </div>
+        <CalendarGanttScroll
+          :machines="machinesStore.machines"
+          :allocations="ganttAllocations"
+          :current-user-id="auth.user?.id ?? null"
+          :loading="ganttLoading"
+          @offset-calculated="(val) => (panelMarginTop = val)"
+        />
       </section>
 
-      <!-- Inline Allocation Form Panel -->
-      <aside v-if="showForm" class="layout-panel fade-in">
+      <aside
+        v-if="showForm"
+        class="layout-panel fade-in"
+        :style="{ marginTop: panelMarginTop + 'px' }"
+      >
         <div class="panel-card">
           <div class="panel-header">
             <h2 class="panel-title">Nova Reserva</h2>
@@ -533,20 +303,53 @@ async function openStats(a: Allocation) {
                 </option>
               </select>
             </div>
-            <div class="field">
-              <label class="field-label">Data</label>
-              <input v-model="form.date" type="date" />
-            </div>
-            <div class="field-row">
-              <div class="field">
-                <label class="field-label">Início</label>
-                <input v-model="form.startTime" type="time" />
+
+            <div class="field-group">
+              <label
+                class="field-label"
+                style="font-weight: 600; margin-bottom: 0.5rem; display: block"
+              >
+                📅 Início
+              </label>
+              <div class="field-row">
+                <div class="field">
+                  <label class="field-label" style="font-size: 0.75rem"
+                    >Data</label
+                  >
+                  <input v-model="form.startDate" type="date" />
+                </div>
+                <div class="field">
+                  <label class="field-label" style="font-size: 0.75rem"
+                    >Horário</label
+                  >
+                  <input v-model="form.startTime" type="time" />
+                </div>
               </div>
-              <div class="field">
-                <label class="field-label">Fim</label>
-                <input v-model="form.endTime" type="time" />
+            </div>
+
+            <div class="field-group">
+              <label
+                class="field-label"
+                style="font-weight: 600; margin-bottom: 0.5rem; display: block"
+              >
+                📅 Finalização
+              </label>
+              <div class="field-row">
+                <div class="field">
+                  <label class="field-label" style="font-size: 0.75rem"
+                    >Data</label
+                  >
+                  <input v-model="form.endDate" type="date" />
+                </div>
+                <div class="field">
+                  <label class="field-label" style="font-size: 0.75rem"
+                    >Horário</label
+                  >
+                  <input v-model="form.endTime" type="time" />
+                </div>
               </div>
             </div>
+
             <div class="field">
               <label class="field-label"
                 >Motivo <span class="text-muted">(opcional)</span></label
@@ -816,136 +619,6 @@ async function openStats(a: Allocation) {
   justify-content: flex-end;
   gap: 0.75rem;
   margin-top: 0.25rem;
-}
-
-/* ---- Calendar ---- */
-.cal-toolbar {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  margin-bottom: 0.75rem;
-  flex-wrap: wrap;
-  gap: 0.75rem;
-}
-.cal-nav {
-  display: flex;
-  align-items: center;
-  gap: 0.5rem;
-}
-.cal-week-label {
-  font-size: 0.9rem;
-  font-weight: 600;
-  color: var(--text-secondary);
-  min-width: 200px;
-  text-align: center;
-}
-
-.cal-grid-wrap {
-  overflow-x: auto;
-  border: 1px solid var(--border);
-  border-radius: var(--radius-lg);
-  background: var(--bg-card);
-  box-shadow: var(--shadow-card);
-}
-
-.cal-grid {
-  display: grid;
-  grid-template-columns: 60px repeat(7, 1fr);
-  min-width: 700px;
-}
-
-.cal-hours-col {
-  border-right: 1px solid var(--border-subtle);
-}
-.cal-corner {
-  height: 36px;
-  border-bottom: 1px solid var(--border-subtle);
-}
-.cal-hour-label {
-  height: 40px;
-  display: flex;
-  align-items: flex-start;
-  justify-content: flex-end;
-  padding: 2px 6px 0 0;
-  font-size: 0.68rem;
-  color: var(--text-muted);
-  border-bottom: 1px solid var(--border-subtle);
-}
-
-.cal-day-col {
-  border-right: 1px solid var(--border-subtle);
-}
-.cal-day-col:last-child {
-  border-right: none;
-}
-.cal-day-col.is-today {
-  background: rgba(124, 108, 240, 0.03);
-}
-
-.cal-day-header {
-  height: 36px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  font-size: 0.75rem;
-  font-weight: 600;
-  color: var(--text-secondary);
-  border-bottom: 1px solid var(--border-subtle);
-  text-transform: uppercase;
-  letter-spacing: 0.03em;
-}
-.cal-day-header.is-today {
-  color: var(--accent);
-}
-
-.cal-day-body {
-  position: relative;
-  height: calc(var(--total-hours) * 40px);
-}
-.cal-hour-line {
-  height: 40px;
-  border-bottom: 1px solid var(--border-subtle);
-}
-
-.cal-block {
-  position: absolute;
-  box-sizing: border-box;
-  background: linear-gradient(
-    135deg,
-    rgba(102, 126, 234, 0.35),
-    rgba(155, 109, 255, 0.3)
-  );
-  border-left: 3px solid var(--accent);
-  border-radius: 4px;
-  padding: 2px 4px;
-  overflow: hidden;
-  z-index: 2;
-  cursor: default;
-  transition: background var(--transition);
-}
-.cal-block:hover {
-  background: linear-gradient(
-    135deg,
-    rgba(102, 126, 234, 0.5),
-    rgba(155, 109, 255, 0.45)
-  );
-}
-.cal-block.pending {
-  background: linear-gradient(
-    135deg,
-    rgba(251, 191, 36, 0.2),
-    rgba(251, 191, 36, 0.15)
-  );
-  border-left-color: var(--warning);
-}
-.cal-block-text {
-  font-size: 0.65rem;
-  font-weight: 600;
-  color: var(--text-primary);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  display: block;
 }
 
 /* ---- Filter tabs ---- */
