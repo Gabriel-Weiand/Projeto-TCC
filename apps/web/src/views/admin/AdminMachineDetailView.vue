@@ -327,12 +327,6 @@ async function handleStatusChange(alloc: Allocation, status: string) {
             machine.ipAddress || "—"
           }}</span>
         </div>
-        <div class="spec-item">
-          <span class="spec-label">MAC</span>
-          <span class="spec-value" style="font-family: monospace">{{
-            machine.macAddress || "—"
-          }}</span>
-        </div>
         <div class="spec-item" v-if="machine.loggedUser">
           <span class="spec-label">Logado</span>
           <span class="spec-value">{{ machine.loggedUser }}</span>

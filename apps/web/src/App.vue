@@ -5,3 +5,10 @@ import { RouterView } from "vue-router";
 <template>
   <RouterView />
 </template>
+
+<style>
+body {
+  user-select: text;
+  -webkit-user-drag: none;
+}
+</style>

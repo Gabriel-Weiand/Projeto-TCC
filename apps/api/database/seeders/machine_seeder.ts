@@ -10,7 +10,6 @@ export default class extends BaseSeeder {
       {
         name: 'PC-LAB-01',
         description: 'Workstation Deep Learning — RTX 3090',
-        macAddress: 'AA:BB:CC:DD:01:01',
         cpuModel: 'AMD Ryzen 9 5900X',
         gpuModel: 'NVIDIA RTX 3090 24GB',
         totalRamGb: 64,
@@ -20,7 +19,6 @@ export default class extends BaseSeeder {
       {
         name: 'PC-LAB-02',
         description: 'Workstation Renderização 3D — RTX 3080',
-        macAddress: 'AA:BB:CC:DD:02:02',
         cpuModel: 'Intel Core i9-12900K',
         gpuModel: 'NVIDIA RTX 3080 10GB',
         totalRamGb: 32,
@@ -30,7 +28,6 @@ export default class extends BaseSeeder {
       {
         name: 'PC-LAB-03',
         description: 'Servidor de Compilação — Threadripper',
-        macAddress: 'AA:BB:CC:DD:03:03',
         cpuModel: 'AMD Threadripper 3960X (24 cores)',
         gpuModel: 'NVIDIA RTX 3070 8GB',
         totalRamGb: 128,
@@ -40,7 +37,6 @@ export default class extends BaseSeeder {
       {
         name: 'PC-LAB-04',
         description: 'Workstation Simulação Numérica',
-        macAddress: 'AA:BB:CC:DD:04:04',
         cpuModel: 'Intel Core i9-11900K',
         gpuModel: 'NVIDIA RTX 3060 Ti 8GB',
         totalRamGb: 64,
@@ -51,7 +47,6 @@ export default class extends BaseSeeder {
       {
         name: 'PC-LAB-05',
         description: 'Desktop — Em manutenção preventiva',
-        macAddress: 'AA:BB:CC:DD:05:05',
         cpuModel: 'Intel Core i7-12700K',
         gpuModel: 'NVIDIA RTX 3060 12GB',
         totalRamGb: 32,
@@ -62,7 +57,6 @@ export default class extends BaseSeeder {
       {
         name: 'PC-LAB-06',
         description: 'Desktop Uso Geral — AMD',
-        macAddress: 'AA:BB:CC:DD:06:06',
         cpuModel: 'AMD Ryzen 7 5800X',
         gpuModel: 'NVIDIA GTX 1660 Super 6GB',
         totalRamGb: 32,
@@ -72,7 +66,6 @@ export default class extends BaseSeeder {
       {
         name: 'PC-LAB-07',
         description: 'Workstation Bioinformática — RAM alta',
-        macAddress: 'AA:BB:CC:DD:07:07',
         cpuModel: 'AMD Ryzen 9 5950X (16 cores)',
         gpuModel: 'NVIDIA RTX 3060 12GB',
         totalRamGb: 128,
@@ -82,7 +75,6 @@ export default class extends BaseSeeder {
       {
         name: 'PC-LAB-08',
         description: 'Workstation Visão Computacional',
-        macAddress: 'AA:BB:CC:DD:08:08',
         cpuModel: 'Intel Core i7-13700K',
         gpuModel: 'NVIDIA RTX 4070 12GB',
         totalRamGb: 32,
@@ -92,7 +84,6 @@ export default class extends BaseSeeder {
       {
         name: 'PC-LAB-09',
         description: 'Desktop Física Computacional',
-        macAddress: 'AA:BB:CC:DD:09:09',
         cpuModel: 'AMD Ryzen 7 5700X',
         gpuModel: 'AMD Radeon RX 6700 XT 12GB',
         totalRamGb: 32,
@@ -102,7 +93,6 @@ export default class extends BaseSeeder {
       {
         name: 'PC-LAB-10',
         description: 'Desktop Análise de Dados — Offline',
-        macAddress: 'AA:BB:CC:DD:10:10',
         cpuModel: 'Intel Core i5-12400',
         gpuModel: 'NVIDIA GTX 1650 4GB',
         totalRamGb: 16,

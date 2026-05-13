@@ -296,12 +296,6 @@ function blocksForDay(day: Date) {
             machine.ipAddress
           }}</span>
         </div>
-        <div class="stat-card" v-if="isAdmin && machine.macAddress">
-          <span class="stat-label">MAC</span>
-          <span class="stat-value" style="font-size: 0.92rem">{{
-            machine.macAddress
-          }}</span>
-        </div>
       </div>
 
       <!-- Telemetry if available -->
@@ -387,10 +381,9 @@ function blocksForDay(day: Date) {
               <button class="btn btn-ghost btn-sm" @click="weekOffset--">
                 ←
               </button>
-              <span class="cal-week-label"
-                >{{ fmtDayLabel(weekDays[0]) }} —
-                {{ fmtDayLabel(weekDays[6]) }}</span
-              >
+              <span class="cal-week-label">
+                {{ fmtDayLabel(weekDays[0]!) }} — {{ fmtDayLabel(weekDays[6]!) }}
+              </span>
               <button class="btn btn-ghost btn-sm" @click="weekOffset++">
                 →
               </button>

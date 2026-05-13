@@ -13,7 +13,6 @@ const editing = ref<Machine | null>(null);
 const form = reactive({
   name: "",
   description: "",
-  macAddress: "",
   status: "offline" as string,
 });
 const saving = ref(false);
@@ -47,7 +46,6 @@ function openCreate() {
   editing.value = null;
   form.name = "";
   form.description = "";
-  form.macAddress = "";
   form.status = "offline";
   error.value = "";
   showModal.value = true;
@@ -57,7 +55,6 @@ function openEdit(m: Machine) {
   editing.value = m;
   form.name = m.name;
   form.description = m.description || "";
-  form.macAddress = m.macAddress;
   form.status = m.status;
   error.value = "";
   showModal.value = true;
@@ -65,8 +62,8 @@ function openEdit(m: Machine) {
 
 async function handleSave() {
   error.value = "";
-  if (!form.name || !form.macAddress) {
-    error.value = "Nome e MAC são obrigatórios.";
+  if (!form.name) {
+    error.value = "Nome é obrigatório.";
     return;
   }
 
@@ -76,14 +73,12 @@ async function handleSave() {
       await store.updateMachine(editing.value.id, {
         name: form.name,
         description: form.description,
-        macAddress: form.macAddress,
         status: form.status,
       });
     } else {
       const created = await store.createMachine({
         name: form.name,
         description: form.description,
-        macAddress: form.macAddress,
       });
       // Show token for newly created machine
       if (created.token) {
@@ -199,7 +194,6 @@ function copyToken() {
               class="text-secondary"
               style="font-size: 0.82rem; font-family: monospace"
             >
-              {{ m.macAddress }}
             </td>
             <td>
               <span :class="['badge', statusBadge(m.status)]">{{
@@ -275,14 +269,6 @@ function copyToken() {
                 v-model="form.description"
                 type="text"
                 placeholder="Descrição da máquina"
-              />
-            </div>
-            <div class="field">
-              <label class="field-label">MAC Address</label>
-              <input
-                v-model="form.macAddress"
-                type="text"
-                placeholder="AA:BB:CC:DD:EE:FF"
               />
             </div>
             <div v-if="editing" class="field">

@@ -9,12 +9,6 @@ export const createMachineValidator = vine.compile(
     name: vine.string().trim().minLength(2).maxLength(50),
     description: vine.string().trim().maxLength(255),
 
-    // MAC Address - obrigatório para vincular à autenticação do agente
-    macAddress: vine
-      .string()
-      .trim()
-      .regex(/^([0-9A-Fa-f]{2}:){5}[0-9A-Fa-f]{2}$/),
-
     // Hardware specs (opcionais - podem ser preenchidos depois pelo agente)
     cpuModel: vine.string().trim().maxLength(100).optional(),
     gpuModel: vine.string().trim().maxLength(100).optional(),
@@ -26,15 +20,11 @@ export const createMachineValidator = vine.compile(
 
     // Status inicial
     status: vine.enum(['available', 'occupied', 'maintenance', 'offline'] as const).optional(),
-
-    // Usuário local do sistema (para agente servidor SSH/cgroups)
-    systemUsername: vine.string().trim().maxLength(64).optional(),
   })
 )
 
 /**
- * Validator para atualização de máquina.
- * Todos os campos são opcionais.
+ * Validator para atualização de máquina via painel/sync_specs.
  */
 export const updateMachineValidator = vine.compile(
   vine.object({
@@ -47,15 +37,7 @@ export const updateMachineValidator = vine.compile(
     totalDiskGb: vine.number().positive().max(100000).nullable().optional(),
 
     ipAddress: vine.string().trim().maxLength(45).nullable().optional(),
-    macAddress: vine
-      .string()
-      .trim()
-      .regex(/^([0-9A-Fa-f]{2}:){5}[0-9A-Fa-f]{2}$/)
-      .optional(),
 
     status: vine.enum(['available', 'occupied', 'maintenance', 'offline'] as const).optional(),
-
-    // Usuário local do sistema (para agente servidor SSH/cgroups)
-    systemUsername: vine.string().trim().maxLength(64).nullable().optional(),
   })
 )

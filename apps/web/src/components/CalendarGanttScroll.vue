@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, computed, onMounted, onBeforeUnmount, nextTick } from "vue";
+import { ref, computed, onMounted, onBeforeUnmount, nextTick, watch } from "vue";
 import { useMachinesStore } from "@/stores/machines";
 import type { Allocation, Machine } from "@/types";
 
@@ -24,16 +24,34 @@ const emit = defineEmits<{
 }>();
 
 const ganttOuterRef = ref<HTMLElement | null>(null);
+let resizeObserver: ResizeObserver | null = null;
 
 // NOVO: Função que calcula o topo exato do calendario
 function updateAlignOffset() {
   if (ganttOuterRef.value) {
-    // Pegamos apenas a distância até o topo da caixa principal do calendário (.gantt-outer)
-    // Removemos o " + TOTAL_HEADER_H + 1" para que ele não desça até a matriz
     const offset = ganttOuterRef.value.offsetTop;
     emit("offset-calculated", offset);
   }
 }
+
+watch(() => props.loading, async (isLoading) => {
+  if (!isLoading) {
+    await nextTick(); // Espera o Vue desenhar o HTML
+    
+    if (ganttOuterRef.value) {
+      if (resizeObserver) resizeObserver.disconnect();
+      
+      // Cria o observador que "gruda" na caixa principal do calendário
+      resizeObserver = new ResizeObserver(() => {
+        updateAlignOffset();
+      });
+      resizeObserver.observe(ganttOuterRef.value);
+      
+      // Força a primeira atualização imediatamente
+      updateAlignOffset();
+    }
+  }
+}, { immediate: true });
 
 const machinesStore = useMachinesStore();
 
@@ -132,21 +150,22 @@ const monthSpans = computed(() => {
   const days = timelineDays.value;
   let i = 0;
   while (i < days.length) {
-    const m = days[i].getMonth();
-    const y = days[i].getFullYear();
+    const currentDay = days[i]!; // <-- Garantia aqui
+    const m = currentDay.getMonth();
+    const y = currentDay.getFullYear();
     let j = i;
     while (
       j < days.length &&
-      days[j].getMonth() === m &&
-      days[j].getFullYear() === y
+      days[j]!.getMonth() === m && // <-- Garantia aqui
+      days[j]!.getFullYear() === y   // <-- Garantia aqui
     )
       j++;
     const count = j - i;
     spans.push({
-      label: days[i]
+      label: currentDay
         .toLocaleDateString("pt-BR", { month: "long", year: "numeric" })
         .replace(/^\w/, (c) => c.toUpperCase()),
-      shortLabel: days[i]
+      shortLabel: currentDay
         .toLocaleDateString("pt-BR", { month: "short" })
         .replace(".", "")
         .toUpperCase(),
@@ -200,13 +219,16 @@ const PALETTE = [
 
 function machineColor(machineId: number) {
   const idx = (props.machines ?? []).findIndex((m) => m.id === machineId);
-  return PALETTE[(idx >= 0 ? idx : 0) % PALETTE.length];
+  return PALETTE[(idx >= 0 ? idx : 0) % PALETTE.length]!;
 }
 
 // ---- Gantt bars ----
 function barsForMachine(machineId: number) {
   const timelineStart = timelineDays.value[0];
   const lastDay = timelineDays.value[timelineDays.value.length - 1];
+
+  if (!timelineStart || !lastDay) return [];
+
   const timelineEnd = new Date(lastDay);
   timelineEnd.setHours(23, 59, 59, 999);
   const timelineStartMs = timelineStart.getTime();
@@ -303,11 +325,15 @@ const scrollLeft = ref(0);
 
 const visibleMonthLabel = computed(() => {
   const centerPx = scrollLeft.value + (scrollEl.value?.clientWidth ?? 800) / 2;
+  
   for (let i = monthSpans.value.length - 1; i >= 0; i--) {
-    if (centerPx >= monthSpans.value[i].leftPx) {
-      return monthSpans.value[i].label;
+    const span = monthSpans.value[i]!; // <-- Garantia para o TS aqui
+    
+    if (centerPx >= span.leftPx) {
+      return span.label;
     }
   }
+  
   return monthSpans.value[0]?.label ?? "";
 });
 
