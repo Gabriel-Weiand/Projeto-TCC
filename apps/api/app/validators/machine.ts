@@ -13,7 +13,6 @@ export const createMachineValidator = vine.compile(
     cpuModel: vine.string().trim().maxLength(100).optional(),
     gpuModel: vine.string().trim().maxLength(100).optional(),
     totalRamGb: vine.number().positive().max(1024).optional(),
-    totalDiskGb: vine.number().positive().max(100000).optional(),
 
     // Rede (opcionais)
     ipAddress: vine.string().trim().maxLength(45).optional(),
@@ -34,7 +33,6 @@ export const updateMachineValidator = vine.compile(
     cpuModel: vine.string().trim().maxLength(100).nullable().optional(),
     gpuModel: vine.string().trim().maxLength(100).nullable().optional(),
     totalRamGb: vine.number().positive().max(1024).nullable().optional(),
-    totalDiskGb: vine.number().positive().max(100000).nullable().optional(),
 
     ipAddress: vine.string().trim().maxLength(45).nullable().optional(),
 

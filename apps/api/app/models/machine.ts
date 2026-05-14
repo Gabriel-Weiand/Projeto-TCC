@@ -1,5 +1,5 @@
 import { DateTime } from 'luxon'
-import { BaseModel, column, beforeCreate, hasMany } from '@adonisjs/lucid/orm'
+import { BaseModel, column, beforeCreate, computed, hasMany } from '@adonisjs/lucid/orm'
 import type { HasMany } from '@adonisjs/lucid/types/relations'
 import { randomBytes } from 'node:crypto'
 import Allocation from '#models/allocation'
@@ -26,8 +26,9 @@ export default class Machine extends BaseModel {
   @column()
   declare totalRamGb: number | null
 
-  @column()
-  declare totalDiskGb: number | null
+  // JSON stored as text in DB (column name: 'disks').
+  @column({ columnName: 'disks' })
+  declare disksJson: string | null
 
   @column()
   declare ipAddress: string | null
@@ -61,6 +62,26 @@ export default class Machine extends BaseModel {
   // --- RELACIONAMENTOS ---
   @hasMany(() => Allocation)
   declare allocations: HasMany<typeof Allocation>
+
+  /** Computed: retorna os discos como array (parse do JSON em `disksJson`) */
+  @computed()
+  public get disks() {
+    try {
+      const parsed = JSON.parse(this.disksJson ?? '[]')
+      return Array.isArray(parsed) ? parsed : []
+    } catch {
+      return []
+    }
+  }
+
+  /** Computed: soma dos `totalGb` das partições (ou null se não houver dados) */
+  @computed()
+  public get totalDiskGb(): number | null {
+    const arr = this.disks as Array<any>
+    if (!arr || arr.length === 0) return null
+    const sum = arr.reduce((acc, d) => acc + (Number(d?.totalGb ?? 0)), 0)
+    return Math.round(sum * 10) / 10
+  }
 
   // --- GERAÇÃO AUTOMÁTICA DA API KEY ---
   @beforeCreate()

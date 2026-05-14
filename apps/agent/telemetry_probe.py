@@ -96,18 +96,50 @@ def _local_ip() -> str | None:
         return None
 
 
+def _disk_partitions() -> list[dict]:
+    """Coleta informações de todas as partições de dados do sistema."""
+    partitions = []
+    real_fs = {"ext2", "ext3", "ext4", "xfs", "btrfs", "ntfs", "vfat", "exfat", "zfs", "f2fs"}
+    try:
+        for part in psutil.disk_partitions(all=False):
+            if part.fstype not in real_fs:
+                continue
+            try:
+                usage = psutil.disk_usage(part.mountpoint)
+                partitions.append({
+                    "device": part.device,
+                    "mountpoint": part.mountpoint,
+                    "fstype": part.fstype,
+                    "totalGb": round(usage.total / 1024**3, 1),
+                    "freeGb": round(usage.free / 1024**3, 1),
+                })
+            except (PermissionError, OSError):
+                partitions.append({
+                    "device": part.device,
+                    "mountpoint": part.mountpoint,
+                    "fstype": part.fstype,
+                    "totalGb": None,
+                    "freeGb": None,
+                })
+    except Exception:
+        pass
+    return partitions
+
+
 def sync_specs() -> None:
     """Coleta e envia as especificações estáticas do hardware para a API.
     Chamado uma vez na inicialização.
     """
     ram   = psutil.virtual_memory()
     disk  = psutil.disk_usage("/")
+    disks = _disk_partitions()
     specs = {
         "cpuModel":   _cpu_model(),
         "gpuModel":   _gpu_model(),
         "totalRamGb": round(ram.total / 1024**3, 1),
         "totalDiskGb": round(disk.total / 1024**3, 1),
         "ipAddress":  _local_ip(),
+        "disks":      disks,
     }
     # Remove campos None para não sobrescrever com null
     specs = {k: v for k, v in specs.items() if v is not None}
@@ -119,7 +151,8 @@ def sync_specs() -> None:
             print(f"[specs] Sincronizado: CPU={data.get('machine', {}).get('cpuModel')}  "
                   f"RAM={data.get('machine', {}).get('totalRamGb')}GB  "
                   f"Disk={data.get('machine', {}).get('totalDiskGb')}GB  "
-                  f"IP={data.get('machine', {}).get('ipAddress')}")
+                  f"IP={data.get('machine', {}).get('ipAddress')}  "
+                  f"Partições={len(disks)}")
         else:
             print(f"[specs] Falha HTTP {resp.status_code}: {resp.text[:120]}")
     except Exception as e:

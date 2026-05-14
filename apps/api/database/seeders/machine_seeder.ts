@@ -13,7 +13,7 @@ export default class extends BaseSeeder {
         cpuModel: 'AMD Ryzen 9 5900X',
         gpuModel: 'NVIDIA RTX 3090 24GB',
         totalRamGb: 64,
-        totalDiskGb: 2000,
+        disksJson: JSON.stringify([{ device: '/dev/sda1', mountpoint: '/', fstype: null, totalGb: 2000, freeGb: null }]),
         status: 'available',
       },
       {
@@ -22,7 +22,7 @@ export default class extends BaseSeeder {
         cpuModel: 'Intel Core i9-12900K',
         gpuModel: 'NVIDIA RTX 3080 10GB',
         totalRamGb: 32,
-        totalDiskGb: 1000,
+        disksJson: JSON.stringify([{ device: '/dev/sda1', mountpoint: '/', fstype: null, totalGb: 1000, freeGb: null }]),
         status: 'available',
       },
       {
@@ -31,7 +31,7 @@ export default class extends BaseSeeder {
         cpuModel: 'AMD Threadripper 3960X (24 cores)',
         gpuModel: 'NVIDIA RTX 3070 8GB',
         totalRamGb: 128,
-        totalDiskGb: 4000,
+        disksJson: JSON.stringify([{ device: '/dev/sda1', mountpoint: '/', fstype: null, totalGb: 4000, freeGb: null }]),
         status: 'available',
       },
       {
@@ -40,7 +40,7 @@ export default class extends BaseSeeder {
         cpuModel: 'Intel Core i9-11900K',
         gpuModel: 'NVIDIA RTX 3060 Ti 8GB',
         totalRamGb: 64,
-        totalDiskGb: 2000,
+        disksJson: JSON.stringify([{ device: '/dev/sda1', mountpoint: '/', fstype: null, totalGb: 2000, freeGb: null }]),
         status: 'available',
       },
       // --- Manutenção ---
@@ -50,7 +50,7 @@ export default class extends BaseSeeder {
         cpuModel: 'Intel Core i7-12700K',
         gpuModel: 'NVIDIA RTX 3060 12GB',
         totalRamGb: 32,
-        totalDiskGb: 512,
+        disksJson: JSON.stringify([{ device: '/dev/sda1', mountpoint: '/', fstype: null, totalGb: 512, freeGb: null }]),
         status: 'maintenance',
       },
       // --- Uso geral ---
@@ -60,7 +60,7 @@ export default class extends BaseSeeder {
         cpuModel: 'AMD Ryzen 7 5800X',
         gpuModel: 'NVIDIA GTX 1660 Super 6GB',
         totalRamGb: 32,
-        totalDiskGb: 1000,
+        disksJson: JSON.stringify([{ device: '/dev/sda1', mountpoint: '/', fstype: null, totalGb: 1000, freeGb: null }]),
         status: 'available',
       },
       {
@@ -69,7 +69,7 @@ export default class extends BaseSeeder {
         cpuModel: 'AMD Ryzen 9 5950X (16 cores)',
         gpuModel: 'NVIDIA RTX 3060 12GB',
         totalRamGb: 128,
-        totalDiskGb: 4000,
+        disksJson: JSON.stringify([{ device: '/dev/sda1', mountpoint: '/', fstype: null, totalGb: 4000, freeGb: null }]),
         status: 'available',
       },
       {
@@ -78,7 +78,7 @@ export default class extends BaseSeeder {
         cpuModel: 'Intel Core i7-13700K',
         gpuModel: 'NVIDIA RTX 4070 12GB',
         totalRamGb: 32,
-        totalDiskGb: 1000,
+        disksJson: JSON.stringify([{ device: '/dev/sda1', mountpoint: '/', fstype: null, totalGb: 1000, freeGb: null }]),
         status: 'available',
       },
       {
@@ -87,7 +87,7 @@ export default class extends BaseSeeder {
         cpuModel: 'AMD Ryzen 7 5700X',
         gpuModel: 'AMD Radeon RX 6700 XT 12GB',
         totalRamGb: 32,
-        totalDiskGb: 512,
+        disksJson: JSON.stringify([{ device: '/dev/sda1', mountpoint: '/', fstype: null, totalGb: 512, freeGb: null }]),
         status: 'available',
       },
       {
@@ -96,7 +96,7 @@ export default class extends BaseSeeder {
         cpuModel: 'Intel Core i5-12400',
         gpuModel: 'NVIDIA GTX 1650 4GB',
         totalRamGb: 16,
-        totalDiskGb: 512,
+        disksJson: JSON.stringify([{ device: '/dev/sda1', mountpoint: '/', fstype: null, totalGb: 512, freeGb: null }]),
         status: 'offline',
       },
     ])

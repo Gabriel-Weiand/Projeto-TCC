@@ -12,8 +12,8 @@ import psutil
 import requests
 
 # ── Configuração ──────────────────────────────────────────────────────────────
-API_BASE = "http://localhost:3333/api/agent"
-TOKEN    = "2ef0f32b2f7990d82f8d48d27b2d6bc4372b5f065f5aae8b21feb10862bd825ea68a7585610a28fd32d01c1ca90d0897adcc43c26f0247ff111527a4540b8f43"
+API_BASE = "http://localhost:7372/api/agent"
+TOKEN    = "45316b5a9d968cfb333969b059e38cea6bf6d9f44cf15483e829d109c67e9fb2feeb9559500f405b4cfd3f790037284be3ebee19aafec9e5a122b4a0f433b2c6"
 # ────────────────────────────────────────────────────────────────────────────
 
 SYNC_SPECS_URL = f"{API_BASE}/sync-specs"
@@ -67,10 +67,45 @@ def _local_ip() -> str | None:
         return None
 
 
+def _disk_partitions() -> list[dict]:
+    """Coleta informações de todas as partições de dados do sistema.
+    Filtra apenas filesystems reais (ext4, xfs, btrfs, ntfs, vfat, zfs).
+    Retorna lista com nome, mountpoint, total (GB), free (GB)."""
+    partitions = []
+    real_fs = {"ext2", "ext3", "ext4", "xfs", "btrfs", "ntfs", "vfat", "exfat", "zfs", "f2fs"}
+    try:
+        for part in psutil.disk_partitions(all=False):
+            # Ignora pseudo-filesystems e snaps
+            if part.fstype not in real_fs:
+                continue
+            try:
+                usage = psutil.disk_usage(part.mountpoint)
+                partitions.append({
+                    "device": part.device,
+                    "mountpoint": part.mountpoint,
+                    "fstype": part.fstype,
+                    "totalGb": round(usage.total / 1024**3, 1),
+                    "freeGb": round(usage.free / 1024**3, 1),
+                })
+            except (PermissionError, OSError):
+                # Partição sem permissão de leitura → incluir sem uso
+                partitions.append({
+                    "device": part.device,
+                    "mountpoint": part.mountpoint,
+                    "fstype": part.fstype,
+                    "totalGb": None,
+                    "freeGb": None,
+                })
+    except Exception:
+        pass
+    return partitions
+
+
 def sync_specs() -> None:
     """Coleta e envia as especificações estáticas do hardware para a API."""
     ram   = psutil.virtual_memory()
     disk  = psutil.disk_usage("/")
+    disks = _disk_partitions()
     
     specs = {
         "cpuModel":   _cpu_model(),
@@ -78,6 +113,7 @@ def sync_specs() -> None:
         "totalRamGb": round(ram.total / 1024**3, 1),
         "totalDiskGb": round(disk.total / 1024**3, 1),
         "ipAddress":  _local_ip(),
+        "disks":      disks,
     }
     
     # Remove campos None para não sobrescrever com null no banco
@@ -90,7 +126,8 @@ def sync_specs() -> None:
             print(f"[specs] Sincronizado: CPU={data.get('machine', {}).get('cpuModel')}  "
                   f"RAM={data.get('machine', {}).get('totalRamGb')}GB  "
                   f"Disk={data.get('machine', {}).get('totalDiskGb')}GB  "
-                  f"IP={data.get('machine', {}).get('ipAddress')}")
+                  f"IP={data.get('machine', {}).get('ipAddress')}  "
+                  f"Partições={len(disks)}")
         else:
             print(f"[specs] Falha HTTP {resp.status_code}: {resp.text[:120]}")
     except Exception as e:

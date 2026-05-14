@@ -31,6 +31,23 @@ export default class MachinesController {
   }
 
   /**
+   * Busca os discos/partições associados à máquina.
+   */
+  private async getDisks(machineId: number) {
+    const machine = await Machine.find(machineId)
+    if (!machine) return []
+    const arr = (machine.disks as any[]) || []
+    return arr.map((d, idx) => ({
+      id: d.id ?? idx + 1,
+      device: d.device,
+      mountpoint: d.mountpoint,
+      fstype: d.fstype ?? null,
+      totalGb: d.totalGb ?? null,
+      freeGb: d.freeGb ?? null,
+    }))
+  }
+
+  /**
    * Lista todas as máquinas.
    *
    * GET /api/v1/machines
@@ -52,6 +69,14 @@ export default class MachinesController {
       return {
         ...serialized,
         latestTelemetry: this.normalizeTelemetry(raw),
+        disks: machine.disks.map((d) => ({
+          id: d.id,
+          device: d.device,
+          mountpoint: d.mountpoint,
+          fstype: d.fstype,
+          totalGb: d.totalGb,
+          freeGb: d.freeGb,
+        })),
       }
     })
 
@@ -65,14 +90,16 @@ export default class MachinesController {
    * POST /api/v1/machines
    */
   async store({ request, response }: HttpContext) {
-    const data = await request.validateUsing(createMachineValidator)
+    const data = (await request.validateUsing(createMachineValidator)) as any
+    const { totalDiskGb, ...createData } = data
 
-    const machine = await Machine.create(data)
+    const machine = await Machine.create(createData)
 
     // Retorna com o token (apenas na criação!)
     return response.created({
       ...machine.serialize(),
-      token: machine.token, // Expõe o token apenas aqui
+      token: machine.token,
+      disks: [],
     })
   }
 
@@ -93,6 +120,14 @@ export default class MachinesController {
     const serialized: Record<string, unknown> = {
       ...machine.serialize(),
       latestTelemetry: this.normalizeTelemetry(raw),
+      disks: machine.disks.map((d) => ({
+        id: d.id,
+        device: d.device,
+        mountpoint: d.mountpoint,
+        fstype: d.fstype,
+        totalGb: d.totalGb,
+        freeGb: d.freeGb,
+      })),
     }
 
     // Apenas admin pode ver o token e macAddress
@@ -113,12 +148,13 @@ export default class MachinesController {
    */
   async update({ params, request, response }: HttpContext) {
     const machine = await Machine.findOrFail(params.id)
-    const data = await request.validateUsing(updateMachineValidator)
+    const data = (await request.validateUsing(updateMachineValidator)) as any
 
     const wasNotInMaintenance = machine.status !== 'maintenance'
     const isEnteringMaintenance = data.status === 'maintenance'
 
-    machine.merge(data)
+    const { totalDiskGb, ...updateData } = data
+    machine.merge(updateData)
     await machine.save()
 
     // Se entrou em manutenção, cancela alocações futuras
@@ -126,7 +162,6 @@ export default class MachinesController {
     if (wasNotInMaintenance && isEnteringMaintenance) {
       const now = DateTime.now().toMillis()
 
-      // Busca alocações futuras e cancela em JavaScript (SQLite não compara datas bem)
       const futureAllocations = await Allocation.query()
         .where('machineId', machine.id)
         .whereIn('status', ['approved', 'pending'])
@@ -140,7 +175,6 @@ export default class MachinesController {
       }
     }
 
-    // Invalida cache se existir
     machineCache.invalidateById(machine.id)
 
     return response.ok({
@@ -157,7 +191,6 @@ export default class MachinesController {
   async destroy({ params, response }: HttpContext) {
     const machine = await Machine.findOrFail(params.id)
 
-    // Limpa cache e buffer
     machineCache.invalidateById(machine.id)
     telemetryBuffer.clearMachine(machine.id)
 
@@ -168,7 +201,6 @@ export default class MachinesController {
 
   /**
    * Retorna histórico de telemetria de uma máquina.
-   * Busca as telemetrias através das alocações da máquina.
    *
    * GET /api/v1/machines/:id/telemetry
    */
@@ -176,7 +208,6 @@ export default class MachinesController {
     const machine = await Machine.findOrFail(params.id)
     const { page = 1, limit = 100 } = request.qs()
 
-    // Busca alocações da máquina e carrega suas telemetrias
     const allocations = await Allocation.query().where('machineId', machine.id).select('id')
 
     const allocationIds = allocations.map((a) => a.id)
@@ -188,7 +219,6 @@ export default class MachinesController {
       })
     }
 
-    // Importa Telemetry aqui para a query
     const Telemetry = (await import('#models/telemetry')).default
 
     const telemetries = await Telemetry.query()
@@ -196,7 +226,6 @@ export default class MachinesController {
       .orderBy('id', 'desc')
       .paginate(page, limit)
 
-    // Adiciona dado real-time no topo (normalizado)
     const latestRealtime = telemetryBuffer.getLatest(machine.id)
 
     return response.ok({
@@ -207,17 +236,14 @@ export default class MachinesController {
 
   /**
    * Regenera o token de autenticação de uma máquina.
-   * Usado para rotação de segurança ou se o token foi comprometido.
    *
    * POST /api/v1/machines/:id/regenerate-token
    */
   async regenerateToken({ params, response }: HttpContext) {
     const machine = await Machine.findOrFail(params.id)
 
-    // Invalida cache do token antigo
     machineCache.invalidate(machine.token)
 
-    // Regenera o token
     const newToken = machine.regenerateToken()
     await machine.save()
 
@@ -232,7 +258,6 @@ export default class MachinesController {
 
   /**
    * Retorna as últimas entradas de telemetria do ring buffer para playback.
-   * O frontend consome essas entradas 1/s para dar sensação de live.
    *
    * GET /api/v1/machines/:id/telemetry/stream
    */
@@ -243,7 +268,6 @@ export default class MachinesController {
 
     const recent = telemetryBuffer.getRecent(machine.id, maxCount)
 
-    // Normaliza cada entrada para valores legíveis
     const normalized = recent.map((raw) => this.normalizeTelemetry(raw))
 
     return response.ok({

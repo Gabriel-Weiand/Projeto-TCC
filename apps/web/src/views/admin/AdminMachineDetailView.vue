@@ -34,10 +34,8 @@ onMounted(async () => {
     machine.value = m;
     allocations.value = allocs.data || [];
 
-    // Start telemetry playback
     startPlayback();
 
-    // Auto-refresh allocations every 30s
     refreshInterval = setInterval(async () => {
       try {
         const allocs = await machinesStore.fetchMachineAllocations(machineId, {
@@ -61,9 +59,7 @@ onUnmounted(() => {
   }
 });
 
-// Telemetry display helpers
 const liveData = computed(() => {
-  // Prefer playback data, fallback to machine's latestTelemetry
   return telemetry.value || machine.value?.latestTelemetry || null;
 });
 
@@ -79,6 +75,16 @@ function tempColor(val: number | null | undefined): string {
   if (val < 60) return "var(--success)";
   if (val < 80) return "var(--warning)";
   return "var(--danger)";
+}
+
+function fmtGb(val: number | null | undefined): string {
+  if (val == null) return "--";
+  return val.toFixed(1) + " GB";
+}
+
+function diskUsedPct(total: number | null, free: number | null): number {
+  if (!total || total <= 0 || free == null) return 0;
+  return Math.round(((total - free) / total) * 100);
 }
 
 function statusBadge(s: string) {
@@ -175,7 +181,6 @@ async function handleStatusChange(alloc: Allocation, status: string) {
       <h2 class="section-title">Telemetria em Tempo Real</h2>
 
       <div v-if="liveData" class="telemetry-grid">
-        <!-- CPU -->
         <div class="tele-card">
           <span class="tele-label">CPU</span>
           <div
@@ -201,7 +206,6 @@ async function handleStatusChange(alloc: Allocation, status: string) {
           </span>
         </div>
 
-        <!-- GPU -->
         <div class="tele-card">
           <span class="tele-label">GPU</span>
           <div
@@ -227,7 +231,6 @@ async function handleStatusChange(alloc: Allocation, status: string) {
           </span>
         </div>
 
-        <!-- RAM -->
         <div class="tele-card">
           <span class="tele-label">RAM</span>
           <div
@@ -247,7 +250,6 @@ async function handleStatusChange(alloc: Allocation, status: string) {
           </div>
         </div>
 
-        <!-- Disco -->
         <div class="tele-card">
           <span class="tele-label">Disco</span>
           <div
@@ -267,7 +269,6 @@ async function handleStatusChange(alloc: Allocation, status: string) {
           </div>
         </div>
 
-        <!-- Rede -->
         <div class="tele-card">
           <span class="tele-label">Download</span>
           <div class="tele-value">
@@ -283,7 +284,6 @@ async function handleStatusChange(alloc: Allocation, status: string) {
           </div>
         </div>
 
-        <!-- Motherboard Temp -->
         <div class="tele-card" v-if="liveData.moboTemperature != null">
           <span class="tele-label">Placa-Mãe</span>
           <div
@@ -338,6 +338,55 @@ async function handleStatusChange(alloc: Allocation, status: string) {
           }}</span>
         </div>
       </div>
+
+      <!-- ═══ PARTIÇÕES DE DISCO ═══ -->
+      <template v-if="machine.disks && machine.disks.length > 0">
+        <h2 class="section-title" style="margin-top: 2rem">Partições de Disco</h2>
+        <div class="disk-table">
+          <div class="disk-header">
+            <span class="disk-col device-col">Dispositivo</span>
+            <span class="disk-col mount-col">Montagem</span>
+            <span class="disk-col fs-col">FS</span>
+            <span class="disk-col size-col">Total</span>
+            <span class="disk-col free-col">Livre</span>
+            <span class="disk-col bar-col">Uso</span>
+          </div>
+          <div v-for="d in machine.disks" :key="d.id" class="disk-row-detail">
+            <span class="disk-col device-col">
+              <code>{{ d.device }}</code>
+            </span>
+            <span class="disk-col mount-col">{{ d.mountpoint }}</span>
+            <span class="disk-col fs-col">
+              <span class="badge badge-info" style="font-size: 0.65rem">{{ d.fstype || "--" }}</span>
+            </span>
+            <span class="disk-col size-col">{{ fmtGb(d.totalGb) }}</span>
+            <span class="disk-col free-col" :class="{
+              'text-success': (d.freeGb ?? 0) > 50,
+              'text-warning': (d.freeGb ?? 0) > 10 && (d.freeGb ?? 0) <= 50,
+              'text-danger': (d.freeGb ?? 0) <= 10 && d.freeGb != null,
+            }">
+              {{ fmtGb(d.freeGb) }}
+            </span>
+            <span class="disk-col bar-col">
+              <div class="disk-bar-track">
+                <div
+                  class="disk-bar-fill"
+                  :style="{
+                    width: diskUsedPct(d.totalGb, d.freeGb) + '%',
+                    background:
+                      diskUsedPct(d.totalGb, d.freeGb) > 90
+                        ? 'var(--danger)'
+                        : diskUsedPct(d.totalGb, d.freeGb) > 70
+                          ? 'var(--warning)'
+                          : 'var(--success)',
+                  }"
+                ></div>
+              </div>
+              <span class="disk-pct-label">{{ diskUsedPct(d.totalGb, d.freeGb) }}%</span>
+            </span>
+          </div>
+        </div>
+      </template>
 
       <!-- ═══ AGENDAMENTOS ═══ -->
       <h2 class="section-title" style="margin-top: 2rem">Agendamentos</h2>
@@ -482,5 +531,92 @@ async function handleStatusChange(alloc: Allocation, status: string) {
 .spec-value {
   font-size: 0.88rem;
   color: var(--text-secondary);
+}
+
+/* ---- Disk Partition Table ---- */
+.disk-table {
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius);
+  overflow: hidden;
+  margin-bottom: 1rem;
+  background: var(--bg-card);
+}
+.disk-header {
+  display: flex;
+  padding: 0.5rem 0.75rem;
+  background: var(--bg-card-solid);
+  border-bottom: 1px solid var(--border-subtle);
+  font-size: 0.72rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--text-muted);
+}
+.disk-row-detail {
+  display: flex;
+  padding: 0.55rem 0.75rem;
+  border-bottom: 1px solid var(--border-subtle);
+  align-items: center;
+  font-size: 0.82rem;
+}
+.disk-row-detail:last-child {
+  border-bottom: none;
+}
+.disk-col {
+  flex-shrink: 0;
+}
+.device-col {
+  width: 140px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.device-col code {
+  font-size: 0.72rem;
+  color: var(--text-secondary);
+}
+.mount-col {
+  width: 120px;
+  font-weight: 500;
+  color: var(--text-primary);
+}
+.fs-col {
+  width: 70px;
+}
+.size-col {
+  width: 80px;
+  text-align: right;
+  color: var(--text-secondary);
+}
+.free-col {
+  width: 80px;
+  text-align: right;
+}
+.bar-col {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  min-width: 100px;
+  padding-left: 0.75rem;
+}
+.disk-bar-track {
+  flex: 1;
+  height: 6px;
+  background: var(--bg-input);
+  border-radius: 3px;
+  overflow: hidden;
+}
+.disk-bar-fill {
+  height: 100%;
+  border-radius: 3px;
+  transition: width 0.5s ease;
+}
+.disk-pct-label {
+  font-size: 0.72rem;
+  font-weight: 600;
+  color: var(--text-muted);
+  min-width: 32px;
+  text-align: right;
 }
 </style>

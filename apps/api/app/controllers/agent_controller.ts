@@ -106,7 +106,6 @@ export default class AgentController {
       shouldBlock = true
       blockReason = 'MACHINE_MAINTENANCE'
     } else if (connectedUsers.length > 0 && !currentAllocation) {
-      // Há usuários conectados mas não há alocação ativa → bloquear
       shouldBlock = true
       blockReason = 'NO_VALID_ALLOCATION'
     }
@@ -119,7 +118,6 @@ export default class AgentController {
       },
       connectedUsers,
       connectedCount: connectedUsers.length,
-      // Alocação atual - COM info do usuário (só aparece se tem alocação)
       currentAllocation: currentAllocation
         ? {
             id: currentAllocation.id,
@@ -131,17 +129,13 @@ export default class AgentController {
             remainingMinutes: Math.floor(currentAllocation.endTime.diff(now, 'minutes').minutes),
           }
         : null,
-      // Próxima alocação (sem nome do usuário)
       nextAllocation: nextAllocation
         ? {
             startTime: nextAllocation.startTime,
             endTime: nextAllocation.endTime,
-            minutesUntilStart: Math.floor(
-              nextAllocation.startTime.diff(now, 'minutes').minutes
-            ),
+            minutesUntilStart: Math.floor(nextAllocation.startTime.diff(now, 'minutes').minutes),
           }
         : null,
-      // Controle de bloqueio
       shouldBlock,
       blockReason,
       serverTime: now.toISO(),
@@ -149,7 +143,8 @@ export default class AgentController {
   }
 
   /**
-   * Sincroniza especificações de hardware detectadas pelo agente.
+   * Sincroniza especificações de hardware detectadas pelo agente,
+   * incluindo a lista de partições de disco.
    *
    * PUT /api/agent/sync-specs
    */
@@ -157,7 +152,25 @@ export default class AgentController {
     const machine = authenticatedMachine!
     const data = await request.validateUsing(syncSpecsValidator)
 
-    machine.merge(data)
+    // Separa discos dos dados da máquina (tipagem como any para aceitar payloads externos)
+    const { disks, ...machineData } = data as any
+    // Merge dos dados e persiste discos como JSON em `machines.disks`.
+    machine.merge(machineData)
+
+    if (disks !== undefined) {
+      let kept: any[] = []
+      if (Array.isArray(disks)) {
+        // Preferir partição de montagem raiz '/' somente
+        kept = disks.filter((d) => d.mountpoint === '/')
+        // Se não encontrar '/', tenta escolher uma partição plausível (evita '/boot/efi')
+        if (kept.length === 0) {
+          kept = disks.filter((d) => d.mountpoint && d.mountpoint !== '/boot/efi').slice(0, 1)
+        }
+      }
+
+      machine.disksJson = JSON.stringify(kept)
+    }
+
     await machine.save()
 
     // Invalida cache para refletir mudança
@@ -174,6 +187,7 @@ export default class AgentController {
         totalDiskGb: machine.totalDiskGb,
         ipAddress: machine.ipAddress,
       },
+      disks: disks ?? [],
     })
   }
 
@@ -189,22 +203,17 @@ export default class AgentController {
     const { lean, rich } = await request.validateUsing(telemetryReportValidator)
 
     // Estado real-time usa os dados RICH (com cores, frequências, etc.)
-    // para que o dashboard admin tenha máximo de informação
     const realtimeData = { allocationId: 0, ...rich }
 
     // Persiste no banco apenas se houver alocação ativa
-    // Persiste apenas o LEAN (escalares compactos) — sem arrays de cores
     const currentAllocation = await this.findCurrentAllocation(machine.id)
     if (currentAllocation) {
-      // add() já chama updateRealtime() internamente
       telemetryBuffer.add(machine.id, {
         allocationId: currentAllocation.id,
         ...lean,
       })
-      // O estado real-time recebe o RICH para o dashboard
       telemetryBuffer.updateRealtime(machine.id, { allocationId: currentAllocation.id, ...rich })
     } else {
-      // Sem alocação: atualiza apenas o estado real-time (sem persistir)
       telemetryBuffer.updateRealtime(machine.id, realtimeData)
     }
 
@@ -222,17 +231,10 @@ export default class AgentController {
   // SSH Session Management (Server Agent)
   // ============================================================
 
-  /**
-   * Retorna pedidos de SSH pendentes para esta máquina.
-   * O agente servidor faz polling nesta rota para saber quando precisa gerar chaves.
-   *
-   * GET /api/agent/ssh/pending
-   */
   async sshPendingRequests({ authenticatedMachine, response }: HttpContext) {
     const machine = authenticatedMachine!
     const now = DateTime.now().toMillis()
 
-    // Busca alocações ativas que ainda não têm sessão SSH
     const activeAllocations = await Allocation.query()
       .where('machineId', machine.id)
       .where('status', 'approved')
@@ -242,36 +244,11 @@ export default class AgentController {
       (a) => a.startTime.toMillis() <= now && a.endTime.toMillis() >= now
     )
 
-    // Filtra as que já têm sessão SSH ativa
-    const pendingRequests = []
-    for (const alloc of currentAllocations) {
-      const existingSession = await SshSession.query()
-        .where('allocationId', alloc.id)
-        .where('status', 'active')
-        .first()
-
-      if (!existingSession && alloc.$extras._sshRequested) {
-        pendingRequests.push({
-          allocationId: alloc.id,
-          userId: alloc.userId,
-          userEmail: alloc.user?.email,
-          userName: alloc.user?.fullName,
-          systemUsername: machine.systemUsername,
-          endTime: alloc.endTime.toISO(),
-        })
-      }
-    }
-
-    // Busca também requests marcados na tabela ssh_sessions com status 'pending' não existente
-    // Abordagem alternativa: buscar por sessions com flag _sshRequested
-    // Simplificação: incluir qualquer alocação ativa com flag de request
     const pendingSessions = await SshSession.query()
       .where('machineId', machine.id)
       .where('status', 'active')
       .whereNull('publicKeyFingerprint')
 
-    // Na prática, o fluxo é: user solicita → API cria SshSession sem fingerprint →
-    // agent faz polling → gera chave → reporta setup com fingerprint
     const pendingFromDb = []
     for (const session of pendingSessions) {
       const alloc = await Allocation.query()
@@ -292,7 +269,6 @@ export default class AgentController {
       }
     }
 
-    // Busca sessões que o admin revogou manualmente e o agente ainda não processou
     const pendingRevocations = await SshSession.query()
       .where('machineId', machine.id)
       .where('status', 'revoked')
@@ -305,7 +281,6 @@ export default class AgentController {
       systemUsername: s.systemUsername,
     }))
 
-    // Marca como processadas (revokedAt = agora) para não re-entregar
     for (const s of pendingRevocations) {
       s.revokedAt = DateTime.now()
       await s.save()
@@ -314,17 +289,10 @@ export default class AgentController {
     return response.ok({ pending: pendingFromDb, pendingRevocations: revocations })
   }
 
-  /**
-   * O agente reporta que configurou uma sessão SSH com sucesso.
-   * Envia a chave privada gerada para que a API entregue ao frontend.
-   *
-   * POST /api/agent/ssh/setup
-   */
   async sshSetupReport({ authenticatedMachine, request, response }: HttpContext) {
     const machine = authenticatedMachine!
     const data = await request.validateUsing(sshSetupReportValidator)
 
-    // Verifica se a alocação pertence a esta máquina
     const allocation = await Allocation.query()
       .where('id', data.allocationId)
       .where('machineId', machine.id)
@@ -338,7 +306,6 @@ export default class AgentController {
       })
     }
 
-    // Atualiza a sessão pendente com o fingerprint
     const session = await SshSession.query()
       .where('allocationId', data.allocationId)
       .where('machineId', machine.id)
@@ -356,11 +323,9 @@ export default class AgentController {
     session.systemUsername = data.systemUsername
     await session.save()
 
-    // Armazena a chave privada temporariamente em memória para entrega ao frontend
-    // Usa um Map singleton para isso (chave expira junto com a sessão)
     sshKeyStore.set(session.id, {
       privateKey: data.privateKey,
-      expiresAt: Date.now() + 5 * 60 * 1000, // 5 minutos para download
+      expiresAt: Date.now() + 5 * 60 * 1000,
     })
 
     return response.ok({
@@ -370,11 +335,6 @@ export default class AgentController {
     })
   }
 
-  /**
-   * O agente reporta que removeu uma sessão SSH (cleanup).
-   *
-   * POST /api/agent/ssh/teardown
-   */
   async sshTeardownReport({ authenticatedMachine, request, response }: HttpContext) {
     const machine = authenticatedMachine!
     const data = await request.validateUsing(sshTeardownReportValidator)
@@ -413,7 +373,6 @@ class SshKeyStore {
 
   set(sessionId: number, data: StoredKey) {
     this.store.set(sessionId, data)
-    // Auto-cleanup após expiração
     setTimeout(() => this.store.delete(sessionId), data.expiresAt - Date.now())
   }
 

@@ -9,6 +9,15 @@ export interface User {
   updatedAt: string | null;
 }
 
+export interface DiskPartition {
+  id: number;
+  device: string;
+  mountpoint: string;
+  fstype: string | null;
+  totalGb: number | null;
+  freeGb: number | null;
+}
+
 export interface Machine {
   id: number;
   name: string;
@@ -26,6 +35,7 @@ export interface Machine {
   updatedAt: string | null;
   token?: string;
   latestTelemetry?: RealtimeTelemetry | null;
+  disks?: DiskPartition[];
 }
 
 export interface RealtimeTelemetry {

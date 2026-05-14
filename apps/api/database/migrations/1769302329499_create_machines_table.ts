@@ -17,7 +17,9 @@ export default class extends BaseSchema {
       table.string('cpu_model', 100).nullable()
       table.string('gpu_model', 100).nullable()
       table.integer('total_ram_gb').unsigned().nullable()
-      table.integer('total_disk_gb').unsigned().nullable()
+      // Armazena um JSON com as partições/discos relevantes (ex: partição '/').
+      // Usamos texto para compatibilidade com SQLite (JSON armazenado como string).
+      table.text('disks').nullable()
 
       // Identificador de Rede
       table.string('ip_address', 45).nullable()

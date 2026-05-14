@@ -11,6 +11,17 @@ export const heartbeatValidator = vine.compile(
 )
 
 /**
+ * Validador de item de disco/partição enviado pelo agente no sync-specs.
+ */
+const diskItemSchema = vine.object({
+  device: vine.string().trim().maxLength(128),
+  mountpoint: vine.string().trim().maxLength(255),
+  fstype: vine.string().trim().maxLength(32).optional(),
+  totalGb: vine.number().min(0).max(100000).optional().nullable(),
+  freeGb: vine.number().min(0).max(100000).optional().nullable(),
+})
+
+/**
  * Validator para sincronização de specs da máquina.
  * O agente pode atualizar automaticamente as specs detectadas.
  */
@@ -19,9 +30,8 @@ export const syncSpecsValidator = vine.compile(
     cpuModel: vine.string().trim().maxLength(100).optional(),
     gpuModel: vine.string().trim().maxLength(100).optional(),
     totalRamGb: vine.number().positive().max(1024).optional(),
-    totalDiskGb: vine.number().positive().max(100000).optional(),
     ipAddress: vine.string().trim().maxLength(45).optional(),
-    // macAddress não é sincronizável: é definido na criação e usado na autenticação
+    disks: vine.array(diskItemSchema).maxLength(32).optional(),
   })
 )
 

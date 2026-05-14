@@ -106,6 +106,20 @@ function goToDetail(m: Machine) {
           </div>
         </div>
 
+        <!-- Disk Partitions -->
+        <div v-if="m.disks && m.disks.length > 0" class="mc-disks">
+          <div v-for="d in m.disks.slice(0, 3)" :key="d.id" class="disk-row">
+            <span class="disk-device">{{ d.device }}</span>
+            <span class="disk-mount">{{ d.mountpoint }}</span>
+            <span class="disk-size" v-if="d.totalGb != null">
+              {{ d.freeGb != null ? d.freeGb + ' / ' : '' }}{{ d.totalGb }} GB
+            </span>
+          </div>
+          <div v-if="m.disks.length > 3" class="disk-more">
+            +{{ m.disks.length - 3 }} partição(ões)
+          </div>
+        </div>
+
         <div class="mc-footer">
           <span
             v-if="m.loggedUser"
@@ -192,6 +206,42 @@ function goToDetail(m: Machine) {
   overflow: hidden;
   text-overflow: ellipsis;
 }
+
+/* Disk partitions */
+.mc-disks {
+  border-top: 1px solid var(--border-subtle);
+  padding-top: 0.4rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+}
+.disk-row {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  font-size: 0.75rem;
+}
+.disk-device {
+  font-family: monospace;
+  color: var(--text-muted);
+  font-size: 0.7rem;
+  min-width: 70px;
+}
+.disk-mount {
+  color: var(--text-secondary);
+  font-weight: 500;
+}
+.disk-size {
+  margin-left: auto;
+  color: var(--text-muted);
+}
+.disk-more {
+  font-size: 0.7rem;
+  color: var(--accent);
+  opacity: 0.8;
+  padding-left: 0.25rem;
+}
+
 .mc-footer {
   display: flex;
   align-items: center;
