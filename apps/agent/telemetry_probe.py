@@ -4,12 +4,6 @@ telemetry_probe.py — Sonda de telemetria para o Lab Agent (TCC)
 Lê dados de hardware via psutil e os reporta para a API local.
 Roda em loop contínuo até Ctrl+C.
 
-Dois datasets gerados por coleta:
-  - RICH  (campo "rich"):  por core, frequência, todas as temperaturas → dashboard live
-  - LEAN  (campo "lean"):  escalares compactos → persistência no banco + métricas de sessão
-
-A API recebe um único POST com ambos os payloads aninhados.
-
 Uso:
     python3 telemetry_probe.py
 
@@ -29,10 +23,10 @@ import psutil
 import requests
 
 # ── Configuração ──────────────────────────────────────────────────────────────
-API_BASE = "http://localhost:3333/api/agent"
+API_BASE = "http://localhost:7372/api/agent"
 TOKEN    = "6a84860b3720d422ec2c3856c1b31a87099e96eeda4296dfde2bf8bd60673c7bf0d2f03c734f7c14f854a5f34961a372e5629a71f4d52b0ddcb6fe6d14aa0f85"
 MACHINE  = "PC-LAB-01"
-INTERVAL = 2  # segundos
+INTERVAL = 1  # segundo
 # ────────────────────────────────────────────────────────────────────────────
 
 API_URL       = f"{API_BASE}/telemetry"
@@ -48,9 +42,32 @@ SYSTEM_USER = getpass.getuser()
 
 # Cache da leitura de rede anterior (para calcular delta)
 _net_prev: dict = {}
-# Cache da leitura de disco I/O anterior (para calcular delta)
-_disk_io_prev: dict = {}
+# Cache unificado de I/O de disco (total e por partição)
+_disk_io_prev: dict = {"t": 0.0, "total_read": 0, "total_write": 0, "disks": {}}
 
+def _active_users() -> list[dict]:
+    """Coleta usuários logados (foco em SSH), ignorando o usuário do sistema."""
+    users = []
+    try:
+        for u in psutil.users():
+            # Ignora o usuário que está rodando a sonda (SYSTEM_USER)
+            if u.name == SYSTEM_USER:
+                continue
+            
+            # Se 'host' possui valor diferente de vazio, localhost ou :0, geralmente é SSH
+            is_ssh = bool(u.host and u.host not in ('localhost', ':0'))
+            
+            users.append({
+                "username": u.name,
+                "terminal": u.terminal or "",
+                "host": u.host or "local",
+                "isSsh": is_ssh,
+                "connectedSince": int(u.started) # Timestamp UNIX
+            })
+    except Exception:
+        pass
+    
+    return users
 
 def _cpu_model() -> str:
     """Lê o modelo do CPU a partir de /proc/cpuinfo (Linux) ou platform."""
@@ -62,7 +79,6 @@ def _cpu_model() -> str:
     except OSError:
         pass
     return platform.processor() or "Unknown CPU"
-
 
 def _gpu_model() -> str | None:
     """Tenta detectar GPU via lspci (requer pciutils). Retorna None se não disponível."""
@@ -83,7 +99,6 @@ def _gpu_model() -> str | None:
         pass
     return None
 
-
 def _local_ip() -> str | None:
     """Obtém o IP local da interface de saída padrão."""
     try:
@@ -94,7 +109,6 @@ def _local_ip() -> str | None:
         return ip
     except Exception:
         return None
-
 
 def _disk_partitions() -> list[dict]:
     """Coleta informações de todas as partições de dados do sistema."""
@@ -124,7 +138,6 @@ def _disk_partitions() -> list[dict]:
     except Exception:
         pass
     return partitions
-
 
 def sync_specs() -> None:
     """Coleta e envia as especificações estáticas do hardware para a API.
@@ -158,14 +171,12 @@ def sync_specs() -> None:
     except Exception as e:
         print(f"[specs] Erro ao sincronizar specs: {e}")
 
-
 def _read_temperatures() -> dict:
     """Lê todos os sensores de temperatura disponíveis.
     Retorna dict com as temperaturas relevantes encontradas."""
     result = {
         "cpuTemp": 0.0,   # k10temp (AMD Tctl) ou coretemp (Intel)
         "gpuTemp": 0.0,   # amdgpu edge ou nvidia
-        "nvmeTemp": None, # SSD NVMe Composite
         "moboTemp": None, # acpitz
     }
     try:
@@ -187,13 +198,6 @@ def _read_temperatures() -> dict:
                     result["gpuTemp"] = e.current
                     break
 
-        # NVMe — "Composite" é a temperatura representativa do SSD
-        if "nvme" in sensors:
-            for e in sensors["nvme"]:
-                if "composite" in e.label.lower() or not e.label:
-                    result["nvmeTemp"] = e.current
-                    break
-
         # Placa-mãe via acpitz (se não usada para CPU acima)
         if result["cpuTemp"] != 0.0 and "acpitz" in sensors and sensors["acpitz"]:
             result["moboTemp"] = sensors["acpitz"][0].current
@@ -201,7 +205,6 @@ def _read_temperatures() -> dict:
     except (AttributeError, NotImplementedError):
         pass
     return result
-
 
 def _net_delta() -> tuple[float, float]:
     """Retorna (download_mbps, upload_mbps) desde a última chamada."""
@@ -218,161 +221,138 @@ def _net_delta() -> tuple[float, float]:
     else:
         down = up = 0.0
     _net_prev = {"t": now, "recv": net.bytes_recv, "sent": net.bytes_sent}
-    return round(down, 3), round(up, 3)
+    return round(down), round(up)
 
-
-def _disk_io_delta() -> tuple[float, float]:
-    """Retorna (read_mbps, write_mbps) de I/O de disco desde a última chamada."""
+def _disk_metrics() -> tuple[float, float, list[dict]]:
+    """Coleta métricas de I/O total e uso detalhado por partição numa única passagem."""
     global _disk_io_prev
-    try:
-        io = psutil.disk_io_counters()
-        if io is None:
-            return 0.0, 0.0
-    except Exception:
-        return 0.0, 0.0
     now = time.monotonic()
-    if _disk_io_prev:
-        dt = now - _disk_io_prev["t"]
-        if dt > 0:
-            read  = max(0, io.read_bytes  - _disk_io_prev["read"])  / 1_048_576 / dt
-            write = max(0, io.write_bytes - _disk_io_prev["write"]) / 1_048_576 / dt
-        else:
-            read = write = 0.0
-    else:
-        read = write = 0.0
-    _disk_io_prev = {"t": now, "read": io.read_bytes, "write": io.write_bytes}
-    return round(read, 3), round(write, 3)
+    io_total = psutil.disk_io_counters()
+    io_per_disk = psutil.disk_io_counters(perdisk=True) or {}
+    dt = now - _disk_io_prev["t"]
+    
+    total_read = total_write = 0.0
+    if dt > 0 and _disk_io_prev["t"] > 0 and io_total:
+        total_read  = max(0, io_total.read_bytes  - _disk_io_prev["total_read"])  / 1_048_576 / dt
+        total_write = max(0, io_total.write_bytes - _disk_io_prev["total_write"]) / 1_048_576 / dt
 
-
-def _top_processes(n: int = 5) -> list[dict]:
-    """Retorna os N processos que mais consomem CPU no momento.
-    Usa cpu_percent() não-bloqueante (requer que o processo já tenha sido amostrado
-    ao menos uma vez — psutil faz isso automaticamente no process_iter).
-    """
-    procs = []
-    for p in psutil.process_iter(["pid", "name", "cpu_percent", "memory_percent"]):
-        try:
-            info = p.info
-            if info["cpu_percent"] is not None:
-                procs.append({
-                    "pid":    info["pid"],
-                    "name":   info["name"] or "",
-                    "cpuPct": round(info["cpu_percent"], 1),
-                    "ramPct": round(info["memory_percent"] or 0, 1),
+    prev_disks = _disk_io_prev["disks"]
+    new_prev_disks = {}
+    disks = []
+    real_fs = {"ext2", "ext3", "ext4", "xfs", "btrfs", "ntfs", "vfat", "exfat", "zfs", "f2fs"}
+    
+    try:
+        for part in psutil.disk_partitions(all=False):
+            if part.fstype not in real_fs:
+                continue
+                
+            dev_name = part.device.split('/')[-1]
+            io = io_per_disk.get(dev_name)
+            p_read = p_write = 0.0
+            
+            if io:
+                if dt > 0 and dev_name in prev_disks:
+                    p_read  = max(0, io.read_bytes  - prev_disks[dev_name]["read"])  / 1_048_576 / dt
+                    p_write = max(0, io.write_bytes - prev_disks[dev_name]["write"]) / 1_048_576 / dt
+                new_prev_disks[dev_name] = {"read": io.read_bytes, "write": io.write_bytes}
+            
+            try:
+                usage = psutil.disk_usage(part.mountpoint)
+                disks.append({
+                    "mountpoint": part.mountpoint,
+                    "usagePct": round(usage.percent * 10),
+                    "freeGb": round(usage.free / 1024**3, 2),
+                    "readMbps": round(p_read, 3),
+                    "writeMbps": round(p_write, 3)
                 })
-        except (psutil.NoSuchProcess, psutil.AccessDenied):
-            pass
-    # Ordena por CPU desc, pega os top N com CPU > 0
-    procs.sort(key=lambda x: x["cpuPct"], reverse=True)
-    return procs[:n]
-
+            except (PermissionError, OSError):
+                continue
+    except Exception:
+        pass
+        
+    _disk_io_prev = {
+        "t": now, 
+        "total_read": io_total.read_bytes if io_total else 0, 
+        "total_write": io_total.write_bytes if io_total else 0, 
+        "disks": new_prev_disks
+    }
+    return round(total_read), round(total_write), disks
 
 def collect() -> dict:
-    """
-    Coleta completa de métricas.
-
-    Retorna dois sub-dicionários:
-      lean: campos escalares compactos (persistência no banco)
-      rich: dados granulares por core (dashboard realtime)
-    """
     temps = _read_temperatures()
     ram   = psutil.virtual_memory()
     swap  = psutil.swap_memory()
     down, up = _net_delta()
-    disk_read, disk_write = _disk_io_delta()
-    top_procs = _top_processes(5)
+    disk_read_total, disk_write_total, disks_info = _disk_metrics()
 
-    # ── Espaço em disco ───────────────────────────────────────────────────────────────────
-    disk_pct  = None
-    disk_free = None
-    disk_total = None
-    try:
-        du = psutil.disk_usage("/")
-        disk_pct   = du.percent
-        disk_free  = round(du.free  / 1024**3, 1)  # GB
-        disk_total = round(du.total / 1024**3, 1)  # GB
-    except Exception:
-        pass
-
-    # ── CPU total ─────────────────────────────────────────────────────────────
+    # ── CPU total e freq ─────────────────────────────────────────────────────────────
     cpu_total = psutil.cpu_percent(interval=None)
+    freq = psutil.cpu_freq(percpu=False)
+    avg_freq_mhz = round(freq.current) if freq else 0
 
-    # ── CPU por core ──────────────────────────────────────────────────────────
-    core_usage = psutil.cpu_percent(interval=None, percpu=True)  # list[float]
-
-    # ── Frequência ────────────────────────────────────────────────────────────
-    freqs = psutil.cpu_freq(percpu=True)
-    core_freq_mhz = [round(f.current) for f in freqs] if freqs else []
-    avg_freq_mhz  = round(sum(core_freq_mhz) / len(core_freq_mhz)) if core_freq_mhz else 0
-
-    # ── LEAN (escalares — banco de dados) ────────────────────────────────────
-    lean = {
-        "cpuUsage":      round(cpu_total * 10),                       # 0–1000
+    # ── DATA (escalares — banco de dados) ────────────────────────────────────
+    data = {
+        "cpuUsage":      round(cpu_total * 10),                        # 0–1000 Casa decimal abstraída para um digito de int a mais (espaço salvo por não usar float)
         "cpuTemp":       round(temps["cpuTemp"] * 10),                 # °C×10
         "cpuFreqMhz":    avg_freq_mhz,                                 # MHz inteiro
         "gpuUsage":      0,                                            # sem driver GPU
         "gpuTemp":       round(temps["gpuTemp"] * 10),                 # °C×10
-        "ramUsage":      round(ram.percent * 10),                      # 0–1000
-        "swapUsage":     round(swap.percent * 10),                     # 0–1000
-        "diskUsage":      round(disk_pct * 10) if disk_pct is not None else None,
-        "diskReadMbps":   disk_read,                                    # MB/s leitura
-        "diskWriteMbps":  disk_write,                                   # MB/s escrita
+
+        # RAM
+        "ramTotalGb":    round((ram.total / 1024**3) * 10),
+        "ramUsedGb":     round(((ram.total - ram.available) / 1024**3) * 10),
+
+        # Swap
+        "swapTotalGb":   round((swap.total / 1024 ** 3) * 10),
+        "swapUsedGb" :   round((swap.used / 1024 ** 3) * 10),
+
+        # "swapTotalGb":   round(swap.total / 1024**3, 2) if swap is not None else None,
+        # "swapFreeGb":    round(swap.free / 1024**3, 2) if swap is not None else None,
+        # "diskUsage":      round(disk_pct * 10) if disk_pct is not None else None,
+
+        # Disk
+        "disks": disks_info,
+        "diskReadMbps":   disk_read_total,
+        "diskWriteMbps":  disk_write_total,
+
+        # Network
         "downloadUsage":  down,                                         # Mbps (bytes_recv)
         "uploadUsage":    up,                                           # Mbps (bytes_sent)
+
         "moboTemperature": round(temps["moboTemp"] * 10) if temps["moboTemp"] else None,
-        "loggedUserName": SYSTEM_USER,
+        
+        "activeUsers": _active_users(),
     }
 
-    # ── RICH (granular — memória real-time do dashboard) ─────────────────────────
-    rich = {
-        **lean,
-        "cpuCoreUsage":   [round(u * 10) for u in core_usage],         # lista 0–1000
-        "cpuCoreFreqMhz": core_freq_mhz,                               # lista MHz
-        "ramAvailableGb": round(ram.available / 1024**3, 2),           # GB real livre
-        "ramTotalGb":     round(ram.total / 1024**3, 2),
-        "nvmeTemp":       round(temps["nvmeTemp"] * 10) if temps["nvmeTemp"] else None,
-        # Espaço livre no disco
-        "diskFreeGb":     disk_free,
-        "diskTotalGb":    disk_total,
-        # Top processos por CPU (só no dashboard, não persiste)
-        "topProcesses":   top_procs,
-    }
+    return {"data": data}
 
-    return {"lean": lean, "rich": rich}
-
-
-def print_snapshot(data: dict) -> None:
-    lean = data["lean"]
-    rich = data["rich"]
-    cpu  = lean["cpuUsage"]  / 10
-    temp = lean["cpuTemp"]   / 10
-    freq = lean["cpuFreqMhz"]
-    ram  = lean["ramUsage"]  / 10
-    swap = lean["swapUsage"] / 10
-    disk  = (lean["diskUsage"] or 0) / 10
-    dr    = lean["diskReadMbps"]
-    dw    = lean["diskWriteMbps"]
-    dl    = lean["downloadUsage"]
-    up    = lean["uploadUsage"]
-    gpu_t = lean["gpuTemp"] / 10
-    cores = rich["cpuCoreUsage"]
-    max_core = max(cores) / 10 if cores else 0
-    top = rich.get("topProcesses", [])
-    top_str = "  ".join(f"{p['name']}({p['cpuPct']}%)" for p in top if p["cpuPct"] > 0)
+def print_snapshot(payload: dict) -> None:
+    data = payload["data"]
+    cpu  = data["cpuUsage"]  / 10
+    temp = data["cpuTemp"]   / 10
+    freq = data["cpuFreqMhz"]
+    ram  = data["ramUsage"]  / 10
+    swap = data["swapUsage"] / 10
+    
+    dr    = data["diskReadMbps"]
+    dw    = data["diskWriteMbps"]
+    dl    = data["downloadUsage"]
+    up    = data["uploadUsage"]
+    gpu_t = data["gpuTemp"] / 10
+    
+    disks_info = data.get("disks", [])
+    disk_str = " ".join([f"{d['mountpoint']}:{d['usagePct']/10:.1f}%" for d in disks_info]) if disks_info else "N/A"
+    
     print(
-        f"  CPU {cpu:5.1f}% (max {max_core:.0f}%)  {freq}MHz  {temp:.1f}°C  |  "
+        f"  CPU {cpu:5.1f}% {freq}MHz  {temp:.1f}°C  |  "
         f"GPU {gpu_t:.1f}°C  |  RAM {ram:.1f}% swap {swap:.1f}%  |  "
-        f"Disk {disk:.1f}%  r{dr:.2f}w{dw:.2f}MB/s  |  ↓{dl:.2f}↑{up:.2f}Mbps"
+        f"Disk [{disk_str}]  r{dr:.2f}w{dw:.2f}MB/s  |  ↓{dl:.2f}↑{up:.2f}Mbps"
     )
-    if top_str:
-        print(f"  TOP: {top_str}")
-
 
 def send(data: dict) -> tuple[int, str]:
     """Envia o payload para a API. Retorna (status_code, body_text)."""
     resp = requests.post(API_URL, json=data, headers=HEADERS, timeout=5)
     return resp.status_code, resp.text
-
 
 def main():
     print(f"[telemetry_probe] Máquina: {MACHINE}")
@@ -380,39 +360,47 @@ def main():
     print(f"[telemetry_probe] User:    {SYSTEM_USER}")
     print(f"[telemetry_probe] Intervalo: {INTERVAL}s  |  Ctrl+C para parar\n")
 
-    # Reporta especificações de hardware na inicialização
     sync_specs()
 
-    # Aquece a janela de CPU do psutil antes de começar
     psutil.cpu_percent(interval=None)
-    psutil.cpu_percent(interval=None, percpu=True)
     time.sleep(INTERVAL)
 
     iteration = 0
+    buffer = []  # NOVO: Inicia o buffer vazio
+
     while True:
         iteration += 1
         data = collect()
+        
+        # Adiciona apenas o conteúdo interno (dicionário) ao buffer
+        buffer.append(data["data"])
 
-        try:
-            status, body = send(data)
-            if status == 204:
-                tag = "OK  "
-            elif status == 422:
-                tag = f"VALIDATION ERROR — {body[:120]}"
-            else:
-                tag = f"HTTP {status} — {body[:80]}"
-        except requests.exceptions.ConnectionError:
-            tag = "CONN_ERR (API offline?)"
-        except requests.exceptions.Timeout:
-            tag = "TIMEOUT"
-        except Exception as e:
-            tag = f"ERR {e}"
-
-        print(f"[#{iteration:04d}] {tag}")
+        print(f"[#{iteration:04d}] Coletado localmente:")
         print_snapshot(data)
 
-        time.sleep(INTERVAL)
+        # Dispara para a API apenas quando acumular 5 itens
+        if len(buffer) >= 5:
+            try:
+                # Envia payload no formato: {"data": [ {..}, {..}, {..}, {..}, {..} ]}
+                status, body = send({"data": buffer})
+                if status in (200, 201, 204):
+                    print("  [✓] Lote de 5 telemetrias enviado com sucesso!")
+                elif status == 422:
+                    print(f"  [x] VALIDATION ERROR — {body[:120]}")
+                else:
+                    print(f"  [x] HTTP {status} — {body[:80]}")
+            except requests.exceptions.ConnectionError:
+                print("  [x] CONN_ERR (API offline?)")
+            except requests.exceptions.Timeout:
+                print("  [x] TIMEOUT")
+            except Exception as e:
+                print(f"  [x] ERR {e}")
+            
+            # Limpa o buffer após o disparo
+            buffer = []
 
+        print("-" * 60)
+        time.sleep(INTERVAL)
 
 if __name__ == "__main__":
     main()

@@ -24,15 +24,16 @@ export default class extends BaseSchema {
       // Identificador de Rede
       table.string('ip_address', 45).nullable()
 
-      // Status da máquina
+      // Status da máquina e configurações do agente
       table.enum('status', ['available', 'occupied', 'maintenance', 'offline']).defaultTo('offline')
+      table.text('custom_agent_config').nullable()
 
       // Campos de Segurança/Auditoria do Agente
       table.timestamp('last_seen_at').nullable()
       table.timestamp('token_rotated_at').nullable()
 
       // Atualizado via Telemetria (não via sync_specs)
-      table.string('logged_user', 100).nullable()
+      table.text('active_users').nullable()
 
       table.timestamp('created_at')
       table.timestamp('updated_at')

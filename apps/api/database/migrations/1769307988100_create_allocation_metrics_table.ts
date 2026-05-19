@@ -28,19 +28,23 @@ export default class extends BaseSchema {
       table.float('avg_gpu_temp')
       table.float('max_gpu_temp')
 
-      // --- MEMÓRIA (RAM) ---
-      table.float('avg_ram_usage')
-      table.float('max_ram_usage')
+      // --- MEMÓRIA (RAM e SWAP) ---
+      table.float('avg_ram_used_gb').nullable()
+      table.float('max_ram_used_gb').nullable()
+      table.float('avg_swap_used_gb').nullable()
+      table.float('max_swap_used_gb').nullable()
 
       // --- DISCO (nullable: nem sempre disponível) ---
-      table.float('avg_disk_usage').nullable()
-      table.float('max_disk_usage').nullable()
+      table.float('avg_disk_read_mbps').nullable()
+      table.float('max_disk_read_mbps').nullable()
+      table.float('avg_disk_write_mbps').nullable()
+      table.float('max_disk_write_mbps').nullable()
 
       // --- REDE (nullable: nem sempre disponível) ---
-      table.float('avg_download_usage').nullable()
-      table.float('max_download_usage').nullable()
-      table.float('avg_upload_usage').nullable()
-      table.float('max_upload_usage').nullable()
+      table.float('avg_download_mbps').nullable()
+      table.float('max_download_mbps').nullable()
+      table.float('avg_upload_mbps').nullable()
+      table.float('max_upload_mbps').nullable()
 
       // --- PLACA MÃE (nullable: nem sempre disponível) ---
       table.float('avg_mobo_temp').nullable()
@@ -48,7 +52,6 @@ export default class extends BaseSchema {
 
       // --- OUTROS ---
       table.integer('session_duration_minutes').unsigned() // Duração total
-
       table.timestamp('created_at') // Data da consolidação
     })
   }

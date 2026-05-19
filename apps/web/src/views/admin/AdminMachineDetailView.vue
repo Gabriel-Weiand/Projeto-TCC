@@ -63,6 +63,21 @@ const liveData = computed(() => {
   return telemetry.value || machine.value?.latestTelemetry || null;
 });
 
+// Calcula a porcentagem on-the-fly (lembrando que os valores vêm multiplicados por 10)
+function calcUsagePct(used: number | null | undefined, total: number | null | undefined): string {
+  if (used == null || total == null || total === 0) return "—";
+  return ((used / total) * 100).toFixed(1);
+}
+
+// Determina a cor com base no cálculo da porcentagem
+function calcUsageColor(used: number | null | undefined, total: number | null | undefined): string {
+  if (used == null || total == null || total === 0) return "var(--text-muted)";
+  const pct = (used / total) * 100;
+  if (pct < 50) return "var(--success)";
+  if (pct < 80) return "var(--warning)";
+  return "var(--danger)";
+}
+
 function usageColor(val: number | null | undefined): string {
   if (val == null) return "var(--text-muted)";
   if (val < 50) return "var(--success)";
@@ -155,6 +170,28 @@ async function handleStatusChange(alloc: Allocation, status: string) {
     alert("Erro ao atualizar alocação.");
   }
 }
+
+function fmtPct(val: number | null | undefined): string {
+  if (val == null) return "—";
+  return val.toFixed(1);
+}
+
+function fmtTemp(val: number | null | undefined): string {
+  if (val == null) return "—";
+  return val.toFixed(1);
+}
+
+function fmtRamGb(val: number | null | undefined): string {
+  if (val == null) return "--";
+  return val.toFixed(1) + " GB";
+}
+
+// Computada para exibir usuários logados de forma reativa
+const activeUsersList = computed(() => {
+  const users = liveData.value?.activeUsers || machine.value?.activeUsers;
+  return users && users.length > 0 ? users.map((u: any) => u.username).join(', ') : "—";
+});
+
 </script>
 
 <template>
@@ -183,114 +220,81 @@ async function handleStatusChange(alloc: Allocation, status: string) {
       <div v-if="liveData" class="telemetry-grid">
         <div class="tele-card">
           <span class="tele-label">CPU</span>
-          <div
-            class="tele-value"
-            :style="{ color: usageColor(liveData.cpuUsage) }"
-          >
-            {{ liveData.cpuUsage?.toFixed(1) ?? "—" }}%
+          <div class="tele-value" :style="{ color: usageColor(liveData.cpuUsage) }">
+            {{ fmtPct(liveData.cpuUsage) }}%
           </div>
           <div class="progress-bar">
-            <div
-              class="progress-fill"
-              :style="{
-                width: (liveData.cpuUsage ?? 0) + '%',
-                background: usageColor(liveData.cpuUsage),
-              }"
-            ></div>
+            <div class="progress-fill" :style="{ width: ((liveData.cpuUsage ?? 0)) + '%', background: usageColor(liveData.cpuUsage) }"></div>
           </div>
-          <span
-            class="tele-sub"
-            :style="{ color: tempColor(liveData.cpuTemp) }"
-          >
-            {{ liveData.cpuTemp?.toFixed(1) ?? "—" }} °C
-          </span>
+          <div style="display: flex; justify-content: space-between;">
+            <span class="tele-sub" :style="{ color: tempColor(liveData.cpuTemp) }">
+              {{ fmtTemp(liveData.cpuTemp) }} °C
+            </span>
+            <span class="tele-sub" v-if="liveData.cpuFreqMhz" style="color: var(--text-muted)">
+              {{ liveData.cpuFreqMhz }} MHz
+            </span>
+          </div>
         </div>
 
         <div class="tele-card">
           <span class="tele-label">GPU</span>
-          <div
-            class="tele-value"
-            :style="{ color: usageColor(liveData.gpuUsage) }"
-          >
-            {{ liveData.gpuUsage?.toFixed(1) ?? "—" }}%
+          <div class="tele-value" :style="{ color: usageColor(liveData.gpuUsage) }">
+            {{ fmtPct(liveData.gpuUsage) }}%
           </div>
           <div class="progress-bar">
-            <div
-              class="progress-fill"
-              :style="{
-                width: (liveData.gpuUsage ?? 0) + '%',
-                background: usageColor(liveData.gpuUsage),
-              }"
-            ></div>
+            <div class="progress-fill" :style="{ width: ((liveData.gpuUsage ?? 0)) + '%', background: usageColor(liveData.gpuUsage) }"></div>
           </div>
-          <span
-            class="tele-sub"
-            :style="{ color: tempColor(liveData.gpuTemp) }"
-          >
-            {{ liveData.gpuTemp?.toFixed(1) ?? "—" }} °C
+          <span class="tele-sub" :style="{ color: tempColor(liveData.gpuTemp) }">
+            {{ fmtTemp(liveData.gpuTemp) }} °C
+          </span>
+        </div>
+
+        <div class="tele-card" v-if="liveData.ramTotalGb != null">
+          <span class="tele-label">RAM</span>
+          <div class="tele-value" :style="{ color: calcUsageColor(liveData.ramUsedGb, liveData.ramTotalGb) }">
+            {{ calcUsagePct(liveData.ramUsedGb, liveData.ramTotalGb) }}%
+          </div>
+          <div class="progress-bar">
+            <div class="progress-fill" :style="{ width: calcUsagePct(liveData.ramUsedGb, liveData.ramTotalGb) + '%', background: calcUsageColor(liveData.ramUsedGb, liveData.ramTotalGb) }"></div>
+          </div>
+          <span class="tele-sub">
+            {{ fmtRamGb(liveData.ramUsedGb) }} / {{ fmtRamGb(liveData.ramTotalGb) }}
+          </span>
+        </div>
+
+        <div class="tele-card" v-if="liveData.swapTotalGb != null">
+          <span class="tele-label">Swap</span>
+          <div class="tele-value" :style="{ color: calcUsageColor(liveData.swapUsedGb, liveData.swapTotalGb) }">
+            {{ calcUsagePct(liveData.swapUsedGb, liveData.swapTotalGb) }}%
+          </div>
+          <div class="progress-bar">
+            <div class="progress-fill" :style="{ width: calcUsagePct(liveData.swapUsedGb, liveData.swapTotalGb) + '%', background: calcUsageColor(liveData.swapUsedGb, liveData.swapTotalGb) }"></div>
+          </div>
+          <span class="tele-sub">
+            {{ fmtRamGb(liveData.swapUsedGb) }} / {{ fmtRamGb(liveData.swapTotalGb) }}
           </span>
         </div>
 
         <div class="tele-card">
-          <span class="tele-label">RAM</span>
-          <div
-            class="tele-value"
-            :style="{ color: usageColor(liveData.ramUsage) }"
-          >
-            {{ liveData.ramUsage?.toFixed(1) ?? "—" }}%
-          </div>
-          <div class="progress-bar">
-            <div
-              class="progress-fill"
-              :style="{
-                width: (liveData.ramUsage ?? 0) + '%',
-                background: usageColor(liveData.ramUsage),
-              }"
-            ></div>
+          <span class="tele-label">Disco (I/O)</span>
+          <div class="tele-value" style="font-size: 1.1rem; line-height: 1.4; display: flex; flex-direction: column; justify-content: center;">
+            <span><span style="color: var(--success)">↓</span> {{ liveData.diskReadMbps ?? "—" }} <small>Mbps</small></span>
+            <span><span style="color: var(--info)">↑</span> {{ liveData.diskWriteMbps ?? "—" }} <small>Mbps</small></span>
           </div>
         </div>
 
         <div class="tele-card">
-          <span class="tele-label">Disco</span>
-          <div
-            class="tele-value"
-            :style="{ color: usageColor(liveData.diskUsage) }"
-          >
-            {{ liveData.diskUsage?.toFixed(1) ?? "—" }}%
-          </div>
-          <div class="progress-bar">
-            <div
-              class="progress-fill"
-              :style="{
-                width: (liveData.diskUsage ?? 0) + '%',
-                background: usageColor(liveData.diskUsage),
-              }"
-            ></div>
-          </div>
-        </div>
-
-        <div class="tele-card">
-          <span class="tele-label">Download</span>
-          <div class="tele-value">
-            {{ liveData.downloadUsage?.toFixed(1) ?? "—" }}
-            <small>Mbps</small>
-          </div>
-        </div>
-        <div class="tele-card">
-          <span class="tele-label">Upload</span>
-          <div class="tele-value">
-            {{ liveData.uploadUsage?.toFixed(1) ?? "—" }}
-            <small>Mbps</small>
+          <span class="tele-label">Rede</span>
+          <div class="tele-value" style="font-size: 1.1rem; line-height: 1.4; display: flex; flex-direction: column; justify-content: center;">
+            <span><span style="color: var(--success)">↓</span> {{ liveData.downloadMbps ?? "—" }} <small>Mbps</small></span>
+            <span><span style="color: var(--info)">↑</span> {{ liveData.uploadMbps ?? "—" }} <small>Mbps</small></span>
           </div>
         </div>
 
         <div class="tele-card" v-if="liveData.moboTemperature != null">
           <span class="tele-label">Placa-Mãe</span>
-          <div
-            class="tele-value"
-            :style="{ color: tempColor(liveData.moboTemperature) }"
-          >
-            {{ liveData.moboTemperature?.toFixed(1) ?? "—" }} °C
+          <div class="tele-value" :style="{ color: tempColor(liveData.moboTemperature) }">
+            {{ fmtTemp(liveData.moboTemperature) }} °C
           </div>
         </div>
       </div>
@@ -327,10 +331,12 @@ async function handleStatusChange(alloc: Allocation, status: string) {
             machine.ipAddress || "—"
           }}</span>
         </div>
-        <div class="spec-item" v-if="machine.loggedUser">
-          <span class="spec-label">Logado</span>
-          <span class="spec-value">{{ machine.loggedUser }}</span>
+        
+        <div class="spec-item" v-if="machine.activeUsers && machine.activeUsers.length > 0">
+          <span class="spec-label">Logado(s)</span>
+          <span class="spec-value">{{ machine.activeUsers.map(u => u.username).join(', ') }}</span>
         </div>
+
         <div class="spec-item" v-if="machine.lastSeenAt">
           <span class="spec-label">Último report</span>
           <span class="spec-value">{{
@@ -463,8 +469,16 @@ async function handleStatusChange(alloc: Allocation, status: string) {
 
 .telemetry-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+  /* Força exatamente 6 colunas na primeira linha com tamanhos perfeitamente iguais */
+  grid-template-columns: repeat(6, minmax(0, 1fr));
   gap: 0.75rem;
+}
+
+/* Proteção para telas menores (notebooks/tablets) não esmagarem os cards */
+@media (max-width: 1200px) {
+  .telemetry-grid {
+    grid-template-columns: repeat(3, 1fr);
+  }
 }
 
 .tele-card {

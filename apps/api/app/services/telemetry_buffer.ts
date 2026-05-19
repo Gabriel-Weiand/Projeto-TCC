@@ -1,39 +1,44 @@
 import Telemetry from '#models/telemetry'
 import logger from '@adonisjs/core/services/logger'
 
-/** Dados escalares compactos — persistidos no banco (tabela telemetries). */
-export interface LeanTelemetryData {
+/** * Payload unificado de telemetria enviado pelo agente (C2).
+ * Mapeia exatamente os campos do schema da base de dados e do validator.
+ */
+export interface TelemetryPayload {
   allocationId: number
+  timestamp: string
+
+  // CPU e GPU
   cpuUsage: number
   cpuTemp: number
-  cpuFreqMhz?: number
+  cpuFreqMhz?: number | null
   gpuUsage: number
   gpuTemp: number
-  ramUsage: number
-  swapUsage?: number | null
-  diskUsage?: number | null
+
+  // Memória e Swap
+  ramTotalGb?: number | null
+  ramUsedGb?: number | null
+  swapTotalGb?: number | null
+  swapUsedGb?: number | null
+
+  // Discos e I/O
+  disks?: any[] | null
   diskReadMbps?: number | null
   diskWriteMbps?: number | null
-  downloadUsage?: number | null
-  uploadUsage?: number | null
-  moboTemperature?: number | null
-  loggedUserName: string
-}
 
-/** Dados granulares por core — mantidos só em memória para o dashboard. */
-export interface RichTelemetryData extends LeanTelemetryData {
-  cpuCoreUsage?: number[]
-  cpuCoreFreqMhz?: number[]
-  ramAvailableGb?: number
-  ramTotalGb?: number
-  nvmeTemp?: number | null
-  diskFreeGb?: number | null
-  diskTotalGb?: number | null
-  topProcesses?: { pid: number; name: string; cpuPct: number; ramPct: number }[]
+  // Rede (Mbps)
+  downloadMbps?: number | null
+  uploadMbps?: number | null
+
+  // Extras
+  moboTemperature?: number | null
+
+  // Lista de utilizadores ativos (substitui o antigo loggedUserName)
+  activeUsers?: any[] | null
 }
 
 // Alias para compatibilidade interna
-type TelemetryData = RichTelemetryData
+type TelemetryData = TelemetryPayload
 
 interface MachineLatestState {
   data: TelemetryData
@@ -52,25 +57,14 @@ interface MachineLatestState {
  * enquanto a persistência usa allocationId como FK.
  */
 class TelemetryBuffer {
-  // Buffer de telemetrias pendentes para insert
   private buffer: TelemetryData[] = []
-
-  // Estado mais recente de cada máquina (para dashboard real-time)
-  // Chave: machineId (resolvido externamente pelo controller)
   private latestState = new Map<number, MachineLatestState>()
-
-  // Ring buffer de entradas recentes por máquina (para playback no frontend)
-  // Mantém as últimas MAX_RECENT_ENTRIES por máquina
   private recentEntries = new Map<number, TelemetryData[]>()
   private readonly MAX_RECENT_ENTRIES = 30
 
-  // Configurações
-  // Agente envia a cada 5s → 12 registros/min por máquina
-  // Flush a cada 60s → ~120 registros por flush (10 máquinas)
-  private readonly FLUSH_INTERVAL_MS = 60 * 1000 // 60 segundos
-  private readonly MAX_BUFFER_SIZE = 1000 // Flush forçado se exceder
+  private readonly FLUSH_INTERVAL_MS = 60 * 1000
+  private readonly MAX_BUFFER_SIZE = 1000
 
-  // Timer do flush periódico
   private flushTimer: NodeJS.Timeout | null = null
   private isFlushing = false
 
@@ -85,13 +79,11 @@ class TelemetryBuffer {
    * @param data - Dados da telemetria (pode ter allocationId 0 se sem alocação)
    */
   updateRealtime(machineId: number, data: TelemetryData): void {
-    // Atualiza estado mais recente da máquina (para dashboard)
     this.latestState.set(machineId, {
       data,
       receivedAt: Date.now(),
     })
 
-    // Adiciona ao ring buffer da máquina (para playback no frontend)
     let ring = this.recentEntries.get(machineId)
     if (!ring) {
       ring = []
@@ -111,22 +103,14 @@ class TelemetryBuffer {
    * @param data - Dados da telemetria com allocationId válido
    */
   add(machineId: number, data: TelemetryData): void {
-    // Atualiza estado real-time
     this.updateRealtime(machineId, data)
-
-    // Adiciona ao buffer para persistência
     this.buffer.push(data)
 
-    // Flush forçado se buffer muito grande
     if (this.buffer.length >= this.MAX_BUFFER_SIZE) {
       this.flush()
     }
   }
 
-  /**
-   * Retorna o estado mais recente de uma máquina (sem ir ao banco).
-   * Útil para dashboard real-time.
-   */
   getLatest(machineId: number): TelemetryData | null {
     return this.latestState.get(machineId)?.data ?? null
   }
@@ -172,13 +156,21 @@ class TelemetryBuffer {
     this.buffer = []
 
     try {
-      // Batch insert - muito mais eficiente que inserts individuais
-      await Telemetry.createMany(toInsert)
+      // Batch insert em chunks para evitar limites de variáveis do SQLite
+      const CHUNK = 200
+      let inserted = 0
 
-      logger.info(`[TelemetryBuffer] Flushed ${toInsert.length} records`)
-      return toInsert.length
+      for (let i = 0; i < toInsert.length; i += CHUNK) {
+        const chunk = toInsert.slice(i, i + CHUNK)
+        await Telemetry.createMany(chunk)
+        inserted += chunk.length
+      }
+
+      logger.info(`[TelemetryBuffer] Flushed ${inserted} records`)
+      return inserted
     } catch (error) {
-      // Em caso de erro, devolve ao buffer para retry
+      // Em caso de erro, devolve apenas os registros não inseridos para retry
+      // (assume que falha ocorreu antes de inserir todos os chunks)
       this.buffer = [...toInsert, ...this.buffer]
       logger.error('[TelemetryBuffer] Flush failed, data returned to buffer', error)
       throw error

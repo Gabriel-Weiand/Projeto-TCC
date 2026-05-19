@@ -37,20 +37,6 @@ export default class AgentController {
   }
 
   /**
-   * Helper: Encontra a próxima alocação futura da máquina (a que vai começar primeiro).
-   */
-  private async findNextAllocation(machineId: number) {
-    const now = DateTime.now().toMillis()
-
-    const allocations = await Allocation.query()
-      .where('machineId', machineId)
-      .whereIn('status', ['approved', 'pending'])
-      .orderBy('startTime', 'asc')
-
-    return allocations.find((a) => a.startTime.toMillis() > now) || null
-  }
-
-  /**
    * Heartbeat - Rota principal de polling do agente.
    * Atualiza último contato e recebe lista de usuários conectados via SSH.
    * Retorna status da máquina, alocação ativa e instrução de bloqueio.
@@ -75,11 +61,14 @@ export default class AgentController {
     // Detecta se algo mudou para só invalidar o cache quando necessário.
     let stateChanged = false
     if (machine.status !== 'maintenance') {
-      const newLoggedUser = connectedUsers.length > 0 ? connectedUsers[0] : null
       const newStatus = connectedUsers.length > 0 ? 'occupied' : 'available'
 
-      if (machine.loggedUser !== newLoggedUser || machine.status !== newStatus) {
-        machine.loggedUser = newLoggedUser
+      // Como arrays são objetos em JS, convertemos para JSON string para comparar se houve mudança real
+      const currentUsersStr = JSON.stringify(machine.activeUsers || [])
+      const newUsersStr = JSON.stringify(connectedUsers || [])
+
+      if (currentUsersStr !== newUsersStr || machine.status !== newStatus) {
+        machine.activeUsers = connectedUsers // Mudou de loggedUser para activeUsers
         machine.status = newStatus
         stateChanged = true
       }
@@ -95,9 +84,6 @@ export default class AgentController {
     // Busca alocação atual na máquina
     const currentAllocation = await this.findCurrentAllocation(machine.id)
 
-    // Busca próxima alocação da máquina
-    const nextAllocation = await this.findNextAllocation(machine.id)
-
     // === Determina se deve bloquear ===
     let shouldBlock = false
     let blockReason: string | null = null
@@ -108,6 +94,47 @@ export default class AgentController {
     } else if (connectedUsers.length > 0 && !currentAllocation) {
       shouldBlock = true
       blockReason = 'NO_VALID_ALLOCATION'
+    }
+
+    // === Lógica de Configuração Dinâmica (Eco vs Turbo) ===
+    let agentConfig = {
+      telemetry: {
+        intervalSeconds: 15,
+        batchSize: 4,
+        processReporting: { enabled: true, topProcessesCount: 5, allProcesses: false },
+        telemetrySet: {
+          cpu: true,
+          gpu: true,
+          ramAndSwap: true,
+          diskSpace: false,
+          diskIO: true,
+          networkIO: true,
+          temperatures: true,
+          activeUsers: true,
+        },
+      },
+      sshAccess: { enforceSessionLimits: true, idleTimeoutMinutes: 30 },
+      maintenance: { wipeDataOnTeardown: true, blockLocalLogin: false },
+      thermalRules: {
+        enableEmergencyAlerts: true,
+        cpuTempMaxCelcius: 90.0,
+        gpuTempMaxCelcius: 85.0,
+        actionOnOverheat: 'throttle_and_alert',
+      },
+    }
+
+    if (machine.status === 'occupied') {
+      // PRESET TURBO: Máquina em uso. Alta resolução de dados.
+      agentConfig.telemetry.intervalSeconds = 5
+      agentConfig.telemetry.batchSize = 6 // Envia a cada 30 segundos (5s * 6)
+      agentConfig.telemetry.telemetrySet.diskSpace = true
+    } else {
+      // PRESET ECO: Máquina disponível/ociosa. Baixa resolução para poupar rede/banco.
+      agentConfig.telemetry.intervalSeconds = 6
+      agentConfig.telemetry.batchSize = 3 // Envia imediatamente a cada 1 minuto
+      agentConfig.telemetry.telemetrySet.diskIO = false
+      agentConfig.telemetry.telemetrySet.networkIO = false
+      agentConfig.telemetry.processReporting.enabled = true
     }
 
     return response.ok({
@@ -123,22 +150,13 @@ export default class AgentController {
             id: currentAllocation.id,
             userId: currentAllocation.userId,
             userName: currentAllocation.user?.fullName,
-            userEmail: currentAllocation.user?.email,
             startTime: currentAllocation.startTime,
             endTime: currentAllocation.endTime,
-            remainingMinutes: Math.floor(currentAllocation.endTime.diff(now, 'minutes').minutes),
-          }
-        : null,
-      nextAllocation: nextAllocation
-        ? {
-            startTime: nextAllocation.startTime,
-            endTime: nextAllocation.endTime,
-            minutesUntilStart: Math.floor(nextAllocation.startTime.diff(now, 'minutes').minutes),
           }
         : null,
       shouldBlock,
       blockReason,
-      serverTime: now.toISO(),
+      agentConfig,
     })
   }
 
@@ -200,24 +218,29 @@ export default class AgentController {
    */
   async telemetry({ authenticatedMachine, request, response }: HttpContext) {
     const machine = authenticatedMachine!
-    const { lean, rich } = await request.validateUsing(telemetryReportValidator)
+    // Valida e extrai o novo dicionário único 'data'
+    const { data } = await request.validateUsing(telemetryReportValidator)
 
-    // Estado real-time usa os dados RICH (com cores, frequências, etc.)
-    const realtimeData = { allocationId: 0, ...rich }
-
-    // Persiste no banco apenas se houver alocação ativa
+    // Busca alocação atual
     const currentAllocation = await this.findCurrentAllocation(machine.id)
-    if (currentAllocation) {
-      telemetryBuffer.add(machine.id, {
-        allocationId: currentAllocation.id,
-        ...lean,
-      })
-      telemetryBuffer.updateRealtime(machine.id, { allocationId: currentAllocation.id, ...rich })
-    } else {
-      telemetryBuffer.updateRealtime(machine.id, realtimeData)
+    const allocationId = currentAllocation ? currentAllocation.id : 0
+
+    // Atualiza o cache realtime com TODAS as telemetrias do lote na ordem correta,
+    // para que o ring buffer tenha o histórico completo para o playback do frontend.
+    if (data.length > 0) {
+      for (const item of data) {
+        telemetryBuffer.updateRealtime(machine.id, { allocationId, ...item })
+      }
     }
 
-    // Atualiza último contato
+    // Persiste todas as telemetrias no buffer se houver alocação
+    if (currentAllocation) {
+      for (const item of data) {
+        telemetryBuffer.add(machine.id, { allocationId, ...item })
+      }
+    }
+
+    // Atualiza status da máquina
     machine.lastSeenAt = DateTime.now()
     if (machine.status === 'offline') {
       machine.status = 'available'

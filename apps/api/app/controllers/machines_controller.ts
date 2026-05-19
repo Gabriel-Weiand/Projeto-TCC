@@ -16,17 +16,33 @@ export default class MachinesController {
   private normalizeTelemetry(raw: unknown) {
     if (!raw || typeof raw !== 'object') return null
     const r = raw as Record<string, unknown>
+
     return {
       cpuUsage: Number(r.cpuUsage ?? 0) / 10,
       cpuTemp: Number(r.cpuTemp ?? 0) / 10,
+      cpuFreqMhz: r.cpuFreqMhz ?? null, // Incluído
+
       gpuUsage: Number(r.gpuUsage ?? 0) / 10,
       gpuTemp: Number(r.gpuTemp ?? 0) / 10,
-      ramUsage: Number(r.ramUsage ?? 0) / 10,
-      diskUsage: r.diskUsage != null ? Number(r.diskUsage) / 10 : null,
-      downloadUsage: r.downloadUsage ?? null,
-      uploadUsage: r.uploadUsage ?? null,
+
+      // Valores absolutos enviados multiplicados por 10 pelo Python
+      ramTotalGb: r.ramTotalGb != null ? Number(r.ramTotalGb) / 10 : null,
+      ramUsedGb: r.ramUsedGb != null ? Number(r.ramUsedGb) / 10 : null,
+      swapTotalGb: r.swapTotalGb != null ? Number(r.swapTotalGb) / 10 : null,
+      swapUsedGb: r.swapUsedGb != null ? Number(r.swapUsedGb) / 10 : null,
+
+      // Discos e Rede vêm diretamente como o agentd.py manda
+      disksInfo: r.disks ?? null,
+      diskReadMbps: r.diskReadMbps ?? null,
+      diskWriteMbps: r.diskWriteMbps ?? null,
+      downloadMbps: r.downloadMbps ?? null,
+      uploadMbps: r.uploadMbps ?? null,
+
       moboTemperature: r.moboTemperature != null ? Number(r.moboTemperature) / 10 : null,
-      timestamp: new Date().toISOString(),
+      activeUsers: r.activeUsers ?? null,
+
+      // Timestamp original da coleta
+      timestamp: r.timestamp ? String(r.timestamp) : new Date().toISOString(),
     }
   }
 

@@ -34,10 +34,13 @@ export default class Machine extends BaseModel {
   declare ipAddress: string | null
 
   @column()
-  declare macAddress: string
-
-  @column()
   declare status: 'available' | 'occupied' | 'maintenance' | 'offline'
+
+  @column({
+    prepare: (value: any) => JSON.stringify(value),
+    consume: (value: string | null) => (value ? JSON.parse(value) : null),
+  })
+  declare customAgentConfig: any | null
 
   // Campos de Segurança/Auditoria do Agente
   @column.dateTime()
@@ -46,8 +49,11 @@ export default class Machine extends BaseModel {
   @column.dateTime()
   declare tokenRotatedAt: DateTime | null
 
-  @column()
-  declare loggedUser: string | null
+  @column({
+    prepare: (value: any) => JSON.stringify(value),
+    consume: (value: string | null) => (value ? JSON.parse(value) : []),
+  })
+  declare activeUsers: any[] | null
 
   // Usuário do sistema operacional mapeado (para agente servidor SSH/cgroups)
   @column()
@@ -79,7 +85,7 @@ export default class Machine extends BaseModel {
   public get totalDiskGb(): number | null {
     const arr = this.disks as Array<any>
     if (!arr || arr.length === 0) return null
-    const sum = arr.reduce((acc, d) => acc + (Number(d?.totalGb ?? 0)), 0)
+    const sum = arr.reduce((acc, d) => acc + Number(d?.totalGb ?? 0), 0)
     return Math.round(sum * 10) / 10
   }
 

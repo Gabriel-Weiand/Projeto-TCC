@@ -16,30 +16,41 @@ export default class extends BaseSchema {
         .onDelete('CASCADE')
         .index()
 
+      table.timestamp('timestamp').notNullable().index()
+
       // --- DADOS DE HARDWARE (Escala 0 a 1000) ---
       // 0 = 0.0%, 1000 = 100.0% | 650 = 65.0ºC
 
+      // --- CPU ---
       table.integer('cpu_usage').unsigned().notNullable()
       table.integer('cpu_temp').unsigned().notNullable()
-      table.integer('cpu_freq_mhz').unsigned().nullable()  // Frequência média (MHz)
+      table.integer('cpu_freq_mhz').unsigned().nullable() // Frequência média (MHz)
 
+      // --- GPU ---
       table.integer('gpu_usage').unsigned().notNullable()
       table.integer('gpu_temp').unsigned().notNullable()
 
-      table.integer('ram_usage').unsigned().notNullable()
-      table.integer('swap_usage').unsigned().nullable()    // % swap em escala 0-1000
-      table.integer('disk_usage').unsigned().nullable()    // % de uso do disco ativo (opcional)
+      // --- RAM & SWAP (Escala Absoluta x10) ---
+      // Ex.: 165 = 16.5 GB. Usamos integer para otimizar espaço como nos dados anteriores.
+      table.integer('ram_total_gb').unsigned().nullable()
+      table.integer('ram_used_gb').unsigned().nullable()
+
+      table.integer('swap_total_gb').unsigned().nullable()
+      table.integer('swap_used_gb').unsigned().nullable()
+
+      // --- DISCO E I/O (Mbps)---
+      table.text('disks_info').nullable()
+      table.integer('disk_read_mbps').unsigned().nullable()
+      table.integer('disk_write_mbps').unsigned().nullable()
 
       // --- REDE (Mbps) ---
-      table.integer('download_usage').unsigned().nullable() // Opcional: nem sempre disponível
-      table.integer('upload_usage').unsigned().nullable() // Opcional: nem sempre disponível
+      table.integer('download_mbps').unsigned().nullable()
+      table.integer('upload_mbps').unsigned().nullable()
 
       table.integer('mobo_temperature').unsigned().nullable()
 
-      // Contexto - Essencial para auditoria
-      table.string('logged_user_name').notNullable()
-
-      // Sem created_at: o ID auto-increment serve como sequência temporal (1 telemetria/segundo)
+      // Contexto - Apenas usuários ativos
+      table.text('active_users').nullable()
     })
   }
 

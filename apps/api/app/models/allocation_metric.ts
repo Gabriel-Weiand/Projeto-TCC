@@ -22,21 +22,25 @@ export default class AllocationMetric extends BaseModel {
   @column() declare avgGpuTemp: number
   @column() declare maxGpuTemp: number
 
-  // --- RAM ---
-  @column() declare avgRamUsage: number
-  @column() declare maxRamUsage: number
+  // --- RAM E SWAP ---
+  @column() declare avgRamUsedGb: number | null
+  @column() declare maxRamUsedGb: number | null
+  @column() declare avgSwapUsedGb: number | null
+  @column() declare maxSwapUsedGb: number | null
 
-  // --- DISCO (nullable: nem sempre disponível) ---
-  @column() declare avgDiskUsage: number | null
-  @column() declare maxDiskUsage: number | null
+  // --- DISCO ---
+  @column() declare avgDiskReadMbps: number | null
+  @column() declare maxDiskReadMbps: number | null
+  @column() declare avgDiskWriteMbps: number | null
+  @column() declare maxDiskWriteMbps: number | null
 
-  // --- REDE (nullable: nem sempre disponível) ---
-  @column() declare avgDownloadUsage: number | null
-  @column() declare maxDownloadUsage: number | null
-  @column() declare avgUploadUsage: number | null
-  @column() declare maxUploadUsage: number | null
+  // --- REDE ---
+  @column() declare avgDownloadMbps: number | null
+  @column() declare maxDownloadMbps: number | null
+  @column() declare avgUploadMbps: number | null
+  @column() declare maxUploadMbps: number | null
 
-  // --- MOBO (nullable: nem sempre disponível) ---
+  // --- MOBO ---
   @column() declare avgMoboTemp: number | null
   @column() declare maxMoboTemp: number | null
 

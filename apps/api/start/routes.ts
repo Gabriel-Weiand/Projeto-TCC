@@ -24,170 +24,169 @@ router
   .prefix('api')
 
 /**
- * API v1 - Frontend Routes
+ * API v1
  */
+
 router
   .group(() => {
-    // ========================================
-    // PUBLIC ROUTES
-    // ========================================
-    router.post('login', [AuthController, 'login']).as('auth.login')
+    // Rotas Frontend
+    router.group(() => {
+      // ========================================
+      // PUBLIC ROUTES
+      // ========================================
+      router.post('login', [AuthController, 'login']).as('auth.login')
 
-    // ========================================
-    // AUTHENTICATED ROUTES
-    // ========================================
+      // ========================================
+      // AUTHENTICATED ROUTES
+      // ========================================
+      router
+        .group(() => {
+          // --- Auth & Profile ---
+          router.delete('logout', [AuthController, 'logout']).as('auth.logout')
+          router.get('me', [AuthController, 'me']).as('auth.me')
+
+          // --- Users (Admin Only) ---
+          router
+            .group(() => {
+              router.post('/', [UsersController, 'store']).as('users.store')
+              router.get('/', [UsersController, 'index']).as('users.index')
+              router.get('/:id', [UsersController, 'show']).as('users.show')
+              router.delete('/:id', [UsersController, 'destroy']).as('users.destroy')
+              router
+                .get('/:id/allocations', [AllocationsController, 'userHistory'])
+                .as('users.allocations')
+            })
+            .prefix('users')
+            .where('id', router.matchers.number())
+            .use(middleware.isAdmin()) // Admin Only
+
+          // --- Users Update (General - each user updates their own) ---
+          router
+            .put('/users/:id', [UsersController, 'update'])
+            .as('users.update')
+            .where('id', router.matchers.number())
+
+          // --- Machines (GET list + show: General | Mutations: Admin Only) ---
+          router.get('/machines', [MachinesController, 'index']).as('machines.index')
+          router
+            .get('/machines/:id', [MachinesController, 'show'])
+            .as('machines.show')
+            .where('id', router.matchers.number())
+
+          router
+            .group(() => {
+              router.post('/', [MachinesController, 'store']).as('machines.store')
+              router.put('/:id', [MachinesController, 'update']).as('machines.update')
+              router.delete('/:id', [MachinesController, 'destroy']).as('machines.destroy')
+              router
+                .get('/:id/telemetry', [MachinesController, 'telemetry'])
+                .as('machines.telemetry')
+              router
+                .get('/:id/telemetry/stream', [MachinesController, 'telemetryStream'])
+                .as('machines.telemetryStream')
+              router
+                .post('/:id/regenerate-token', [MachinesController, 'regenerateToken'])
+                .as('machines.regenerateToken')
+            })
+            .prefix('machines')
+            .where('id', router.matchers.number())
+            .use(middleware.isAdmin()) // Admin Only
+
+          // --- Machines Allocations (General - anonimizado para users) ---
+          router
+            .get('/machines/:id/allocations', [AllocationsController, 'machineHistory'])
+            .as('machines.allocations')
+            .where('id', router.matchers.number())
+
+          // --- SSH Sessions (Admin only) ---
+          router
+            .group(() => {
+              router.get('/', [SshSessionsController, 'index']).as('ssh.sessions.index')
+              router
+                .delete('/:id', [SshSessionsController, 'destroy'])
+                .as('ssh.sessions.destroy')
+                .where('id', router.matchers.number())
+            })
+            .prefix('ssh-sessions')
+            .use(middleware.isAdmin())
+
+          // --- Allocations (Mixed Permissions) ---
+          router
+            .group(() => {
+              router.post('/', [AllocationsController, 'store']).as('allocations.store') // General
+              router.get('/', [AllocationsController, 'index']).as('allocations.index') // General
+              router.patch('/:id', [AllocationsController, 'update']).as('allocations.update') // General
+              router
+                .delete('/:id', [AllocationsController, 'softDelete'])
+                .as('allocations.softDelete') // General (user soft-delete)
+              router
+                .get('/:id/summary', [AllocationsController, 'getSessionSummary'])
+                .as('allocations.summary.show') // General
+              router
+                .post('/:id/ssh-access', [AllocationsController, 'requestSshAccess'])
+                .as('allocations.sshAccess')
+            })
+            .prefix('allocations')
+            .where('id', router.matchers.number())
+
+          // --- Allocations Summary (Admin Only) ---
+          router
+            .post('allocations/:id/summary', [AllocationsController, 'summarizeSession'])
+            .as('allocations.summary.create')
+            .where('id', router.matchers.number())
+            .use(middleware.isAdmin()) // Admin Only
+
+          // --- Maintenance (Admin Only) ---
+          router
+            .group(() => {
+              router
+                .delete('telemetries/:telemetryId', [TelemetriesController, 'destroy'])
+                .as('maintenance.telemetry.destroy')
+              router
+                .delete('metrics/:metricId', [AllocationMetricsController, 'destroy'])
+                .as('maintenance.metric.destroy')
+            })
+            .prefix('maintenance')
+            .use(middleware.isAdmin()) // Admin Only
+
+          // --- System Prune (Admin Only) ---
+          router
+            .group(() => {
+              router
+                .delete('telemetries', [SystemController, 'pruneTelemetries'])
+                .as('system.prune.telemetries')
+              router
+                .delete('allocations', [SystemController, 'pruneAllocations'])
+                .as('system.prune.allocations')
+              router
+                .delete('metrics', [SystemController, 'pruneMetrics'])
+                .as('system.prune.metrics')
+            })
+            .prefix('system/prune')
+            .use(middleware.isAdmin()) // Admin Only
+        })
+        .use(middleware.auth())
+    })
+
+    /**
+     * API v1 - Machine Agent Routes
+     * Todas as rotas requerem autenticação via token da máquina.
+     */
     router
       .group(() => {
-        // --- Auth & Profile ---
-        router.delete('logout', [AuthController, 'logout']).as('auth.logout')
-        router.get('me', [AuthController, 'me']).as('auth.me')
+        // --- Heartbeat (inclui should-block e info da alocação atual) ---
+        router.post('heartbeat', [AgentController, 'heartbeat']).as('agent.heartbeat')
 
-        // --- Users (Admin Only) ---
-        router
-          .group(() => {
-            router.post('/', [UsersController, 'store']).as('users.store')
-            router.get('/', [UsersController, 'index']).as('users.index')
-            router.get('/:id', [UsersController, 'show']).as('users.show')
-            router.delete('/:id', [UsersController, 'destroy']).as('users.destroy')
-            router
-              .get('/:id/allocations', [AllocationsController, 'userHistory'])
-              .as('users.allocations')
-          })
-          .prefix('users')
-          .where('id', router.matchers.number())
-          .use(middleware.isAdmin()) // Admin Only
+        // --- Sync & Telemetria ---
+        router.put('sync-specs', [AgentController, 'syncSpecs']).as('agent.syncSpecs')
+        router.post('telemetry', [AgentController, 'telemetry']).as('agent.telemetry')
 
-        // --- Users Update (General - each user updates their own) ---
-        router
-          .put('/users/:id', [UsersController, 'update'])
-          .as('users.update')
-          .where('id', router.matchers.number())
-
-        // --- Machines (GET list + show: General | Mutations: Admin Only) ---
-        router.get('/machines', [MachinesController, 'index']).as('machines.index')
-        router
-          .get('/machines/:id', [MachinesController, 'show'])
-          .as('machines.show')
-          .where('id', router.matchers.number())
-
-        router
-          .group(() => {
-            router.post('/', [MachinesController, 'store']).as('machines.store')
-            router.put('/:id', [MachinesController, 'update']).as('machines.update')
-            router.delete('/:id', [MachinesController, 'destroy']).as('machines.destroy')
-            router.get('/:id/telemetry', [MachinesController, 'telemetry']).as('machines.telemetry')
-            router
-              .get('/:id/telemetry/stream', [MachinesController, 'telemetryStream'])
-              .as('machines.telemetryStream')
-            router
-              .post('/:id/regenerate-token', [MachinesController, 'regenerateToken'])
-              .as('machines.regenerateToken')
-          })
-          .prefix('machines')
-          .where('id', router.matchers.number())
-          .use(middleware.isAdmin()) // Admin Only
-
-        // --- Machines Allocations (General - anonimizado para users) ---
-        router
-          .get('/machines/:id/allocations', [AllocationsController, 'machineHistory'])
-          .as('machines.allocations')
-          .where('id', router.matchers.number())
-
-        // --- Allocations (Mixed Permissions) ---
-        router
-          .group(() => {
-            router.post('/', [AllocationsController, 'store']).as('allocations.store') // General
-            router.get('/', [AllocationsController, 'index']).as('allocations.index') // General
-            router.patch('/:id', [AllocationsController, 'update']).as('allocations.update') // General
-            router
-              .delete('/:id', [AllocationsController, 'softDelete'])
-              .as('allocations.softDelete') // General (user soft-delete)
-            router
-              .get('/:id/summary', [AllocationsController, 'getSessionSummary'])
-              .as('allocations.summary.show') // General
-          })
-          .prefix('allocations')
-          .where('id', router.matchers.number())
-
-        // --- Allocations Summary (Admin Only) ---
-        router
-          .post('allocations/:id/summary', [AllocationsController, 'summarizeSession'])
-          .as('allocations.summary.create')
-          .where('id', router.matchers.number())
-          .use(middleware.isAdmin()) // Admin Only
-
-        // --- Maintenance (Admin Only) ---
-        router
-          .group(() => {
-            router
-              .delete('telemetries/:telemetryId', [TelemetriesController, 'destroy'])
-              .as('maintenance.telemetry.destroy')
-            router
-              .delete('metrics/:metricId', [AllocationMetricsController, 'destroy'])
-              .as('maintenance.metric.destroy')
-          })
-          .prefix('maintenance')
-          .use(middleware.isAdmin()) // Admin Only
-
-        // --- System Prune (Admin Only) ---
-        router
-          .group(() => {
-            router
-              .delete('telemetries', [SystemController, 'pruneTelemetries'])
-              .as('system.prune.telemetries')
-            router
-              .delete('allocations', [SystemController, 'pruneAllocations'])
-              .as('system.prune.allocations')
-            router.delete('metrics', [SystemController, 'pruneMetrics']).as('system.prune.metrics')
-          })
-          .prefix('system/prune')
-          .use(middleware.isAdmin()) // Admin Only
+        // --- SSH Session Management (Server Agent) ---
+        router.post('ssh/setup', [AgentController, 'sshSetupReport']).as('agent.ssh.setup')
+        router.post('ssh/teardown', [AgentController, 'sshTeardownReport']).as('agent.ssh.teardown')
+        router.get('ssh/pending', [AgentController, 'sshPendingRequests']).as('agent.ssh.pending')
       })
-      .use(middleware.auth())
+      .prefix('agent')
+      .use(middleware.machineAuth())
   })
   .prefix('api/v1')
-
-/**
- * API Agent - Machine Agent Routes
- * Todas as rotas requerem autenticação via token da máquina.
- */
-router
-  .group(() => {
-    // --- Heartbeat (inclui should-block e info da alocação atual) ---
-    router.post('heartbeat', [AgentController, 'heartbeat']).as('agent.heartbeat')
-
-    // --- Sync & Telemetria ---
-    router.put('sync-specs', [AgentController, 'syncSpecs']).as('agent.syncSpecs')
-    router.post('telemetry', [AgentController, 'telemetry']).as('agent.telemetry')
-
-    // --- SSH Session Management (Server Agent) ---
-    router.post('ssh/setup', [AgentController, 'sshSetupReport']).as('agent.ssh.setup')
-    router.post('ssh/teardown', [AgentController, 'sshTeardownReport']).as('agent.ssh.teardown')
-    router.get('ssh/pending', [AgentController, 'sshPendingRequests']).as('agent.ssh.pending')
-  })
-  .prefix('api/agent')
-  .use(middleware.machineAuth())
-
-/**
- * API v1 - SSH Access Routes (authenticated user requests)
- */
-router
-  .group(() => {
-    router
-      .post('allocations/:id/ssh-access', [AllocationsController, 'requestSshAccess'])
-      .as('allocations.sshAccess')
-      .where('id', router.matchers.number())
-
-    // --- Gestão de sessões SSH (admin: lista e revoga) ---
-    router
-      .group(() => {
-        router.get('ssh-sessions', [SshSessionsController, 'index']).as('ssh.sessions.index')
-        router
-          .delete('ssh-sessions/:id', [SshSessionsController, 'destroy'])
-          .as('ssh.sessions.destroy')
-          .where('id', router.matchers.number())
-      })
-      .use(middleware.isAdmin())
-  })
-  .prefix('api/v1')
-  .use(middleware.auth())

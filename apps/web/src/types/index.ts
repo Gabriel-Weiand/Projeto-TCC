@@ -30,7 +30,8 @@ export interface Machine {
   macAddress?: string;
   status: "available" | "occupied" | "maintenance" | "offline";
   lastSeenAt: string | null;
-  loggedUser: string | null;
+  activeUsers: any[] | null;
+  customAgentConfig?: any | null;
   createdAt: string;
   updatedAt: string | null;
   token?: string;
@@ -39,16 +40,23 @@ export interface Machine {
 }
 
 export interface RealtimeTelemetry {
+  timestamp: string; // Garantido agora pelo agente
   cpuUsage: number;
   cpuTemp: number;
+  cpuFreqMhz?: number | null;
   gpuUsage: number;
   gpuTemp: number;
-  ramUsage: number;
-  diskUsage: number | null;
-  moboTemperature: number | null;
-  downloadUsage: number | null;
-  uploadUsage: number | null;
-  timestamp: string;
+  ramTotalGb?: number | null;
+  ramUsedGb?: number | null;
+  swapTotalGb?: number | null;
+  swapUsedGb?: number | null;
+  disks?: any[] | null;
+  diskReadMbps: number | null;
+  diskWriteMbps: number | null;
+  downloadMbps: number | null;
+  uploadMbps: number | null;
+  moboTemperature?: number | null;
+  activeUsers: any[] | null;
 }
 
 export interface Allocation {
@@ -82,8 +90,17 @@ export interface AllocationMetric {
   maxGpuTemp: number;
   avgRamUsage: number;
   maxRamUsage: number;
-  avgDiskUsage: number | null;
-  maxDiskUsage: number | null;
+  // Atualizado para disco I/O
+  avgDiskReadMbps: number | null;
+  maxDiskReadMbps: number | null;
+  avgDiskWriteMbps: number | null;
+  maxDiskWriteMbps: number | null;
+  avgDownloadMbps: number | null;
+  maxDownloadMbps: number | null;
+  avgUploadMbps: number | null;
+  maxUploadMbps: number | null;
+  avgMoboTemp: number | null;
+  maxMoboTemp: number | null;
   sessionDurationMinutes: number;
   createdAt: string;
   updatedAt: string | null;
