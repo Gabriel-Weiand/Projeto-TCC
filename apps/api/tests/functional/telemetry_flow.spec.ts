@@ -27,17 +27,25 @@ function generateTelemetry(tick: number, intensity: number = 0.5) {
 
   const clamp = (v: number, min: number, max: number) => Math.round(Math.min(max, Math.max(min, v)))
 
+  const timestamp = new Date(Date.now() + tick * 5000).toISOString()
+  const ramTotalGb = 320
+  const ramUsedGb = clamp(80 + factor * 200 + (tick % 6) * 4, 20, ramTotalGb)
+  const diskReadMbps = clamp(50 + factor * 200 + (tick % 5) * 5, 0, 1000)
+  const diskWriteMbps = clamp(30 + factor * 120 + (tick % 4) * 4, 0, 800)
+
   return {
+    timestamp,
     cpuUsage: clamp(factor * 850 + (tick % 5) * 10, 0, 1000),
     cpuTemp: clamp(400 + factor * 350 + (tick % 3) * 15, 200, 1000),
     gpuUsage: clamp(factor * 700 + (tick % 4) * 20, 0, 1000),
     gpuTemp: clamp(350 + factor * 300 + (tick % 3) * 10, 200, 950),
-    ramUsage: clamp(300 + factor * 500 + (tick % 6) * 8, 100, 1000),
-    diskUsage: clamp(200 + factor * 100, 100, 1000),
-    downloadUsage: clamp(factor * 80 + (tick % 5) * 5, 0, 500),
-    uploadUsage: clamp(factor * 30 + (tick % 3) * 3, 0, 200),
+    ramTotalGb,
+    ramUsedGb,
+    diskReadMbps,
+    diskWriteMbps,
+    downloadMbps: clamp(factor * 80 + (tick % 5) * 5, 0, 500),
+    uploadMbps: clamp(factor * 30 + (tick % 3) * 3, 0, 200),
     moboTemperature: clamp(300 + factor * 150, 200, 700),
-    loggedUserName: 'aluno.silva',
   }
 }
 
@@ -87,12 +95,10 @@ test.group('Fluxo Completo de Telemetria', (group) => {
 
     const machine = await Machine.create({
       name: 'PC-LAB-FLOW-01',
-      macAddress: 'AA:BB:CC:04:01:01',
       description: 'Máquina fluxo completo telemetria',
       cpuModel: 'Intel Core i7-12700K',
       gpuModel: 'NVIDIA RTX 3060',
       totalRamGb: 32,
-      totalDiskGb: 512,
       status: 'available',
     })
 
@@ -169,7 +175,6 @@ test.group('Fluxo Completo de Telemetria', (group) => {
 
     const machine = await Machine.create({
       name: 'PC-DUP-01',
-      macAddress: 'AA:BB:CC:04:01:02',
       description: 'Máquina teste flush duplo',
       status: 'available',
     })
@@ -228,11 +233,9 @@ test.group('Telemetria Data-Heavy', (group) => {
     for (let m = 0; m < 10; m++) {
       const machine = await Machine.create({
         name: `PC-HEAVY-${String(m + 1).padStart(2, '0')}`,
-        macAddress: `AA:BB:CC:04:02:${String(m + 1).padStart(2, '0')}`,
         description: `Máquina heavy test ${m + 1}`,
         cpuModel: 'AMD Ryzen 9 5900X',
         totalRamGb: 64,
-        totalDiskGb: 1024,
         status: 'available',
       })
 
@@ -283,11 +286,9 @@ test.group('Telemetria Data-Heavy', (group) => {
 
     const machine = await Machine.create({
       name: 'PC-DIRETO-01',
-      macAddress: 'AA:BB:CC:04:01:03',
       description: 'Máquina insert direto',
       cpuModel: 'Intel i9-13900K',
       totalRamGb: 64,
-      totalDiskGb: 2048,
       status: 'available',
     })
 
@@ -351,11 +352,9 @@ test.group('AllocationMetric - Resumo de Sessão', (group) => {
 
     const machine = await Machine.create({
       name: 'PC-RESUMO-01',
-      macAddress: 'AA:BB:CC:04:01:04',
       description: 'Máquina resumo de sessão',
       cpuModel: 'Intel i7-12700K',
       totalRamGb: 32,
-      totalDiskGb: 512,
       status: 'available',
     })
 
@@ -385,14 +384,16 @@ test.group('AllocationMetric - Resumo de Sessão', (group) => {
     assert.isNumber(metric.maxCpuTemp)
     assert.isNumber(metric.avgGpuUsage)
     assert.isNumber(metric.maxGpuUsage)
-    assert.isNumber(metric.avgRamUsage)
-    assert.isNumber(metric.maxRamUsage)
-    assert.isNumber(metric.avgDiskUsage)
-    assert.isNumber(metric.maxDiskUsage)
-    assert.isNumber(metric.avgDownloadUsage)
-    assert.isNumber(metric.maxDownloadUsage)
-    assert.isNumber(metric.avgUploadUsage)
-    assert.isNumber(metric.maxUploadUsage)
+    assert.isNumber(metric.avgRamUsedGb)
+    assert.isNumber(metric.maxRamUsedGb)
+    assert.isNumber(metric.avgDiskReadMbps)
+    assert.isNumber(metric.maxDiskReadMbps)
+    assert.isNumber(metric.avgDiskWriteMbps)
+    assert.isNumber(metric.maxDiskWriteMbps)
+    assert.isNumber(metric.avgDownloadMbps)
+    assert.isNumber(metric.maxDownloadMbps)
+    assert.isNumber(metric.avgUploadMbps)
+    assert.isNumber(metric.maxUploadMbps)
     assert.isNumber(metric.avgMoboTemp)
     assert.isNumber(metric.maxMoboTemp)
     assert.equal(metric.sessionDurationMinutes, 10)
@@ -403,10 +404,11 @@ test.group('AllocationMetric - Resumo de Sessão', (group) => {
     assert.isAtMost(metric.avgCpuTemp, metric.maxCpuTemp)
     assert.isAtMost(metric.avgGpuUsage, metric.maxGpuUsage)
     assert.isAtMost(metric.avgGpuTemp, metric.maxGpuTemp)
-    assert.isAtMost(metric.avgRamUsage, metric.maxRamUsage)
-    assert.isAtMost(metric.avgDiskUsage, metric.maxDiskUsage)
-    assert.isAtMost(metric.avgDownloadUsage, metric.maxDownloadUsage)
-    assert.isAtMost(metric.avgUploadUsage, metric.maxUploadUsage)
+    assert.isAtMost(metric.avgRamUsedGb, metric.maxRamUsedGb)
+    assert.isAtMost(metric.avgDiskReadMbps, metric.maxDiskReadMbps)
+    assert.isAtMost(metric.avgDiskWriteMbps, metric.maxDiskWriteMbps)
+    assert.isAtMost(metric.avgDownloadMbps, metric.maxDownloadMbps)
+    assert.isAtMost(metric.avgUploadMbps, metric.maxUploadMbps)
     assert.isAtMost(metric.avgMoboTemp, metric.maxMoboTemp)
 
     // Float: verifica que as médias não são inteiras arredondadas (temos decimais)
@@ -415,7 +417,7 @@ test.group('AllocationMetric - Resumo de Sessão', (group) => {
       metric.avgCpuUsage,
       metric.avgCpuTemp,
       metric.avgGpuUsage,
-      metric.avgRamUsage,
+      metric.avgRamUsedGb,
     ].some((v) => v !== Math.floor(v))
     assert.isTrue(hasDecimal, 'Médias devem conter valores float com casas decimais')
   })
@@ -430,7 +432,6 @@ test.group('AllocationMetric - Resumo de Sessão', (group) => {
 
     const machine = await Machine.create({
       name: 'PC-CALC-01',
-      macAddress: 'AA:BB:CC:04:01:05',
       description: 'Máquina cálculo manual',
       status: 'available',
     })
@@ -450,10 +451,12 @@ test.group('AllocationMetric - Resumo de Sessão', (group) => {
         cpuTemp: 400,
         gpuUsage: 200,
         gpuTemp: 350,
-        ramUsage: 300,
-        diskUsage: 150,
-        downloadUsage: 50,
-        uploadUsage: 10,
+        ramTotalGb: 320,
+        ramUsedGb: 300,
+        diskReadMbps: 150,
+        diskWriteMbps: 150,
+        downloadMbps: 50,
+        uploadMbps: 10,
         moboTemperature: 300,
       },
       {
@@ -461,10 +464,12 @@ test.group('AllocationMetric - Resumo de Sessão', (group) => {
         cpuTemp: 500,
         gpuUsage: 400,
         gpuTemp: 450,
-        ramUsage: 500,
-        diskUsage: 200,
-        downloadUsage: 80,
-        uploadUsage: 20,
+        ramTotalGb: 320,
+        ramUsedGb: 500,
+        diskReadMbps: 200,
+        diskWriteMbps: 200,
+        downloadMbps: 80,
+        uploadMbps: 20,
         moboTemperature: 350,
       },
       {
@@ -472,10 +477,12 @@ test.group('AllocationMetric - Resumo de Sessão', (group) => {
         cpuTemp: 600,
         gpuUsage: 600,
         gpuTemp: 550,
-        ramUsage: 700,
-        diskUsage: 250,
-        downloadUsage: 120,
-        uploadUsage: 40,
+        ramTotalGb: 320,
+        ramUsedGb: 700,
+        diskReadMbps: 250,
+        diskWriteMbps: 250,
+        downloadMbps: 120,
+        uploadMbps: 40,
         moboTemperature: 400,
       },
       {
@@ -483,10 +490,12 @@ test.group('AllocationMetric - Resumo de Sessão', (group) => {
         cpuTemp: 700,
         gpuUsage: 800,
         gpuTemp: 650,
-        ramUsage: 900,
-        diskUsage: 300,
-        downloadUsage: 60,
-        uploadUsage: 15,
+        ramTotalGb: 320,
+        ramUsedGb: 900,
+        diskReadMbps: 300,
+        diskWriteMbps: 300,
+        downloadMbps: 60,
+        uploadMbps: 15,
         moboTemperature: 500,
       },
       {
@@ -494,16 +503,23 @@ test.group('AllocationMetric - Resumo de Sessão', (group) => {
         cpuTemp: 450,
         gpuUsage: 300,
         gpuTemp: 400,
-        ramUsage: 400,
-        diskUsage: 180,
-        downloadUsage: 70,
-        uploadUsage: 25,
+        ramTotalGb: 320,
+        ramUsedGb: 400,
+        diskReadMbps: 180,
+        diskWriteMbps: 180,
+        downloadMbps: 70,
+        uploadMbps: 25,
         moboTemperature: 320,
       },
     ]
 
+    const baseTs = Date.now()
     await Telemetry.createMany(
-      controlled.map((d) => ({ allocationId: allocation.id, ...d, loggedUserName: 'test' }))
+      controlled.map((d, idx) => ({
+        allocationId: allocation.id,
+        timestamp: new Date(baseTs + idx * 5000).toISOString(),
+        ...d,
+      }))
     )
 
     // Cálculo manual esperado
@@ -537,7 +553,6 @@ test.group('AllocationMetric - Resumo de Sessão', (group) => {
 
     const machine = await Machine.create({
       name: 'PC-NODUP',
-      macAddress: 'AA:BB:CC:04:01:06',
       description: 'Máquina teste duplicação',
       status: 'available',
     })
@@ -572,7 +587,6 @@ test.group('AllocationMetric - Resumo de Sessão', (group) => {
 
     const machine = await Machine.create({
       name: 'PC-NOTEL',
-      macAddress: 'AA:BB:CC:04:01:07',
       description: 'Máquina teste sem telemetrias',
       status: 'available',
     })
@@ -618,7 +632,6 @@ test.group('AllocationMetric - Resumo de Sessão', (group) => {
 
     const machine = await Machine.create({
       name: 'PC-READ',
-      macAddress: 'AA:BB:CC:04:01:08',
       description: 'Máquina teste leitura resumo',
       status: 'available',
     })
@@ -671,7 +684,6 @@ test.group('Manutenção - Exclusão de Telemetrias e Métricas', (group) => {
 
     const machine = await Machine.create({
       name: 'PC-DEL-01',
-      macAddress: 'AA:BB:CC:04:01:09',
       description: 'Máquina teste exclusão telemetria',
       status: 'available',
     })
@@ -712,7 +724,6 @@ test.group('Manutenção - Exclusão de Telemetrias e Métricas', (group) => {
 
     const machine = await Machine.create({
       name: 'PC-DELMET',
-      macAddress: 'AA:BB:CC:04:01:0A',
       description: 'Máquina teste exclusão métrica',
       status: 'available',
     })
@@ -763,7 +774,6 @@ test.group('Manutenção - Exclusão de Telemetrias e Métricas', (group) => {
 
     const machine = await Machine.create({
       name: 'PC-CASCADE',
-      macAddress: 'AA:BB:CC:04:01:0B',
       description: 'Máquina teste cascade',
       status: 'available',
     })
@@ -788,14 +798,16 @@ test.group('Manutenção - Exclusão de Telemetrias e Métricas', (group) => {
       maxGpuUsage: 700,
       avgGpuTemp: 450.2,
       maxGpuTemp: 650,
-      avgRamUsage: 600.1,
-      maxRamUsage: 900,
-      avgDiskUsage: 250.8,
-      maxDiskUsage: 350,
-      avgDownloadUsage: 65.4,
-      maxDownloadUsage: 120,
-      avgUploadUsage: 20.3,
-      maxUploadUsage: 45,
+      avgRamUsedGb: 600.1,
+      maxRamUsedGb: 900,
+      avgDiskReadMbps: 250.8,
+      maxDiskReadMbps: 350,
+      avgDiskWriteMbps: 190.4,
+      maxDiskWriteMbps: 300,
+      avgDownloadMbps: 65.4,
+      maxDownloadMbps: 120,
+      avgUploadMbps: 20.3,
+      maxUploadMbps: 45,
       avgMoboTemp: 380.6,
       maxMoboTemp: 500,
       sessionDurationMinutes: 10,
@@ -855,12 +867,10 @@ test.group('Fluxo End-to-End via API do Agente', (group) => {
 
     const machine = await Machine.create({
       name: 'PC-E2E-01',
-      macAddress: 'AA:BB:CC:04:01:0C',
       description: 'Máquina end-to-end agente',
       cpuModel: 'AMD Ryzen 7 5800X',
       gpuModel: 'RTX 3070',
       totalRamGb: 32,
-      totalDiskGb: 1024,
       status: 'available',
     })
 
@@ -878,10 +888,9 @@ test.group('Fluxo End-to-End via API do Agente', (group) => {
       const telData = generateTelemetry(i, 0.4 + i * 0.02) // Carga crescente
 
       const telResponse = await client
-        .post('/api/agent/telemetry')
+        .post('/api/v1/agent/telemetry')
         .header('Authorization', `Bearer ${machine.token}`)
-        .header('X-Machine-Mac', machine.macAddress)
-        .json(telData)
+        .json({ data: [telData] })
 
       telResponse.assertStatus(204)
     }
@@ -931,17 +940,15 @@ test.group('Fluxo End-to-End via API do Agente', (group) => {
   test('telemetria sem alocação ativa é descartada (não persiste)', async ({ client, assert }) => {
     const machine = await Machine.create({
       name: 'PC-NO-ALLOC',
-      macAddress: 'AA:BB:CC:04:01:0D',
       description: 'Máquina teste sem alocação',
       status: 'offline',
     })
 
     // Envia telemetria SEM alocação ativa
     const response = await client
-      .post('/api/agent/telemetry')
+      .post('/api/v1/agent/telemetry')
       .header('Authorization', `Bearer ${machine.token}`)
-      .header('X-Machine-Mac', machine.macAddress)
-      .json(generateTelemetry(0, 0.5))
+      .json({ data: [generateTelemetry(0, 0.5)] })
 
     // Deve retornar 204 (aceita mas descarta)
     response.assertStatus(204)
@@ -979,7 +986,6 @@ test.group('Ring Buffer de Telemetria', (group) => {
 
     const machine = await Machine.create({
       name: 'PC-RING-01',
-      macAddress: 'AA:BB:CC:05:01:01',
       description: 'Máquina ring buffer',
       status: 'available',
     })
@@ -1018,7 +1024,6 @@ test.group('Ring Buffer de Telemetria', (group) => {
 
     const machine = await Machine.create({
       name: 'PC-RING-MAX',
-      macAddress: 'AA:BB:CC:05:01:02',
       description: 'Máquina ring buffer max',
       status: 'available',
     })
@@ -1058,7 +1063,6 @@ test.group('Ring Buffer de Telemetria', (group) => {
 
     const machine = await Machine.create({
       name: 'PC-RING-COUNT',
-      macAddress: 'AA:BB:CC:05:01:03',
       description: 'Máquina ring buffer count',
       status: 'available',
     })
@@ -1102,14 +1106,12 @@ test.group('Ring Buffer de Telemetria', (group) => {
 
     const machine1 = await Machine.create({
       name: 'PC-ISO-01',
-      macAddress: 'AA:BB:CC:05:01:04',
       description: 'Máquina isolamento 1',
       status: 'available',
     })
 
     const machine2 = await Machine.create({
       name: 'PC-ISO-02',
-      macAddress: 'AA:BB:CC:05:01:05',
       description: 'Máquina isolamento 2',
       status: 'available',
     })
@@ -1158,7 +1160,6 @@ test.group('Ring Buffer de Telemetria', (group) => {
 
     const machine = await Machine.create({
       name: 'PC-CLEAR-01',
-      macAddress: 'AA:BB:CC:05:01:06',
       description: 'Máquina clear ring',
       status: 'available',
     })
@@ -1212,7 +1213,6 @@ test.group('Telemetry Stream Endpoint', (group) => {
 
     const machine = await Machine.create({
       name: 'PC-STREAM-01',
-      macAddress: 'AA:BB:CC:05:02:01',
       description: 'Máquina stream test',
       status: 'available',
     })
@@ -1246,7 +1246,7 @@ test.group('Telemetry Stream Endpoint', (group) => {
     // Valores devem estar normalizados (0-100, não 0-1000)
     const first = body.entries[0]
     assert.isAtMost(first.cpuUsage, 100)
-    assert.isAtMost(first.ramUsage, 100)
+    assert.isAtLeast(first.ramUsedGb, 0)
     assert.property(first, 'timestamp')
   })
 
@@ -1260,7 +1260,6 @@ test.group('Telemetry Stream Endpoint', (group) => {
 
     const machine = await Machine.create({
       name: 'PC-STREAM-CNT',
-      macAddress: 'AA:BB:CC:05:02:02',
       description: 'Máquina stream count',
       status: 'available',
     })
@@ -1305,7 +1304,6 @@ test.group('Telemetry Stream Endpoint', (group) => {
 
     const machine = await Machine.create({
       name: 'PC-STREAM-EMPTY',
-      macAddress: 'AA:BB:CC:05:02:03',
       description: 'Máquina stream vazia',
       status: 'offline',
     })

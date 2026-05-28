@@ -10,13 +10,33 @@ export default class extends BaseSchema {
       table.string('email', 254).notNullable().unique()
       table.string('password').notNullable()
       table.enum('role', ['user', 'admin']).defaultTo('user').notNullable()
+      table.string('system_username', 64).unique().notNullable() // Alterado
+      table.text('ssh_public_key').nullable()
 
+      table.timestamp('created_at').notNullable()
+      table.timestamp('updated_at').nullable()
+    })
+
+    this.schema.createTable('notifications', (table) => {
+      table.increments('id')
+      table
+        .integer('user_id')
+        .unsigned()
+        .references('id')
+        .inTable('users')
+        .onDelete('CASCADE')
+        .index()
+      table.string('title', 120).notNullable()
+      table.text('message').notNullable()
+      table.boolean('is_read').notNullable().defaultTo(false)
+      table.timestamp('read_at').nullable()
       table.timestamp('created_at').notNullable()
       table.timestamp('updated_at').nullable()
     })
   }
 
   async down() {
+    this.schema.dropTable('notifications')
     this.schema.dropTable(this.tableName)
   }
 }

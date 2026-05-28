@@ -10,18 +10,43 @@ import { DateTime } from 'luxon'
 export function calculateMetrics(telemetries: Telemetry[], allocation: Allocation) {
   const avg = (values: number[]) => values.reduce((a, b) => a + b, 0) / values.length
   const max = (values: number[]) => Math.max(...values)
+  const avgOrNull = (values: number[]) => (values.length > 0 ? avg(values) : null)
+  const maxOrNull = (values: number[]) => (values.length > 0 ? max(values) : null)
 
   const cpuUsages = telemetries.map((t) => t.cpuUsage)
   const cpuTemps = telemetries.map((t) => t.cpuTemp)
   const gpuUsages = telemetries.map((t) => t.gpuUsage)
   const gpuTemps = telemetries.map((t) => t.gpuTemp)
-  const ramUsages = telemetries.map((t) => t.ramUsage)
-  const diskUsages = telemetries.map((t) => t.diskUsage).filter((t): t is number => t !== null)
-  const downloadUsages = telemetries
-    .map((t) => t.downloadUsage)
-    .filter((t): t is number => t !== null)
-  const uploadUsages = telemetries.map((t) => t.uploadUsage).filter((t): t is number => t !== null)
-  const moboTemps = telemetries.map((t) => t.moboTemperature).filter((t): t is number => t !== null)
+  const ramUsed = telemetries
+    .map((t) => t.ramUsedGb)
+    .filter((t): t is number => typeof t === 'number')
+  const swapUsed = telemetries
+    .map((t) => t.swapUsedGb)
+    .filter((t): t is number => typeof t === 'number')
+  const diskRead = telemetries
+    .map((t) => t.diskReadMbps)
+    .filter((t): t is number => typeof t === 'number')
+  const diskWrite = telemetries
+    .map((t) => t.diskWriteMbps)
+    .filter((t): t is number => typeof t === 'number')
+  const download = telemetries
+    .map((t) => t.downloadMbps)
+    .filter((t): t is number => typeof t === 'number')
+  const upload = telemetries
+    .map((t) => t.uploadMbps)
+    .filter((t): t is number => typeof t === 'number')
+  const moboTemps = telemetries
+    .map((t) => t.moboTemperature)
+    .filter((t): t is number => typeof t === 'number')
+  const gpuPower = telemetries
+    .map((t) => t.gpuPowerWatts)
+    .filter((t): t is number => typeof t === 'number')
+  const vramTotal = telemetries
+    .map((t) => t.vramTotalMb)
+    .filter((t): t is number => typeof t === 'number')
+  const vramUsed = telemetries
+    .map((t) => t.vramUsedMb)
+    .filter((t): t is number => typeof t === 'number')
 
   const durationMs = allocation.endTime.diff(allocation.startTime).milliseconds
   const sessionDurationMinutes = Math.round(durationMs / 60000)
@@ -37,19 +62,30 @@ export function calculateMetrics(telemetries: Telemetry[], allocation: Allocatio
     avgGpuTemp: avg(gpuTemps),
     maxGpuTemp: max(gpuTemps),
 
-    avgRamUsage: avg(ramUsages),
-    maxRamUsage: max(ramUsages),
+    avgGpuPowerWatts: avgOrNull(gpuPower),
+    maxGpuPowerWatts: maxOrNull(gpuPower),
+    avgVramTotalMb: avgOrNull(vramTotal),
+    maxVramTotalMb: maxOrNull(vramTotal),
+    avgVramUsedMb: avgOrNull(vramUsed),
+    maxVramUsedMb: maxOrNull(vramUsed),
 
-    avgDiskUsage: diskUsages.length > 0 ? avg(diskUsages) : null,
-    maxDiskUsage: diskUsages.length > 0 ? max(diskUsages) : null,
+    avgRamUsedGb: avgOrNull(ramUsed),
+    maxRamUsedGb: maxOrNull(ramUsed),
+    avgSwapUsedGb: avgOrNull(swapUsed),
+    maxSwapUsedGb: maxOrNull(swapUsed),
 
-    avgDownloadUsage: downloadUsages.length > 0 ? avg(downloadUsages) : null,
-    maxDownloadUsage: downloadUsages.length > 0 ? max(downloadUsages) : null,
-    avgUploadUsage: uploadUsages.length > 0 ? avg(uploadUsages) : null,
-    maxUploadUsage: uploadUsages.length > 0 ? max(uploadUsages) : null,
+    avgDiskReadMbps: avgOrNull(diskRead),
+    maxDiskReadMbps: maxOrNull(diskRead),
+    avgDiskWriteMbps: avgOrNull(diskWrite),
+    maxDiskWriteMbps: maxOrNull(diskWrite),
 
-    avgMoboTemp: moboTemps.length > 0 ? avg(moboTemps) : null,
-    maxMoboTemp: moboTemps.length > 0 ? max(moboTemps) : null,
+    avgDownloadMbps: avgOrNull(download),
+    maxDownloadMbps: maxOrNull(download),
+    avgUploadMbps: avgOrNull(upload),
+    maxUploadMbps: maxOrNull(upload),
+
+    avgMoboTemp: avgOrNull(moboTemps),
+    maxMoboTemp: maxOrNull(moboTemps),
 
     sessionDurationMinutes,
   }

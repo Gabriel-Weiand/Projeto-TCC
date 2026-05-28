@@ -42,11 +42,9 @@ test.group('Timezone — Alocações em UTC', (group) => {
 
     const machine = await Machine.create({
       name: 'PC-TZ-01',
-      macAddress: 'AA:BB:CC:TZ:01:01',
       description: 'Teste timezone',
       cpuModel: 'Intel i5',
       totalRamGb: 8,
-      totalDiskGb: 256,
       status: 'available',
     })
 
@@ -87,11 +85,9 @@ test.group('Timezone — Alocações em UTC', (group) => {
 
     const machine = await Machine.create({
       name: 'PC-TZ-02',
-      macAddress: 'AA:BB:CC:TZ:02:02',
       description: 'Teste timezone 2',
       cpuModel: 'Intel i5',
       totalRamGb: 8,
-      totalDiskGb: 256,
       status: 'available',
     })
 
@@ -125,11 +121,9 @@ test.group('Timezone — Alocações em UTC', (group) => {
 
     const machine = await Machine.create({
       name: 'PC-TZ-03',
-      macAddress: 'AA:BB:CC:TZ:03:03',
       description: 'Teste conflito timezone',
       cpuModel: 'Intel i5',
       totalRamGb: 8,
-      totalDiskGb: 256,
       status: 'available',
     })
 
@@ -175,11 +169,9 @@ test.group('Timezone — Alocações em UTC', (group) => {
 
     const machine = await Machine.create({
       name: 'PC-TZ-FRONT',
-      macAddress: 'AA:BB:CC:TZ:FR:01',
       description: 'Teste frontend sem offset',
       cpuModel: 'Intel i5',
       totalRamGb: 8,
-      totalDiskGb: 256,
       status: 'available',
     })
 
@@ -213,11 +205,9 @@ test.group('Timezone — Alocações em UTC', (group) => {
 
     const machine = await Machine.create({
       name: 'PC-TZ-FIX',
-      macAddress: 'AA:BB:CC:TZ:FX:01',
       description: 'Teste frontend corrigido',
       cpuModel: 'Intel i5',
       totalRamGb: 8,
-      totalDiskGb: 256,
       status: 'available',
     })
 

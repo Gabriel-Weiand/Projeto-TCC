@@ -14,6 +14,9 @@ export interface TelemetryPayload {
   cpuFreqMhz?: number | null
   gpuUsage: number
   gpuTemp: number
+  gpuPowerWatts?: number | null
+  vramTotalMb?: number | null
+  vramUsedMb?: number | null
 
   // Memória e Swap
   ramTotalGb?: number | null

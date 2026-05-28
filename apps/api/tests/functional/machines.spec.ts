@@ -20,20 +20,16 @@ test.group('Machines', (group) => {
     await Machine.createMany([
       {
         name: 'PC-01',
-        macAddress: 'AA:BB:CC:01:01:01',
         description: 'Computador 1',
         cpuModel: 'Intel i5',
         totalRamGb: 8,
-        totalDiskGb: 256,
         status: 'available',
       },
       {
         name: 'PC-02',
-        macAddress: 'AA:BB:CC:01:01:02',
         description: 'Computador 2',
         cpuModel: 'Intel i7',
         totalRamGb: 16,
-        totalDiskGb: 512,
         status: 'available',
       },
     ])
@@ -59,11 +55,9 @@ test.group('Machines', (group) => {
     const response = await client.post('/api/v1/machines').loginAs(admin).json({
       name: 'PC-LAB-NOVO',
       description: 'Nova máquina do lab',
-      macAddress: 'AA:BB:CC:01:02:01',
       cpuModel: 'AMD Ryzen 7',
       gpuModel: 'NVIDIA RTX 4060',
       totalRamGb: 32,
-      totalDiskGb: 1024,
     })
 
     // Assert
@@ -91,7 +85,6 @@ test.group('Machines', (group) => {
       name: 'PC-TENTATIVA',
       cpuModel: 'Intel i5',
       totalRamGb: 8,
-      totalDiskGb: 256,
     })
 
     // Assert
@@ -109,12 +102,10 @@ test.group('Machines', (group) => {
 
     const machine = await Machine.create({
       name: 'PC-DETALHES',
-      macAddress: 'AA:BB:CC:01:01:03',
       description: 'Máquina para teste de detalhes',
       cpuModel: 'Intel i9',
       gpuModel: 'RTX 4090',
       totalRamGb: 64,
-      totalDiskGb: 2048,
       status: 'available',
     })
 
@@ -141,11 +132,9 @@ test.group('Machines', (group) => {
 
     const machine = await Machine.create({
       name: 'PC-ATUALIZAR',
-      macAddress: 'AA:BB:CC:01:01:04',
       description: 'Máquina para teste de atualização',
       cpuModel: 'Intel i5',
       totalRamGb: 8,
-      totalDiskGb: 256,
       status: 'available',
     })
 
@@ -174,11 +163,9 @@ test.group('Machines', (group) => {
 
     const machine = await Machine.create({
       name: 'PC-DELETAR',
-      macAddress: 'AA:BB:CC:01:01:05',
       description: 'Máquina para teste de exclusão',
       cpuModel: 'Intel i3',
       totalRamGb: 4,
-      totalDiskGb: 128,
       status: 'available',
     })
 
@@ -220,11 +207,9 @@ test.group('Machines', (group) => {
 
     const machine = await Machine.create({
       name: 'PC-COM-TOKEN',
-      macAddress: 'AA:BB:CC:01:01:06',
       description: 'Máquina com token visível',
       cpuModel: 'Intel i5',
       totalRamGb: 8,
-      totalDiskGb: 256,
       status: 'available',
     })
 
@@ -248,11 +233,9 @@ test.group('Machines', (group) => {
 
     const machine = await Machine.create({
       name: 'PC-REGENERAR-TOKEN',
-      macAddress: 'AA:BB:CC:01:01:07',
       description: 'Máquina para regenerar token',
       cpuModel: 'Intel i5',
       totalRamGb: 8,
-      totalDiskGb: 256,
       status: 'available',
     })
 
@@ -286,11 +269,9 @@ test.group('Machines', (group) => {
 
     const machine = await Machine.create({
       name: 'PC-REGENERAR-TOKEN',
-      macAddress: 'AA:BB:CC:01:01:08',
       description: 'Máquina para teste de permissão de token',
       cpuModel: 'Intel i5',
       totalRamGb: 8,
-      totalDiskGb: 256,
       status: 'available',
     })
 
@@ -324,11 +305,9 @@ test.group('Machines', (group) => {
 
     const machine = await Machine.create({
       name: 'PC-MANUTENCAO',
-      macAddress: 'AA:BB:CC:01:01:09',
       description: 'Máquina para teste de manutenção',
       cpuModel: 'Intel i5',
       totalRamGb: 8,
-      totalDiskGb: 256,
       status: 'available',
     })
 

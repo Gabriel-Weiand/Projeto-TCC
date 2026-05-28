@@ -19,11 +19,9 @@ test.group('Allocations', (group) => {
 
     const machine = await Machine.create({
       name: 'PC-01',
-      macAddress: 'AA:BB:CC:03:01:01',
       description: 'Computador do lab 1',
       cpuModel: 'Intel i5',
       totalRamGb: 8,
-      totalDiskGb: 256,
       status: 'available',
     })
 
@@ -56,11 +54,9 @@ test.group('Allocations', (group) => {
 
     const machine = await Machine.create({
       name: 'PC-MANUTENCAO',
-      macAddress: 'AA:BB:CC:03:01:02',
       description: 'Máquina em manutenção',
       cpuModel: 'Intel i5',
       totalRamGb: 8,
-      totalDiskGb: 256,
       status: 'maintenance',
     })
 
@@ -92,11 +88,9 @@ test.group('Allocations', (group) => {
 
     const machine = await Machine.create({
       name: 'PC-01',
-      macAddress: 'AA:BB:CC:03:01:03',
       description: 'Computador do lab 1',
       cpuModel: 'Intel i5',
       totalRamGb: 8,
-      totalDiskGb: 256,
       status: 'available',
     })
 
@@ -148,11 +142,9 @@ test.group('Allocations', (group) => {
 
     const machine = await Machine.create({
       name: 'PC-01',
-      macAddress: 'AA:BB:CC:03:01:04',
       description: 'Computador do lab 1',
       cpuModel: 'Intel i5',
       totalRamGb: 8,
-      totalDiskGb: 256,
       status: 'available',
     })
 
@@ -202,11 +194,9 @@ test.group('Allocations', (group) => {
 
     const machine = await Machine.create({
       name: 'PC-01',
-      macAddress: 'AA:BB:CC:03:01:05',
       description: 'Computador do lab 1',
       cpuModel: 'Intel i5',
       totalRamGb: 8,
-      totalDiskGb: 256,
       status: 'available',
     })
 
@@ -254,11 +244,9 @@ test.group('Allocations', (group) => {
 
     const machine = await Machine.create({
       name: 'PC-01',
-      macAddress: 'AA:BB:CC:03:01:06',
       description: 'Computador do lab 1',
       cpuModel: 'Intel i5',
       totalRamGb: 8,
-      totalDiskGb: 256,
       status: 'available',
     })
 

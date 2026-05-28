@@ -28,6 +28,12 @@ export default class User extends compose(BaseModel, AuthFinder) {
   @column()
   declare role: 'user' | 'admin'
 
+  @column()
+  declare systemUsername: string | null
+
+  @column()
+  declare sshPublicKey: string | null
+
   @column.dateTime({ autoCreate: true })
   declare createdAt: DateTime
 

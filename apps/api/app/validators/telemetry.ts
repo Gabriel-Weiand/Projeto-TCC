@@ -14,6 +14,9 @@ const telemetrySchema = vine.object({
   cpuFreqMhz: vine.number().min(0).nullable().optional(),
   gpuUsage: vine.number().min(0).max(1000),
   gpuTemp: vine.number().min(0).max(1500),
+  gpuPowerWatts: vine.number().min(0).nullable().optional(),
+  vramTotalMb: vine.number().min(0).nullable().optional(),
+  vramUsedMb: vine.number().min(0).nullable().optional(),
 
   // Memória e Swap (% e Valores Absolutos em GB*10)
   ramTotalGb: vine.number().min(0).nullable().optional(),

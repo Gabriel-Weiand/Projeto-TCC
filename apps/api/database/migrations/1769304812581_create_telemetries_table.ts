@@ -29,6 +29,9 @@ export default class extends BaseSchema {
       // --- GPU ---
       table.integer('gpu_usage').unsigned().notNullable()
       table.integer('gpu_temp').unsigned().notNullable()
+      table.integer('gpu_power_watts').unsigned().nullable()
+      table.integer('vram_total_gb').unsigned().nullable()
+      table.integer('vram_used_gb').unsigned().nullable()
 
       // --- RAM & SWAP (Escala Absoluta x10) ---
       // Ex.: 165 = 16.5 GB. Usamos integer para otimizar espaço como nos dados anteriores.
@@ -51,6 +54,9 @@ export default class extends BaseSchema {
 
       // Contexto - Apenas usuários ativos
       table.text('active_users').nullable()
+
+      // JSON com as informações dos processos rodando no momento da coleta
+      table.text('processes').nullable()
     })
   }
 

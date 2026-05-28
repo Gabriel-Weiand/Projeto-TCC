@@ -9,12 +9,7 @@ import { autoFinalizeExpired } from '#services/allocation_summarizer'
 /**
  * Helpers reutilizáveis para os testes.
  */
-let macCounter = 0
-
 async function createUserAndMachine(suffix: string) {
-  macCounter++
-  const hex = macCounter.toString(16).padStart(4, '0').toUpperCase()
-
   const user = await User.create({
     fullName: `User ${suffix}`,
     email: `${suffix}@test.com`,
@@ -24,11 +19,9 @@ async function createUserAndMachine(suffix: string) {
 
   const machine = await Machine.create({
     name: `PC-${suffix}`,
-    macAddress: `AA:BB:CC:DD:${hex.slice(0, 2)}:${hex.slice(2, 4)}`,
     description: `Machine ${suffix}`,
     cpuModel: 'Intel i5',
     totalRamGb: 8,
-    totalDiskGb: 256,
     status: 'available',
   })
 

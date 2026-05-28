@@ -27,6 +27,12 @@ export default class extends BaseSchema {
       table.float('max_gpu_usage')
       table.float('avg_gpu_temp')
       table.float('max_gpu_temp')
+      table.float('avg_gpu_power_watts').nullable()
+      table.float('max_gpu_power_watts').nullable()
+      table.float('avg_vram_total_gb').nullable()
+      table.float('max_vram_total_gb').nullable()
+      table.float('avg_vram_used_gb').nullable()
+      table.float('max_vram_used_gb').nullable()
 
       // --- MEMÓRIA (RAM e SWAP) ---
       table.float('avg_ram_used_gb').nullable()

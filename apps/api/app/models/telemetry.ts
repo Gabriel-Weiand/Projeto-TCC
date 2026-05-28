@@ -19,6 +19,9 @@ export default class Telemetry extends BaseModel {
   @column() declare cpuFreqMhz: number | null // MHz inteiro, opcional
   @column() declare gpuUsage: number
   @column() declare gpuTemp: number
+  @column() declare gpuPowerWatts: number | null
+  @column() declare vramTotalMb: number | null
+  @column() declare vramUsedMb: number | null
 
   // Valores absolutos (GB * 10)
   @column() declare ramTotalGb: number | null

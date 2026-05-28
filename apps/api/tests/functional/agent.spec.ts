@@ -12,17 +12,15 @@ test.group('Agent API', (group) => {
     // Arrange
     const machine = await Machine.create({
       name: 'PC-AGENT-01',
-      macAddress: 'AA:BB:CC:02:01:01',
       description: 'Agente teste heartbeat',
       cpuModel: 'Intel i5',
       totalRamGb: 8,
-      totalDiskGb: 256,
       status: 'offline',
     })
 
     // Act
     const response = await client
-      .post('/api/agent/heartbeat')
+      .post('/api/v1/agent/heartbeat')
       .header('Authorization', `Bearer ${machine.token}`)
 
     // Assert
@@ -52,11 +50,9 @@ test.group('Agent API', (group) => {
 
     const machine = await Machine.create({
       name: 'PC-AGENT-02',
-      macAddress: 'AA:BB:CC:02:01:02',
       description: 'Agente teste heartbeat com alocação',
       cpuModel: 'Intel i5',
       totalRamGb: 8,
-      totalDiskGb: 256,
       status: 'available',
     })
 
@@ -71,7 +67,7 @@ test.group('Agent API', (group) => {
 
     // Act
     const response = await client
-      .post('/api/agent/heartbeat')
+      .post('/api/v1/agent/heartbeat')
       .header('Authorization', `Bearer ${machine.token}`)
 
     // Assert
@@ -79,7 +75,7 @@ test.group('Agent API', (group) => {
     response.assertBodyContains({
       currentAllocation: {
         userId: user.id,
-        userEmail: 'teste@teste.com',
+        userName: 'Teste User',
       },
     })
   })
@@ -88,17 +84,15 @@ test.group('Agent API', (group) => {
     // Arrange
     const machine = await Machine.create({
       name: 'PC-MANUTENCAO-2',
-      macAddress: 'AA:BB:CC:02:01:09',
       description: 'Agente teste heartbeat manutenção',
       cpuModel: 'Intel i5',
       totalRamGb: 8,
-      totalDiskGb: 256,
       status: 'maintenance',
     })
 
     // Act
     const response = await client
-      .post('/api/agent/heartbeat')
+      .post('/api/v1/agent/heartbeat')
       .header('Authorization', `Bearer ${machine.token}`)
 
     // Assert
@@ -115,11 +109,9 @@ test.group('Agent API', (group) => {
     // Arrange
     const machine = await Machine.create({
       name: 'PC-AGENT-09',
-      macAddress: 'AA:BB:CC:02:01:0A',
       description: 'Agente teste heartbeat sem alocação',
       cpuModel: 'Intel i5',
       totalRamGb: 8,
-      totalDiskGb: 256,
       status: 'available',
     })
 
@@ -127,7 +119,7 @@ test.group('Agent API', (group) => {
 
     // Act - Envia usuário conectado sem alocação ativa
     const response = await client
-      .post('/api/agent/heartbeat')
+      .post('/api/v1/agent/heartbeat')
       .header('Authorization', `Bearer ${machine.token}`)
       .json({ connectedUsers: ['usuario.sem.alocacao'] })
 
@@ -139,24 +131,22 @@ test.group('Agent API', (group) => {
     })
   })
 
-  test('heartbeat deve atualizar loggedUser com usuários conectados via SSH', async ({
+  test('heartbeat deve atualizar activeUsers com usuários conectados via SSH', async ({
     client,
     assert,
   }) => {
     // Arrange
     const machine = await Machine.create({
       name: 'PC-AGENT-10',
-      macAddress: 'AA:BB:CC:02:01:0F',
       description: 'Agente teste connectedUsers',
       cpuModel: 'Intel i5',
       totalRamGb: 8,
-      totalDiskGb: 256,
       status: 'available',
     })
 
     // Act - Agente reporta que 'aluno.silva' está conectado via SSH
     const response = await client
-      .post('/api/agent/heartbeat')
+      .post('/api/v1/agent/heartbeat')
       .header('Authorization', `Bearer ${machine.token}`)
       .json({ connectedUsers: ['aluno.silva'] })
 
@@ -168,7 +158,7 @@ test.group('Agent API', (group) => {
     })
 
     await machine.refresh()
-    assert.equal(machine.loggedUser, 'aluno.silva')
+    assert.deepEqual(machine.activeUsers, ['aluno.silva'])
     assert.equal(machine.status, 'occupied')
   })
 
@@ -176,20 +166,21 @@ test.group('Agent API', (group) => {
     // Arrange
     const machine = await Machine.create({
       name: 'PC-AGENT-12',
-      macAddress: 'AA:BB:CC:02:01:11',
       description: 'Agente teste sync-specs',
       status: 'available',
     })
 
     // Act
     const response = await client
-      .put('/api/agent/sync-specs')
+      .put('/api/v1/agent/sync-specs')
       .header('Authorization', `Bearer ${machine.token}`)
       .json({
         cpuModel: 'AMD Ryzen 9 5900X',
         gpuModel: 'NVIDIA RTX 4080',
         totalRamGb: 64,
-        totalDiskGb: 2048,
+        disks: [
+          { device: '/dev/sda1', mountpoint: '/', totalGb: 2048, freeGb: 1024 },
+        ],
         ipAddress: '192.168.1.100',
       })
 
@@ -220,11 +211,9 @@ test.group('Agent API', (group) => {
 
     const machine = await Machine.create({
       name: 'PC-AGENT-13',
-      macAddress: 'AA:BB:CC:02:01:12',
       description: 'Agente teste telemetria',
       cpuModel: 'Intel i5',
       totalRamGb: 8,
-      totalDiskGb: 256,
       status: 'offline',
     })
 
@@ -238,19 +227,36 @@ test.group('Agent API', (group) => {
     })
 
     // Act
+    const connectedSince = Math.floor(Date.now() / 1000)
     const response = await client
-      .post('/api/agent/telemetry')
+      .post('/api/v1/agent/telemetry')
       .header('Authorization', `Bearer ${machine.token}`)
       .json({
-        cpuUsage: 450,
-        cpuTemp: 650,
-        gpuUsage: 200,
-        gpuTemp: 550,
-        ramUsage: 600,
-        diskUsage: 300,
-        downloadUsage: 50.5,
-        uploadUsage: 10.2,
-        loggedUserName: 'aluno.teste',
+        data: [
+          {
+            timestamp: new Date().toISOString(),
+            cpuUsage: 450,
+            cpuTemp: 650,
+            gpuUsage: 200,
+            gpuTemp: 550,
+            ramTotalGb: 160,
+            ramUsedGb: 80,
+            diskReadMbps: 300,
+            diskWriteMbps: 120,
+            downloadMbps: 50.5,
+            uploadMbps: 10.2,
+            moboTemperature: 420,
+            activeUsers: [
+              {
+                username: 'aluno.teste',
+                terminal: 'pts/0',
+                host: 'localhost',
+                isSsh: true,
+                connectedSince,
+              },
+            ],
+          },
+        ],
       })
 
     // Assert
@@ -263,7 +269,7 @@ test.group('Agent API', (group) => {
 
   test('deve rejeitar requisição sem token', async ({ client }) => {
     // Act
-    const response = await client.post('/api/agent/heartbeat')
+    const response = await client.post('/api/v1/agent/heartbeat')
 
     // Assert
     response.assertStatus(401)
@@ -275,7 +281,7 @@ test.group('Agent API', (group) => {
   test('deve rejeitar requisição com token inválido', async ({ client }) => {
     // Act
     const response = await client
-      .post('/api/agent/heartbeat')
+      .post('/api/v1/agent/heartbeat')
       .header('Authorization', 'Bearer token_invalido_123')
 
     // Assert
