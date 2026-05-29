@@ -16,27 +16,9 @@ export default class extends BaseSchema {
       table.timestamp('created_at').notNullable()
       table.timestamp('updated_at').nullable()
     })
-
-    this.schema.createTable('notifications', (table) => {
-      table.increments('id')
-      table
-        .integer('user_id')
-        .unsigned()
-        .references('id')
-        .inTable('users')
-        .onDelete('CASCADE')
-        .index()
-      table.string('title', 120).notNullable()
-      table.text('message').notNullable()
-      table.boolean('is_read').notNullable().defaultTo(false)
-      table.timestamp('read_at').nullable()
-      table.timestamp('created_at').notNullable()
-      table.timestamp('updated_at').nullable()
-    })
   }
 
   async down() {
-    this.schema.dropTable('notifications')
     this.schema.dropTable(this.tableName)
   }
 }
