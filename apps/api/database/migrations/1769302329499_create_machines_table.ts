@@ -19,6 +19,7 @@ export default class extends BaseSchema {
       table.string('name', 50).notNullable()
       table.string('description', 255).notNullable()
       table.string('system_username', 64).nullable()
+      table.string('host_fingerprint', 128).nullable().index()
 
       // BEARER KEY DO AGENTE
       table.string('token', 128).notNullable().unique().index()
@@ -27,7 +28,7 @@ export default class extends BaseSchema {
       table.string('cpu_model', 100).nullable()
       table.string('gpu_model', 100).nullable()
       table.integer('total_ram_gb').unsigned().nullable()
-      
+
       // Convertido para JSONB para alta performance e portabilidade
       table.jsonb('disks').nullable()
 
@@ -43,7 +44,7 @@ export default class extends BaseSchema {
       table.timestamp('token_rotated_at').nullable()
 
       // Convertido para JSONB
-      table.jsonb('active_users').nullable()
+      table.jsonb('current_sessions').nullable()
 
       table.timestamp('created_at')
       table.timestamp('updated_at')
