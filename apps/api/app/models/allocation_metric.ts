@@ -23,10 +23,10 @@ export default class AllocationMetric extends BaseModel {
   @column() declare maxGpuTemp: number
   @column() declare avgGpuPowerWatts: number | null
   @column() declare maxGpuPowerWatts: number | null
-  @column() declare avgVramTotalMb: number | null
-  @column() declare maxVramTotalMb: number | null
-  @column() declare avgVramUsedMb: number | null
-  @column() declare maxVramUsedMb: number | null
+  @column() declare avgVramTotalGb: number | null
+  @column() declare maxVramTotalGb: number | null
+  @column() declare avgVramUsedGb: number | null
+  @column() declare maxVramUsedGb: number | null
 
   // --- RAM E SWAP ---
   @column() declare avgRamUsedGb: number | null

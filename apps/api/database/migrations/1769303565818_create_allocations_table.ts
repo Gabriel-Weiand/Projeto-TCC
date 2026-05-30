@@ -8,7 +8,7 @@ export default class extends BaseSchema {
       table.increments('id')
 
       // Relacionamentos (Foreign Keys)
-      table.integer('user_id').unsigned().references('id').inTable('users').onDelete('CASCADE')
+      table.integer('user_id').unsigned().references('id').inTable('users').onDelete('SET NULL')
       table
         .integer('machine_id')
         .unsigned()

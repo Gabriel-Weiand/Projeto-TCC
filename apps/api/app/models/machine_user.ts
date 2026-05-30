@@ -1,16 +1,12 @@
 import { DateTime } from 'luxon'
 import { BaseModel, column, belongsTo } from '@adonisjs/lucid/orm'
 import type { BelongsTo } from '@adonisjs/lucid/types/relations'
-import Allocation from '#models/allocation'
-import Machine from '#models/machine'
 import User from '#models/user'
+import Machine from '#models/machine'
 
-export default class SshSession extends BaseModel {
+export default class MachineUser extends BaseModel {
   @column({ isPrimary: true })
   declare id: number
-
-  @column()
-  declare allocationId: number
 
   @column()
   declare machineId: number
@@ -19,26 +15,19 @@ export default class SshSession extends BaseModel {
   declare userId: number
 
   @column()
-  declare systemUsername: string
+  declare osUsername: string
 
-  @column()
-  declare publicKeyFingerprint: string
+  @column.dateTime()
+  declare provisionedAt: DateTime | null
 
-  @column()
-  declare status: 'active' | 'expired' | 'revoked'
+  @column.dateTime()
+  declare lastActiveAt: DateTime | null
 
   @column.dateTime({ autoCreate: true })
   declare createdAt: DateTime
 
-  @column.dateTime()
-  declare expiresAt: DateTime
-
-  @column.dateTime()
-  declare revokedAt: DateTime | null
-
-  // --- RELACIONAMENTOS ---
-  @belongsTo(() => Allocation)
-  declare allocation: BelongsTo<typeof Allocation>
+  @column.dateTime({ autoCreate: true, autoUpdate: true })
+  declare updatedAt: DateTime | null
 
   @belongsTo(() => Machine)
   declare machine: BelongsTo<typeof Machine>

@@ -1,12 +1,25 @@
 import { DateTime } from 'luxon'
-import { BaseModel, column, beforeCreate, computed, hasMany } from '@adonisjs/lucid/orm'
-import type { HasMany } from '@adonisjs/lucid/types/relations'
+import {
+  BaseModel,
+  column,
+  beforeCreate,
+  computed,
+  hasMany,
+  manyToMany,
+  belongsTo,
+} from '@adonisjs/lucid/orm'
+import type { HasMany, ManyToMany, BelongsTo } from '@adonisjs/lucid/types/relations'
 import { randomBytes } from 'node:crypto'
 import Allocation from '#models/allocation'
+import MachineGroup from '#models/machine_group'
+import User from './user.js'
 
 export default class Machine extends BaseModel {
   @column({ isPrimary: true })
   declare id: number
+
+  @column()
+  declare machineGroupId: number | null
 
   @column()
   declare name: string
@@ -27,8 +40,11 @@ export default class Machine extends BaseModel {
   declare totalRamGb: number | null
 
   // JSON stored as text in DB (column name: 'disks').
-  @column({ columnName: 'disks' })
-  declare disksJson: string | null
+  @column({
+    prepare: (value: any) => JSON.stringify(value),
+    consume: (value: any) => (typeof value === 'string' ? JSON.parse(value) : value || []),
+  })
+  declare disks: any[] | null
 
   @column()
   declare ipAddress: string | null
@@ -36,9 +52,12 @@ export default class Machine extends BaseModel {
   @column()
   declare status: 'available' | 'occupied' | 'maintenance' | 'offline'
 
+  @column()
+  declare telemetryPreset: 'fast' | 'eco' | 'custom'
+
   @column({
     prepare: (value: any) => JSON.stringify(value),
-    consume: (value: string | null) => (value ? JSON.parse(value) : null),
+    consume: (value: any) => (typeof value === 'string' ? JSON.parse(value) : value || null),
   })
   declare customAgentConfig: any | null
 
@@ -51,9 +70,9 @@ export default class Machine extends BaseModel {
 
   @column({
     prepare: (value: any) => JSON.stringify(value),
-    consume: (value: string | null) => (value ? JSON.parse(value) : []),
+    consume: (value: any) => (typeof value === 'string' ? JSON.parse(value) : value || []),
   })
-  declare activeUsers: any[] | null
+  declare currentSessions: any[] | null
 
   // Usuário do sistema operacional mapeado (para agente servidor SSH/cgroups)
   @column()
@@ -66,19 +85,18 @@ export default class Machine extends BaseModel {
   declare updatedAt: DateTime | null
 
   // --- RELACIONAMENTOS ---
+  @belongsTo(() => MachineGroup)
+  declare group: BelongsTo<typeof MachineGroup>
+
   @hasMany(() => Allocation)
   declare allocations: HasMany<typeof Allocation>
 
-  /** Computed: retorna os discos como array (parse do JSON em `disksJson`) */
-  @computed()
-  public get disks() {
-    try {
-      const parsed = JSON.parse(this.disksJson ?? '[]')
-      return Array.isArray(parsed) ? parsed : []
-    } catch {
-      return []
-    }
-  }
+  @manyToMany(() => User, {
+    pivotTable: 'machine_users',
+    pivotTimestamps: true,
+    pivotColumns: ['os_username', 'provisioned_at', 'last_active_at'],
+  })
+  declare provisionedUsers: ManyToMany<typeof User>
 
   /** Computed: soma dos `totalGb` das partições (ou null se não houver dados) */
   @computed()

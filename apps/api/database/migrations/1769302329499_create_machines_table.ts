@@ -38,6 +38,7 @@ export default class extends BaseSchema {
       // Status da máquina e configurações do agente
       table.enum('status', ['available', 'occupied', 'maintenance', 'offline']).defaultTo('offline')
       table.jsonb('custom_agent_config').nullable() // Convertido para JSONB
+      table.enum('telemetry_preset', ['fast', 'eco', 'custom']).defaultTo('eco').notNullable()
 
       // Campos de Segurança/Auditoria do Agente
       table.timestamp('last_seen_at').nullable()

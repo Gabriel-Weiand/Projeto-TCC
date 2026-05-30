@@ -20,8 +20,8 @@ export default class Telemetry extends BaseModel {
   @column() declare gpuUsage: number
   @column() declare gpuTemp: number
   @column() declare gpuPowerWatts: number | null
-  @column() declare vramTotalMb: number | null
-  @column() declare vramUsedMb: number | null
+  @column() declare vramTotalGb: number | null
+  @column() declare vramUsedGb: number | null
 
   // Valores absolutos (GB * 10)
   @column() declare ramTotalGb: number | null
@@ -48,9 +48,15 @@ export default class Telemetry extends BaseModel {
 
   @column({
     prepare: (value: any) => JSON.stringify(value),
-    consume: (value: string) => JSON.parse(value),
+    consume: (value: any) => (typeof value === 'string' ? JSON.parse(value) : value || []),
   })
   declare activeUsers: any[] | null
+
+  @column({
+    prepare: (value: any) => JSON.stringify(value),
+    consume: (value: any) => (typeof value === 'string' ? JSON.parse(value) : value || []),
+  })
+  declare processes: any[] | null
 
   // --- RELACIONAMENTO ---
   @belongsTo(() => Allocation)
