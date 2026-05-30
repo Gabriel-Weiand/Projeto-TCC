@@ -28,7 +28,7 @@ const uniqueRule = vine.createRule(
 /**
  * Validator para atualização de usuário.
  * Usa metadata para passar o userId atual e ignorar na validação de unicidade.
- * 
+ *
  * Uso: await request.validateUsing(updateUserValidator, { meta: { userId: params.id } })
  */
 export const updateUserValidator = vine.withMetaData<{ userId: number }>().compile(
@@ -42,5 +42,16 @@ export const updateUserValidator = vine.withMetaData<{ userId: number }>().compi
       .optional(),
     password: vine.string().minLength(8).maxLength(63).optional(),
     role: vine.enum(['user', 'admin'] as const).optional(),
+  })
+)
+
+export const updateSshKeyValidator = vine.compile(
+  vine.object({
+    sshPublicKey: vine
+      .string()
+      .trim()
+      .startsWith('ssh-') // Deve começar com ssh-rsa ou ssh-ed25519
+      .minLength(50)
+      .maxLength(2048),
   })
 )

@@ -19,6 +19,7 @@ export const createMachineValidator = vine.compile(
 
     // Status inicial
     status: vine.enum(['available', 'occupied', 'maintenance', 'offline'] as const).optional(),
+    telemetryPreset: vine.enum(['fast', 'eco', 'custom'] as const).optional(),
   })
 )
 
@@ -30,6 +31,9 @@ export const updateMachineValidator = vine.compile(
     name: vine.string().trim().minLength(2).maxLength(50).optional(),
     description: vine.string().trim().maxLength(255).optional(),
 
+    // Adicionado para permitir edição
+    machineGroupId: vine.number().positive().nullable().optional(),
+
     cpuModel: vine.string().trim().maxLength(100).nullable().optional(),
     gpuModel: vine.string().trim().maxLength(100).nullable().optional(),
     totalRamGb: vine.number().positive().max(1024).nullable().optional(),
@@ -37,5 +41,8 @@ export const updateMachineValidator = vine.compile(
     ipAddress: vine.string().trim().maxLength(45).nullable().optional(),
 
     status: vine.enum(['available', 'occupied', 'maintenance', 'offline'] as const).optional(),
+
+    // Adicionado para permitir mudança de plano de telemetria
+    telemetryPreset: vine.enum(['fast', 'eco', 'custom'] as const).optional(),
   })
 )

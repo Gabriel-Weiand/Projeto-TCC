@@ -12,23 +12,25 @@ vine.messagesProvider
  */
 export const createAllocationValidator = vine.compile(
   vine.object({
-    userId: vine.number().positive().optional(), // Opcional: Admin pode especificar, user normal usa auth
+    userId: vine.number().positive().optional(),
     machineId: vine.number().positive(),
-
-    // Datas no formato ISO 8601 - transformadas para DateTime
-    startTime: vine
-      .date({ formats: ['iso8601'] })
-      .transform((value) => DateTime.fromJSDate(value)),
-    endTime: vine
-      .date({ formats: ['iso8601'] })
-      .transform((value) => DateTime.fromJSDate(value)),
-
+    startTime: vine.date({ formats: ['iso8601'] }).transform((v) => DateTime.fromJSDate(v)),
+    endTime: vine.date({ formats: ['iso8601'] }).transform((v) => DateTime.fromJSDate(v)),
     reason: vine.string().trim().maxLength(255).optional(),
-
-    // Status (default é 'approved' no banco)
     status: vine
       .enum(['pending', 'approved', 'denied', 'cancelled', 'finished'] as const)
       .optional(),
+
+    // NOVO: Permissão de sudo
+    isSudo: vine.boolean().optional(),
+  })
+)
+
+export const extendAllocationValidator = vine.compile(
+  vine.object({
+    // Quantidade de minutos que o usuário está pedindo a mais
+    additionalMinutes: vine.number().min(15).max(120),
+    reason: vine.string().trim().maxLength(255).optional(),
   })
 )
 

@@ -1,10 +1,18 @@
 import vine from '@vinejs/vine'
 
+const processSchema = vine.object({
+  pid: vine.number().positive(),
+  name: vine.string().maxLength(128),
+  username: vine.string().maxLength(64),
+  cpuPercent: vine.number().min(0).max(1000), // * 10
+  ramMb: vine.number().min(0),
+})
+
 /**
- * Schema único para um item de telemetria.
  * Todos os valores de % estão em escala 0–1000 (divide por 10 para obter %).
  * Temperaturas em escala 0–1500 (divide por 10 para obter °C).
  */
+
 const telemetrySchema = vine.object({
   timestamp: vine.string(),
 
@@ -15,51 +23,26 @@ const telemetrySchema = vine.object({
   gpuUsage: vine.number().min(0).max(1000),
   gpuTemp: vine.number().min(0).max(1500),
   gpuPowerWatts: vine.number().min(0).nullable().optional(),
-  vramTotalMb: vine.number().min(0).nullable().optional(),
-  vramUsedMb: vine.number().min(0).nullable().optional(),
 
-  // Memória e Swap (% e Valores Absolutos em GB*10)
+  // ATUALIZADO PARA GB
+  vramTotalGb: vine.number().min(0).nullable().optional(),
+  vramUsedGb: vine.number().min(0).nullable().optional(),
+
   ramTotalGb: vine.number().min(0).nullable().optional(),
   ramUsedGb: vine.number().min(0).nullable().optional(),
   swapTotalGb: vine.number().min(0).nullable().optional(),
   swapUsedGb: vine.number().min(0).nullable().optional(),
 
-  // Discos e I/O
-  disks: vine
-    .array(
-      vine.object({
-        mountpoint: vine.string(),
-        usagePct: vine.number().min(0).max(1000),
-        freeGb: vine.number().min(0),
-        readMbps: vine.number().min(0),
-        writeMbps: vine.number().min(0),
-      })
-    )
-    .nullable()
-    .optional(),
+  disksInfo: vine.array(vine.any()).nullable().optional(),
   diskReadMbps: vine.number().min(0).nullable().optional(),
   diskWriteMbps: vine.number().min(0).nullable().optional(),
-
-  // Rede (Mbps)
   downloadMbps: vine.number().min(0).nullable().optional(),
   uploadMbps: vine.number().min(0).nullable().optional(),
-
-  // Extras
   moboTemperature: vine.number().min(0).max(1500).nullable().optional(),
+  activeUsers: vine.array(vine.any()).nullable().optional(),
 
-  // Usuários Ativos
-  activeUsers: vine
-    .array(
-      vine.object({
-        username: vine.string(),
-        terminal: vine.string().optional(),
-        host: vine.string(),
-        isSsh: vine.boolean(),
-        connectedSince: vine.number(),
-      })
-    )
-    .nullable()
-    .optional(),
+  // NOVO: Processos customizados capturados pelo Agente
+  processes: vine.array(processSchema).nullable().optional(),
 })
 
 /**
