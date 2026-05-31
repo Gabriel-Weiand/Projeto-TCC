@@ -280,4 +280,20 @@ test.group('Users', (group) => {
 
     response.assertStatus(422)
   })
+
+  test('admin deve listar histórico de alocações de um usuário específico', async ({
+    client,
+    assert,
+  }) => {
+    const admin = await User.create({
+      fullName: 'Admin',
+      email: 'a.hist@teste.com',
+      password: '123',
+      role: 'admin',
+    })
+    const response = await client.get(`/api/v1/users/${admin.id}/allocations`).loginAs(admin)
+
+    response.assertStatus(200)
+    assert.exists(response.body().meta.total)
+  })
 })

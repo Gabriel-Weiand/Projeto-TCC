@@ -345,4 +345,27 @@ test.group('Machines', (group) => {
     assert.equal(allocation1.status, 'cancelled')
     assert.equal(allocation2.status, 'cancelled')
   })
+
+  test('deve listar histórico de alocações de uma máquina (anonimizado para users)', async ({
+    client,
+    assert,
+  }) => {
+    const user = await User.create({
+      fullName: 'Aluno',
+      email: 'aluno.hist@teste.com',
+      password: '123',
+      role: 'user',
+    })
+    const machine = await Machine.create({
+      name: 'PC-HIST',
+      description: 'Lab',
+      status: 'available',
+    })
+
+    const response = await client.get(`/api/v1/machines/${machine.id}/allocations`).loginAs(user)
+
+    response.assertStatus(200)
+    // Verifica se os dados vieram anonimizados (sem o objeto 'user')
+    assert.notExists(response.body().data[0]?.user)
+  })
 })

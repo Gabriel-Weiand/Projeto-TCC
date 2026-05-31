@@ -118,7 +118,7 @@ export default class HeartbeatService {
     }
 
     // Montar o payload final e garantir a tabela pivô (`machine_users`) atualizada
-    for (const [userId, config] of usersToEnforce.entries()) {
+    for (const config of usersToEnforce.values()) {
       const user = config.user
 
       if (user.systemUsername) {

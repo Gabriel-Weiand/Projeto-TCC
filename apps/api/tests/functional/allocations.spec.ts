@@ -243,4 +243,83 @@ test.group('Allocations', (group) => {
     })
     response.assertStatus(401)
   })
+
+  // =========================================================================
+  // CANCELAMENTO E SOFT DELETE (PATCH / DELETE)
+  // =========================================================================
+
+  test('usuário deve conseguir cancelar (PATCH) a sua própria alocação', async ({
+    client,
+    assert,
+  }) => {
+    const user = await User.create({
+      fullName: 'User',
+      email: 'cancel@teste.com',
+      password: '123',
+      role: 'user',
+    })
+    const machine = await Machine.create({
+      name: 'PC-CANCEL',
+      description: 'Lab',
+      status: 'available',
+    })
+    const allocation = await Allocation.create({
+      userId: user.id,
+      machineId: machine.id,
+      startTime: DateTime.utc().plus({ hours: 1 }),
+      endTime: DateTime.utc().plus({ hours: 2 }),
+      status: 'approved',
+    })
+
+    const response = await client
+      .patch(`/api/v1/allocations/${allocation.id}`)
+      .loginAs(user)
+      .json({ status: 'cancelled' })
+
+    response.assertStatus(200)
+    await allocation.refresh()
+    assert.equal(allocation.status, 'cancelled')
+  })
+
+  test('usuário deve fazer soft-delete (ocultar) de uma alocação terminada', async ({
+    client,
+    assert,
+  }) => {
+    const user = await User.create({
+      fullName: 'User',
+      email: 'hide@teste.com',
+      password: '123',
+      role: 'user',
+    })
+    const machine = await Machine.create({
+      name: 'PC-HIDE',
+      description: 'Lab',
+      status: 'available',
+    })
+    const allocation = await Allocation.create({
+      userId: user.id,
+      machineId: machine.id,
+      startTime: DateTime.utc().minus({ hours: 2 }),
+      endTime: DateTime.utc().minus({ hours: 1 }),
+      status: 'finished',
+    })
+
+    const response = await client.delete(`/api/v1/allocations/${allocation.id}`).loginAs(user)
+
+    response.assertStatus(200)
+    await allocation.refresh()
+    assert.isTrue(allocation.userHidden) // Oculto com sucesso
+  })
+
+  test('admin deve listar TODAS as alocações (Index)', async ({ client, assert }) => {
+    const admin = await User.create({
+      fullName: 'Admin',
+      email: 'adminlist@teste.com',
+      password: '123',
+      role: 'admin',
+    })
+    const response = await client.get('/api/v1/allocations').loginAs(admin)
+    response.assertStatus(200)
+    assert.exists(response.body().meta.total)
+  })
 })

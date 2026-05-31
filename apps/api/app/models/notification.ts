@@ -16,7 +16,7 @@ export default class Notification extends BaseModel {
   @column()
   declare message: string
 
-  @column()
+  @column({ consume: (value: any) => Boolean(value) })
   declare isRead: boolean
 
   @column.dateTime()
