@@ -78,6 +78,9 @@ export default class Machine extends BaseModel {
   @column()
   declare systemUsername: string | null
 
+  @column()
+  declare hostFingerprint: string | null
+
   @column.dateTime({ autoCreate: true })
   declare createdAt: DateTime
 

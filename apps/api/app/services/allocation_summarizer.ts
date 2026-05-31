@@ -5,87 +5,119 @@ import logger from '@adonisjs/core/services/logger'
 import { DateTime } from 'luxon'
 
 /**
- * Calcula métricas agregadas a partir das telemetrias de uma alocação.
+ * Calcula métricas agregadas usando Time-Weighted Average (Média Ponderada no Tempo).
  */
 export function calculateMetrics(telemetries: Telemetry[], allocation: Allocation) {
-  const avg = (values: number[]) => values.reduce((a, b) => a + b, 0) / values.length
-  const max = (values: number[]) => Math.max(...values)
-  const avgOrNull = (values: number[]) => (values.length > 0 ? avg(values) : null)
-  const maxOrNull = (values: number[]) => (values.length > 0 ? max(values) : null)
+  if (telemetries.length === 0) throw new Error('Cannot summarize empty telemetries')
 
-  const cpuUsages = telemetries.map((t) => t.cpuUsage)
-  const cpuTemps = telemetries.map((t) => t.cpuTemp)
-  const gpuUsages = telemetries.map((t) => t.gpuUsage)
-  const gpuTemps = telemetries.map((t) => t.gpuTemp)
-  const ramUsed = telemetries
-    .map((t) => t.ramUsedGb)
-    .filter((t): t is number => typeof t === 'number')
-  const swapUsed = telemetries
-    .map((t) => t.swapUsedGb)
-    .filter((t): t is number => typeof t === 'number')
-  const diskRead = telemetries
-    .map((t) => t.diskReadMbps)
-    .filter((t): t is number => typeof t === 'number')
-  const diskWrite = telemetries
-    .map((t) => t.diskWriteMbps)
-    .filter((t): t is number => typeof t === 'number')
-  const download = telemetries
-    .map((t) => t.downloadMbps)
-    .filter((t): t is number => typeof t === 'number')
-  const upload = telemetries
-    .map((t) => t.uploadMbps)
-    .filter((t): t is number => typeof t === 'number')
-  const moboTemps = telemetries
-    .map((t) => t.moboTemperature)
-    .filter((t): t is number => typeof t === 'number')
-  const gpuPower = telemetries
-    .map((t) => t.gpuPowerWatts)
-    .filter((t): t is number => typeof t === 'number')
-  const vramTotal = telemetries
-    .map((t) => t.vramTotalMb)
-    .filter((t): t is number => typeof t === 'number')
-  const vramUsed = telemetries
-    .map((t) => t.vramUsedMb)
-    .filter((t): t is number => typeof t === 'number')
+  // 1. Garantir que as telemetrias estão ordenadas cronologicamente
+  const sorted = [...telemetries].sort((a, b) => {
+    return new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime()
+  })
 
+  const allocEndTimeMs = allocation.endTime.toMillis()
+
+  /**
+   * Função interna que calcula o TWA e o Max para uma propriedade específica.
+   */
+  const getTwaAndMax = (key: keyof Telemetry) => {
+    let weightedSum = 0
+    let totalWeight = 0
+    let max = -Infinity
+    let hasData = false
+
+    for (let i = 0; i < sorted.length; i++) {
+      const val = sorted[i][key]
+
+      // Ignora leituras que vieram nulas (ex: máquina não suporta a métrica)
+      if (typeof val !== 'number') continue
+
+      hasData = true
+      if (val > max) max = val
+
+      const currentT = new Date(sorted[i].timestamp).getTime()
+
+      // O "peso" (duração) dessa leitura é o tempo até a PRÓXIMA leitura.
+      // Se for a última leitura da sessão, o peso é o tempo até o fim da alocação.
+      let nextT =
+        i < sorted.length - 1 ? new Date(sorted[i + 1].timestamp).getTime() : allocEndTimeMs
+
+      let weight = nextT - currentT
+      if (weight < 0) weight = 0 // Evita pesos negativos se o relógio bagunçar
+
+      weightedSum += val * weight
+      totalWeight += weight
+    }
+
+    if (!hasData) return { avg: null, max: null }
+
+    // Retorna a média arredondada para manter integridade com o banco (inteiros nas temperaturas, etc)
+    return {
+      avg: totalWeight > 0 ? Math.round(weightedSum / totalWeight) : null,
+      max: max,
+    }
+  }
+
+  // 2. Aplicar a função para cada métrica
+  const cpuUsage = getTwaAndMax('cpuUsage')
+  const cpuTemp = getTwaAndMax('cpuTemp')
+
+  const gpuUsage = getTwaAndMax('gpuUsage')
+  const gpuTemp = getTwaAndMax('gpuTemp')
+  const gpuPower = getTwaAndMax('gpuPowerWatts')
+  const vramTotal = getTwaAndMax('vramTotalGb')
+  const vramUsed = getTwaAndMax('vramUsedGb')
+
+  const ramUsed = getTwaAndMax('ramUsedGb')
+  const swapUsed = getTwaAndMax('swapUsedGb')
+
+  const diskRead = getTwaAndMax('diskReadMbps')
+  const diskWrite = getTwaAndMax('diskWriteMbps')
+
+  const download = getTwaAndMax('downloadMbps')
+  const upload = getTwaAndMax('uploadMbps')
+
+  const moboTemp = getTwaAndMax('moboTemperature')
+
+  // Duração real da sessão
   const durationMs = allocation.endTime.diff(allocation.startTime).milliseconds
   const sessionDurationMinutes = Math.round(durationMs / 60000)
 
   return {
-    avgCpuUsage: avg(cpuUsages),
-    maxCpuUsage: max(cpuUsages),
-    avgCpuTemp: avg(cpuTemps),
-    maxCpuTemp: max(cpuTemps),
+    avgCpuUsage: cpuUsage.avg!,
+    maxCpuUsage: cpuUsage.max!,
+    avgCpuTemp: cpuTemp.avg!,
+    maxCpuTemp: cpuTemp.max!,
 
-    avgGpuUsage: avg(gpuUsages),
-    maxGpuUsage: max(gpuUsages),
-    avgGpuTemp: avg(gpuTemps),
-    maxGpuTemp: max(gpuTemps),
+    avgGpuUsage: gpuUsage.avg!,
+    maxGpuUsage: gpuUsage.max!,
+    avgGpuTemp: gpuTemp.avg!,
+    maxGpuTemp: gpuTemp.max!,
 
-    avgGpuPowerWatts: avgOrNull(gpuPower),
-    maxGpuPowerWatts: maxOrNull(gpuPower),
-    avgVramTotalMb: avgOrNull(vramTotal),
-    maxVramTotalMb: maxOrNull(vramTotal),
-    avgVramUsedMb: avgOrNull(vramUsed),
-    maxVramUsedMb: maxOrNull(vramUsed),
+    avgGpuPowerWatts: gpuPower.avg,
+    maxGpuPowerWatts: gpuPower.max,
+    avgVramTotalGb: vramTotal.avg, // Ajustado para VRAM em GB
+    maxVramTotalGb: vramTotal.max,
+    avgVramUsedGb: vramUsed.avg,
+    maxVramUsedGb: vramUsed.max,
 
-    avgRamUsedGb: avgOrNull(ramUsed),
-    maxRamUsedGb: maxOrNull(ramUsed),
-    avgSwapUsedGb: avgOrNull(swapUsed),
-    maxSwapUsedGb: maxOrNull(swapUsed),
+    avgRamUsedGb: ramUsed.avg,
+    maxRamUsedGb: ramUsed.max,
+    avgSwapUsedGb: swapUsed.avg,
+    maxSwapUsedGb: swapUsed.max,
 
-    avgDiskReadMbps: avgOrNull(diskRead),
-    maxDiskReadMbps: maxOrNull(diskRead),
-    avgDiskWriteMbps: avgOrNull(diskWrite),
-    maxDiskWriteMbps: maxOrNull(diskWrite),
+    avgDiskReadMbps: diskRead.avg,
+    maxDiskReadMbps: diskRead.max,
+    avgDiskWriteMbps: diskWrite.avg,
+    maxDiskWriteMbps: diskWrite.max,
 
-    avgDownloadMbps: avgOrNull(download),
-    maxDownloadMbps: maxOrNull(download),
-    avgUploadMbps: avgOrNull(upload),
-    maxUploadMbps: maxOrNull(upload),
+    avgDownloadMbps: download.avg,
+    maxDownloadMbps: download.max,
+    avgUploadMbps: upload.avg,
+    maxUploadMbps: upload.max,
 
-    avgMoboTemp: avgOrNull(moboTemps),
-    maxMoboTemp: maxOrNull(moboTemps),
+    avgMoboTemp: moboTemp.avg,
+    maxMoboTemp: moboTemp.max,
 
     sessionDurationMinutes,
   }
@@ -115,9 +147,6 @@ export async function summarizeAllocation(
 /**
  * Finaliza alocações aprovadas cujo endTime já passou.
  * Para cada uma: muda status para 'finished' e tenta gerar o resumo.
- *
- * Usa comparação em JavaScript (toMillis) em vez de SQL string comparison
- * para evitar problemas de formato entre ISO e o formato do SQLite.
  */
 export async function autoFinalizeExpired(): Promise<number> {
   const nowMs = DateTime.now().toMillis()

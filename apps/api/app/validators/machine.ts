@@ -44,5 +44,13 @@ export const updateMachineValidator = vine.compile(
 
     // Adicionado para permitir mudança de plano de telemetria
     telemetryPreset: vine.enum(['fast', 'eco', 'custom'] as const).optional(),
+
+    customAgentConfig: vine
+      .object({
+        // Modos de captura do psutil: 'complete' (tudo), 'fast' (só pesados) ou 'off' (desligado)
+        processTelemetry: vine.enum(['complete', 'fast', 'off'] as const).optional(),
+      })
+      .optional()
+      .nullable(),
   })
 )

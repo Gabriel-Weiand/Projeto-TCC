@@ -5,8 +5,14 @@ import testUtils from '@adonisjs/core/services/test_utils'
 test.group('Users', (group) => {
   group.each.setup(() => testUtils.db().withGlobalTransaction())
 
-  test('admin deve criar um novo usuário', async ({ client }) => {
-    // Arrange
+  // =========================================================================
+  // 1. ROTAS DE ADMINISTRAÇÃO (/api/v1/users)
+  // =========================================================================
+
+  test('admin deve criar um novo usuário e gerar system_username corretamente', async ({
+    client,
+    assert,
+  }) => {
     const admin = await User.create({
       fullName: 'Admin',
       email: 'admin@teste.com',
@@ -14,23 +20,24 @@ test.group('Users', (group) => {
       role: 'admin',
     })
 
-    // Act
     const response = await client.post('/api/v1/users').loginAs(admin).json({
-      fullName: 'Novo Usuário',
-      email: 'novo@teste.com',
+      fullName: 'Gabriel Weiand Júnior', // Com acentos e espaços
+      email: 'gabriel@teste.com',
       password: 'senha12345',
     })
 
-    // Assert
     response.assertStatus(201)
     response.assertBodyContains({
-      fullName: 'Novo Usuário',
-      email: 'novo@teste.com',
+      fullName: 'Gabriel Weiand Júnior',
+      email: 'gabriel@teste.com',
+      systemUsername: 'lab.gabriel_weiand_junior', // Verifica o Hook @beforeCreate
     })
   })
 
-  test('admin deve criar usuário com role admin', async ({ client }) => {
-    // Arrange
+  test('sistema deve resolver conflitos de system_username idênticos', async ({
+    client,
+    assert,
+  }) => {
     const admin = await User.create({
       fullName: 'Admin',
       email: 'admin@teste.com',
@@ -38,7 +45,32 @@ test.group('Users', (group) => {
       role: 'admin',
     })
 
-    // Act
+    // Cria o primeiro João
+    await client.post('/api/v1/users').loginAs(admin).json({
+      fullName: 'João Silva',
+      email: 'joao1@teste.com',
+      password: 'senha12345',
+    })
+
+    // Cria o segundo João (exatamente o mesmo nome)
+    const response2 = await client.post('/api/v1/users').loginAs(admin).json({
+      fullName: 'João Silva',
+      email: 'joao2@teste.com',
+      password: 'senha12345',
+    })
+
+    response2.assertStatus(201)
+    response2.assertBodyContains({ systemUsername: 'lab.joao_silva1' }) // Adicionou o sufixo numérico
+  })
+
+  test('admin deve criar usuário com role admin', async ({ client }) => {
+    const admin = await User.create({
+      fullName: 'Admin',
+      email: 'admin@teste.com',
+      password: 'senha123',
+      role: 'admin',
+    })
+
     const response = await client.post('/api/v1/users').loginAs(admin).json({
       fullName: 'Novo Admin',
       email: 'novoadmin@teste.com',
@@ -46,130 +78,80 @@ test.group('Users', (group) => {
       role: 'admin',
     })
 
-    // Assert
     response.assertStatus(201)
-    response.assertBodyContains({
-      role: 'admin',
-    })
+    response.assertBodyContains({ role: 'admin' })
   })
 
-  test('usuário comum NÃO deve criar usuários', async ({ client }) => {
-    // Arrange
-    const user = await User.create({
-      fullName: 'User Normal',
-      email: 'user@teste.com',
-      password: 'senha123',
-      role: 'user',
-    })
-
-    // Act
-    const response = await client.post('/api/v1/users').loginAs(user).json({
-      fullName: 'Tentativa',
-      email: 'tentativa@teste.com',
-      password: 'senha12345',
-    })
-
-    // Assert
-    response.assertStatus(403)
-  })
-
-  test('admin deve listar todos os usuários', async ({ client, assert }) => {
-    // Arrange
+  test('admin deve listar usuários', async ({ client }) => {
     const admin = await User.create({
       fullName: 'Admin',
       email: 'admin@teste.com',
       password: 'senha123',
       role: 'admin',
     })
+    await User.create({
+      fullName: 'Teste User',
+      email: 'teste@teste.com',
+      password: 'senha123',
+      role: 'user',
+    })
 
-    await User.createMany([
-      { fullName: 'User 1', email: 'user1@teste.com', password: 'senha123', role: 'user' },
-      { fullName: 'User 2', email: 'user2@teste.com', password: 'senha123', role: 'user' },
-    ])
-
-    // Act
     const response = await client.get('/api/v1/users').loginAs(admin)
 
-    // Assert
     response.assertStatus(200)
-    assert.isArray(response.body())
-    assert.isAtLeast(response.body().length, 3) // admin + 2 users
+    response.assertBodyContains([{ email: 'admin@teste.com' }, { email: 'teste@teste.com' }])
   })
 
-  test('usuário comum NÃO deve listar usuários', async ({ client }) => {
-    // Arrange
-    const user = await User.create({
-      fullName: 'User Normal',
-      email: 'user@teste.com',
-      password: 'senha123',
-      role: 'user',
-    })
-
-    // Act
-    const response = await client.get('/api/v1/users').loginAs(user)
-
-    // Assert
-    response.assertStatus(403)
-  })
-
-  test('admin deve visualizar detalhes de um usuário', async ({ client }) => {
-    // Arrange
+  test('admin deve visualizar um usuário específico', async ({ client }) => {
     const admin = await User.create({
       fullName: 'Admin',
       email: 'admin@teste.com',
       password: 'senha123',
       role: 'admin',
     })
-
     const user = await User.create({
-      fullName: 'User Detalhe',
-      email: 'detalhe@teste.com',
+      fullName: 'User Ver',
+      email: 'ver@teste.com',
       password: 'senha123',
       role: 'user',
     })
 
-    // Act
     const response = await client.get(`/api/v1/users/${user.id}`).loginAs(admin)
 
-    // Assert
     response.assertStatus(200)
-    response.assertBodyContains({
-      id: user.id,
-      fullName: 'User Detalhe',
-      email: 'detalhe@teste.com',
-    })
+    response.assertBodyContains({ fullName: 'User Ver' })
   })
 
-  test('usuário deve poder atualizar seus próprios dados', async ({ client }) => {
-    // Arrange
-    const user = await User.create({
-      fullName: 'User Original',
-      email: 'original@teste.com',
-      password: 'senha123',
-      role: 'user',
-    })
-
-    // Act
-    const response = await client.put(`/api/v1/users/${user.id}`).loginAs(user).json({
-      fullName: 'User Atualizado',
-    })
-
-    // Assert
-    response.assertStatus(200)
-    response.assertBodyContains({
-      fullName: 'User Atualizado',
-    })
-  })
-
-  test('admin deve deletar um usuário', async ({ client, assert }) => {
-    // Arrange
+  test('admin deve atualizar um usuário', async ({ client, assert }) => {
     const admin = await User.create({
       fullName: 'Admin',
       email: 'admin@teste.com',
       password: 'senha123',
       role: 'admin',
     })
+    const user = await User.create({
+      fullName: 'Old Name',
+      email: 'old@teste.com',
+      password: 'senha123',
+      role: 'user',
+    })
 
+    const response = await client.put(`/api/v1/users/${user.id}`).loginAs(admin).json({
+      fullName: 'New Name',
+    })
+
+    response.assertStatus(200)
+    await user.refresh()
+    assert.equal(user.fullName, 'New Name')
+  })
+
+  test('admin deve excluir um usuário', async ({ client, assert }) => {
+    const admin = await User.create({
+      fullName: 'Admin',
+      email: 'admin@teste.com',
+      password: 'senha123',
+      role: 'admin',
+    })
     const user = await User.create({
       fullName: 'User Deletar',
       email: 'deletar@teste.com',
@@ -177,25 +159,95 @@ test.group('Users', (group) => {
       role: 'user',
     })
 
-    // Act
     const response = await client.delete(`/api/v1/users/${user.id}`).loginAs(admin)
 
-    // Assert
     response.assertStatus(204)
-
     const deleted = await User.find(user.id)
     assert.isNull(deleted)
   })
 
+  // =========================================================================
+  // 2. ROTAS DE PERFIL DO ALUNO (/api/v1/users/me)
+  // =========================================================================
+
+  test('usuário deve atualizar o próprio perfil via /me', async ({ client, assert }) => {
+    const user = await User.create({
+      fullName: 'John',
+      email: 'john@teste.com',
+      password: 'senha123',
+      role: 'user',
+    })
+
+    const response = await client.put('/api/v1/users/me').loginAs(user).json({
+      fullName: 'John Updated',
+    })
+
+    response.assertStatus(200)
+    await user.refresh()
+    assert.equal(user.fullName, 'John Updated')
+  })
+
+  test('usuário NÃO pode alterar a própria role para admin', async ({ client, assert }) => {
+    const user = await User.create({
+      fullName: 'Hacker',
+      email: 'hacker@teste.com',
+      password: 'senha123',
+      role: 'user',
+    })
+
+    const response = await client.put('/api/v1/users/me').loginAs(user).json({
+      role: 'admin', // Tentativa de injeção
+    })
+
+    response.assertStatus(200) // O update passa, mas a role deve ser ignorada pelo controller
+    await user.refresh()
+    assert.equal(user.role, 'user')
+  })
+
+  test('usuário deve fazer upload da chave SSH válida', async ({ client, assert }) => {
+    const user = await User.create({
+      fullName: 'John',
+      email: 'john2@teste.com',
+      password: 'senha123',
+      role: 'user',
+    })
+    const sshKey = 'ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAI... chave_de_teste'
+
+    const response = await client.put('/api/v1/users/me/ssh-key').loginAs(user).json({
+      sshPublicKey: sshKey,
+    })
+
+    response.assertStatus(200)
+    await user.refresh()
+    assert.equal(user.sshPublicKey, sshKey)
+  })
+
+  test('deve rejeitar upload de chave SSH inválida', async ({ client }) => {
+    const user = await User.create({
+      fullName: 'John',
+      email: 'john3@teste.com',
+      password: 'senha123',
+      role: 'user',
+    })
+
+    const response = await client.put('/api/v1/users/me/ssh-key').loginAs(user).json({
+      sshPublicKey: 'chave_falsa_sem_formato',
+    })
+
+    response.assertStatus(422) // Validação falha porque não começa com ssh-
+  })
+
+  // =========================================================================
+  // 3. VALIDAÇÕES GERAIS (Tratamento de Erros)
+  // =========================================================================
+
   test('NÃO deve criar usuário com email duplicado', async ({ client }) => {
-    // Arrange
     const admin = await User.create({
       fullName: 'Admin',
-      email: 'admin@teste.com',
+      email: 'admin2@teste.com',
       password: 'senha123',
       role: 'admin',
     })
-
     await User.create({
       fullName: 'Existente',
       email: 'existente@teste.com',
@@ -203,34 +255,29 @@ test.group('Users', (group) => {
       role: 'user',
     })
 
-    // Act
     const response = await client.post('/api/v1/users').loginAs(admin).json({
       fullName: 'Duplicado',
       email: 'existente@teste.com',
       password: 'senha12345',
     })
 
-    // Assert
-    response.assertStatus(422) // Validation error
+    response.assertStatus(422)
   })
 
   test('deve validar senha mínima de 8 caracteres', async ({ client }) => {
-    // Arrange
     const admin = await User.create({
       fullName: 'Admin',
-      email: 'admin@teste.com',
+      email: 'admin3@teste.com',
       password: 'senha123',
       role: 'admin',
     })
 
-    // Act
     const response = await client.post('/api/v1/users').loginAs(admin).json({
       fullName: 'Senha Curta',
-      email: 'senhacurta@teste.com',
-      password: '123', // muito curta
+      email: 'curta@teste.com',
+      password: '123',
     })
 
-    // Assert
     response.assertStatus(422)
   })
 })

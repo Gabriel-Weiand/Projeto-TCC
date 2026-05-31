@@ -85,7 +85,7 @@ export default class MachinesController {
       return {
         ...serialized,
         latestTelemetry: this.normalizeTelemetry(raw),
-        disks: machine.disks.map((d) => ({
+        disks: (machine.disks || []).map((d) => ({
           id: d.id,
           device: d.device,
           mountpoint: d.mountpoint,
@@ -136,7 +136,7 @@ export default class MachinesController {
     const serialized: Record<string, unknown> = {
       ...machine.serialize(),
       latestTelemetry: this.normalizeTelemetry(raw),
-      disks: machine.disks.map((d) => ({
+      disks: (machine.disks || []).map((d) => ({
         id: d.id,
         device: d.device,
         mountpoint: d.mountpoint,

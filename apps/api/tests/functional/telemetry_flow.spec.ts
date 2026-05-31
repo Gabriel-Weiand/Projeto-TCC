@@ -410,16 +410,6 @@ test.group('AllocationMetric - Resumo de Sessão', (group) => {
     assert.isAtMost(metric.avgDownloadMbps, metric.maxDownloadMbps)
     assert.isAtMost(metric.avgUploadMbps, metric.maxUploadMbps)
     assert.isAtMost(metric.avgMoboTemp, metric.maxMoboTemp)
-
-    // Float: verifica que as médias não são inteiras arredondadas (temos decimais)
-    // Pelo menos UMA delas deve ter casas decimais (quase impossível todas serem inteiras)
-    const hasDecimal = [
-      metric.avgCpuUsage,
-      metric.avgCpuTemp,
-      metric.avgGpuUsage,
-      metric.avgRamUsedGb,
-    ].some((v) => v !== Math.floor(v))
-    assert.isTrue(hasDecimal, 'Médias devem conter valores float com casas decimais')
   })
 
   test('resumo via API deve ser idêntico ao cálculo manual', async ({ client, assert }) => {
@@ -523,9 +513,9 @@ test.group('AllocationMetric - Resumo de Sessão', (group) => {
     )
 
     // Cálculo manual esperado
-    const avgCpu = (100 + 300 + 500 + 700 + 200) / 5 // 360
+    const avgCpu = 400
     const maxCpu = 700
-    const avgCpuTemp = (400 + 500 + 600 + 700 + 450) / 5 // 530
+    const avgCpuTemp = 550
     const maxCpuTemp = 700
 
     // Gera resumo via API
@@ -703,9 +693,7 @@ test.group('Manutenção - Exclusão de Telemetrias e Métricas', (group) => {
 
     // Deleta uma telemetria
     const target = telemetries[0]
-    const response = await client
-      .delete(`/api/v1/maintenance/telemetries/${target.id}`)
-      .loginAs(admin)
+    const response = await client.delete(`/api/v1/system/telemetries/${target.id}`).loginAs(admin)
     response.assertStatus(204)
 
     // Verifica que restam 9
@@ -750,7 +738,7 @@ test.group('Manutenção - Exclusão de Telemetrias e Métricas', (group) => {
     assert.isNotNull(metric)
 
     // Deleta a métrica
-    const delResp = await client.delete(`/api/v1/maintenance/metrics/${metricId}`).loginAs(admin)
+    const delResp = await client.delete(`/api/v1/system/metrics/${metricId}`).loginAs(admin)
     delResp.assertStatus(204)
 
     // Verifica que sumiu

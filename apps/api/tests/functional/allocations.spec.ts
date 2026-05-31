@@ -8,277 +8,239 @@ import { DateTime } from 'luxon'
 test.group('Allocations', (group) => {
   group.each.setup(() => testUtils.db().withGlobalTransaction())
 
-  test('usuário deve criar uma alocação', async ({ client }) => {
-    // Arrange
+  // =========================================================================
+  // CRIAÇÃO E REGRAS DE NEGÓCIO (store)
+  // =========================================================================
+
+  test('usuário deve criar uma alocação comum (sem sudo) e auto-aprovar', async ({
+    client,
+    assert,
+  }) => {
     const user = await User.create({
       fullName: 'Teste User',
       email: 'teste@teste.com',
-      password: 'senha123',
+      password: '123',
       role: 'user',
     })
+    const machine = await Machine.create({ name: 'PC-01', description: 'Lab', status: 'available' })
 
-    const machine = await Machine.create({
-      name: 'PC-01',
-      description: 'Computador do lab 1',
-      cpuModel: 'Intel i5',
-      totalRamGb: 8,
-      status: 'available',
-    })
-
-    const startTime = DateTime.now().plus({ hours: 1 })
-    const endTime = DateTime.now().plus({ hours: 3 })
-
-    // Act
-    const response = await client.post('/api/v1/allocations').loginAs(user).json({
-      machineId: machine.id,
-      startTime: startTime.toISO(),
-      endTime: endTime.toISO(),
-    })
-
-    // Assert
-    response.assertStatus(201)
-    response.assertBodyContains({
-      machineId: machine.id,
-      userId: user.id,
-    })
-  })
-
-  test('NÃO deve criar alocação em máquina em manutenção', async ({ client }) => {
-    // Arrange
-    const user = await User.create({
-      fullName: 'Teste User',
-      email: 'teste@teste.com',
-      password: 'senha123',
-      role: 'user',
-    })
-
-    const machine = await Machine.create({
-      name: 'PC-MANUTENCAO',
-      description: 'Máquina em manutenção',
-      cpuModel: 'Intel i5',
-      totalRamGb: 8,
-      status: 'maintenance',
-    })
-
-    const startTime = DateTime.now().plus({ hours: 1 })
-    const endTime = DateTime.now().plus({ hours: 3 })
-
-    // Act
-    const response = await client.post('/api/v1/allocations').loginAs(user).json({
-      machineId: machine.id,
-      startTime: startTime.toISO(),
-      endTime: endTime.toISO(),
-    })
-
-    // Assert
-    response.assertStatus(400)
-    response.assertBodyContains({
-      code: 'MACHINE_IN_MAINTENANCE',
-    })
-  })
-
-  test('NÃO deve criar alocação com conflito de horário', async ({ client, assert }) => {
-    // Arrange
-    const user = await User.create({
-      fullName: 'Teste User',
-      email: 'teste@teste.com',
-      password: 'senha123',
-      role: 'user',
-    })
-
-    const machine = await Machine.create({
-      name: 'PC-01',
-      description: 'Computador do lab 1',
-      cpuModel: 'Intel i5',
-      totalRamGb: 8,
-      status: 'available',
-    })
-
-    const startTime = DateTime.now().plus({ hours: 1 })
-    const endTime = DateTime.now().plus({ hours: 3 })
-
-    // Cria primeira alocação via API
-    const firstResponse = await client.post('/api/v1/allocations').loginAs(user).json({
-      machineId: machine.id,
-      startTime: startTime.toISO(),
-      endTime: endTime.toISO(),
-    })
-
-    // Verifica se a primeira alocação foi criada com sucesso
-    assert.equal(firstResponse.status(), 201, 'Primeira alocação deveria ser criada')
-
-    // Act: tenta criar outra no mesmo horário (com sobreposição)
     const response = await client
       .post('/api/v1/allocations')
       .loginAs(user)
       .json({
         machineId: machine.id,
-        startTime: startTime.plus({ minutes: 30 }).toISO(),
-        endTime: endTime.plus({ minutes: 30 }).toISO(),
+        startTime: DateTime.utc().plus({ hours: 1 }).toISO(), // Tudo em UTC no teste
+        endTime: DateTime.utc().plus({ hours: 3 }).toISO(),
+        isSudo: false,
       })
 
-    // Assert
-    response.assertStatus(409)
-    response.assertBodyContains({
-      code: 'ALLOCATION_CONFLICT',
-    })
+    response.assertStatus(201)
+    response.assertBodyContains({ status: 'approved', isSudo: false })
   })
 
+  test('alocação com privilégios (sudo) deve ficar pendente de aprovação', async ({ client }) => {
+    const user = await User.create({
+      fullName: 'Sudo User',
+      email: 'sudo@teste.com',
+      password: '123',
+      role: 'user',
+    })
+    const machine = await Machine.create({ name: 'PC-02', description: 'Lab', status: 'available' })
+
+    const response = await client
+      .post('/api/v1/allocations')
+      .loginAs(user)
+      .json({
+        machineId: machine.id,
+        startTime: DateTime.utc().plus({ hours: 1 }).toISO(),
+        endTime: DateTime.utc().plus({ hours: 3 }).toISO(),
+        isSudo: true,
+      })
+
+    response.assertStatus(201)
+    response.assertBodyContains({ status: 'pending', isSudo: true })
+  })
+
+  test('NÃO deve criar alocação em máquina em manutenção', async ({ client }) => {
+    const user = await User.create({
+      fullName: 'User',
+      email: 'u1@teste.com',
+      password: '123',
+      role: 'user',
+    })
+    const machine = await Machine.create({
+      name: 'PC-MANU',
+      description: 'Manutenção',
+      status: 'maintenance',
+    })
+
+    const response = await client
+      .post('/api/v1/allocations')
+      .loginAs(user)
+      .json({
+        machineId: machine.id,
+        startTime: DateTime.utc().plus({ hours: 1 }).toISO(),
+        endTime: DateTime.utc().plus({ hours: 2 }).toISO(),
+      })
+
+    response.assertStatus(400)
+    response.assertBodyContains({ code: 'MACHINE_IN_MAINTENANCE' })
+  })
+
+  test('NÃO deve criar alocação com conflito de horário na mesma máquina', async ({ client }) => {
+    const user = await User.create({
+      fullName: 'User',
+      email: 'u2@teste.com',
+      password: '123',
+      role: 'user',
+    })
+    const machine = await Machine.create({ name: 'PC-01', description: 'Lab', status: 'available' })
+
+    const baseStart = DateTime.utc().plus({ hours: 1 })
+    const baseEnd = DateTime.utc().plus({ hours: 3 })
+
+    // Cria a primeira reserva (1h às 3h)
+    await Allocation.create({
+      userId: user.id,
+      machineId: machine.id,
+      startTime: baseStart,
+      endTime: baseEnd,
+      status: 'approved',
+    })
+
+    // Tenta criar sobreposta (1.5h às 3.5h)
+    const response = await client
+      .post('/api/v1/allocations')
+      .loginAs(user)
+      .json({
+        machineId: machine.id,
+        startTime: baseStart.plus({ minutes: 30 }).toISO(),
+        endTime: baseEnd.plus({ minutes: 30 }).toISO(),
+      })
+
+    response.assertStatus(409)
+    response.assertBodyContains({ code: 'ALLOCATION_CONFLICT' })
+  })
+
+  // =========================================================================
+  // LISTAGENS (index e myAllocations)
+  // =========================================================================
+
   test('usuário deve listar apenas suas próprias alocações', async ({ client, assert }) => {
-    // Arrange
     const user1 = await User.create({
       fullName: 'User 1',
-      email: 'user1@teste.com',
-      password: 'senha123',
+      email: 'a1@teste.com',
+      password: '123',
       role: 'user',
     })
-
     const user2 = await User.create({
       fullName: 'User 2',
-      email: 'user2@teste.com',
-      password: 'senha123',
+      email: 'a2@teste.com',
+      password: '123',
       role: 'user',
     })
+    const machine = await Machine.create({ name: 'PC-01', description: 'Lab', status: 'available' })
 
-    const machine = await Machine.create({
-      name: 'PC-01',
-      description: 'Computador do lab 1',
-      cpuModel: 'Intel i5',
-      totalRamGb: 8,
-      status: 'available',
-    })
-
-    // Alocações do user1
     await Allocation.create({
       userId: user1.id,
       machineId: machine.id,
-      startTime: DateTime.now().plus({ hours: 1 }),
-      endTime: DateTime.now().plus({ hours: 2 }),
-      status: 'pending',
+      startTime: DateTime.utc(),
+      endTime: DateTime.utc().plus({ hours: 1 }),
     })
-
-    // Alocações do user2
     await Allocation.create({
       userId: user2.id,
       machineId: machine.id,
-      startTime: DateTime.now().plus({ hours: 3 }),
-      endTime: DateTime.now().plus({ hours: 4 }),
-      status: 'pending',
+      startTime: DateTime.utc(),
+      endTime: DateTime.utc().plus({ hours: 1 }),
     })
 
-    // Act: user1 lista suas alocações
-    const response = await client.get('/api/v1/allocations').loginAs(user1)
+    const response = await client.get('/api/v1/allocations/my').loginAs(user1)
 
-    // Assert
     response.assertStatus(200)
-    const body = response.body()
-    assert.equal(body.data.length, 1)
-    assert.equal(body.data[0].userId, user1.id)
+    assert.equal(response.body().meta.total, 1)
   })
 
-  test('admin deve listar todas as alocações', async ({ client, assert }) => {
-    // Arrange
-    const admin = await User.create({
-      fullName: 'Admin',
-      email: 'admin@teste.com',
-      password: 'senha123',
-      role: 'admin',
-    })
+  // =========================================================================
+  // EXTENSÃO (Grace Period)
+  // =========================================================================
 
+  test('usuário deve conseguir estender a sua própria alocação ativa', async ({
+    client,
+    assert,
+  }) => {
     const user = await User.create({
-      fullName: 'User Normal',
-      email: 'user@teste.com',
-      password: 'senha123',
+      fullName: 'Ext User',
+      email: 'ext@teste.com',
+      password: '123',
       role: 'user',
     })
+    const machine = await Machine.create({ name: 'PC-01', description: 'Lab', status: 'available' })
 
-    const machine = await Machine.create({
-      name: 'PC-01',
-      description: 'Computador do lab 1',
-      cpuModel: 'Intel i5',
-      totalRamGb: 8,
-      status: 'available',
-    })
-
-    await Allocation.createMany([
-      {
-        userId: admin.id,
-        machineId: machine.id,
-        startTime: DateTime.now().plus({ hours: 1 }),
-        endTime: DateTime.now().plus({ hours: 2 }),
-        status: 'pending',
-      },
-      {
-        userId: user.id,
-        machineId: machine.id,
-        startTime: DateTime.now().plus({ hours: 3 }),
-        endTime: DateTime.now().plus({ hours: 4 }),
-        status: 'pending',
-      },
-    ])
-
-    // Act
-    const response = await client.get('/api/v1/allocations').loginAs(admin)
-
-    // Assert
-    response.assertStatus(200)
-    const body = response.body()
-    assert.isAtLeast(body.data.length, 2)
-  })
-
-  test('admin deve atualizar status de uma alocação', async ({ client }) => {
-    // Arrange
-    const admin = await User.create({
-      fullName: 'Admin User',
-      email: 'admin@teste.com',
-      password: 'senha123',
-      role: 'admin',
-    })
-
-    const user = await User.create({
-      fullName: 'Teste User',
-      email: 'teste@teste.com',
-      password: 'senha123',
-      role: 'user',
-    })
-
-    const machine = await Machine.create({
-      name: 'PC-01',
-      description: 'Computador do lab 1',
-      cpuModel: 'Intel i5',
-      totalRamGb: 8,
-      status: 'available',
-    })
+    const endTime = DateTime.utc().plus({ minutes: 30 }) // Acaba daqui a 30 mins
 
     const allocation = await Allocation.create({
       userId: user.id,
       machineId: machine.id,
-      startTime: DateTime.now().plus({ hours: 1 }),
-      endTime: DateTime.now().plus({ hours: 3 }),
-      status: 'pending',
-    })
-
-    // Act: admin pode alterar qualquer status
-    const response = await client.patch(`/api/v1/allocations/${allocation.id}`).loginAs(admin).json({
+      startTime: DateTime.utc().minus({ minutes: 30 }),
+      endTime: endTime,
       status: 'approved',
     })
 
-    // Assert
+    const response = await client
+      .post(`/api/v1/allocations/${allocation.id}/extend`)
+      .loginAs(user)
+      .json({
+        additionalMinutes: 30,
+      })
+
     response.assertStatus(200)
-    response.assertBodyContains({
+    await allocation.refresh()
+
+    // O novo endTime deve ser 30 minutos maior
+    const diffMins = allocation.endTime.diff(endTime, 'minutes').minutes
+    assert.closeTo(diffMins, 30, 1)
+  })
+
+  test('deve negar extensão se a alocação já tiver passado do grace period', async ({ client }) => {
+    const user = await User.create({
+      fullName: 'Teste',
+      email: 't2@teste.com',
+      password: '123',
+      role: 'user',
+    })
+    const machine = await Machine.create({ name: 'PC-01', description: 'Lab', status: 'available' })
+
+    const allocation = await Allocation.create({
+      userId: user.id,
+      machineId: machine.id,
+      startTime: DateTime.utc().minus({ hours: 2 }),
+      endTime: DateTime.utc().minus({ minutes: 10 }), // Acabou há 10 minutos (fora dos 5 min de tolerância)
       status: 'approved',
+    })
+
+    const response = await client
+      .post(`/api/v1/allocations/${allocation.id}/extend`)
+      .loginAs(user)
+      .json({
+        additionalMinutes: 30,
+      })
+
+    response.assertStatus(400)
+    response.assertBodyContains({
+      message: 'O tempo limite para extensão expirou (Grace Period encerrado).',
     })
   })
 
+  // =========================================================================
+  // SEGURANÇA BÁSICA
+  // =========================================================================
+
   test('NÃO deve criar alocação sem autenticação', async ({ client }) => {
-    // Act
     const response = await client.post('/api/v1/allocations').json({
       machineId: 1,
-      startTime: DateTime.now().plus({ hours: 1 }).toISO(),
-      endTime: DateTime.now().plus({ hours: 3 }).toISO(),
+      startTime: DateTime.utc().toISO(),
+      endTime: DateTime.utc().plus({ hours: 1 }).toISO(),
     })
-
-    // Assert
     response.assertStatus(401)
   })
 })

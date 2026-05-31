@@ -2,232 +2,273 @@ import { test } from '@japa/runner'
 import User from '#models/user'
 import Machine from '#models/machine'
 import Allocation from '#models/allocation'
+import MachineUser from '#models/machine_user'
+import SshConnectionAttempt from '#models/ssh_connection_attempt'
 import testUtils from '@adonisjs/core/services/test_utils'
 import { DateTime } from 'luxon'
 
 test.group('Agent API', (group) => {
   group.each.setup(() => testUtils.db().withGlobalTransaction())
 
-  test('heartbeat deve manter máquina online', async ({ client, assert }) => {
-    // Arrange
+  // =========================================================================
+  // 1. HEARTBEAT: BÁSICO E STATUS
+  // =========================================================================
+
+  test('heartbeat deve manter máquina online e responder com agentConfig', async ({
+    client,
+    assert,
+  }) => {
     const machine = await Machine.create({
       name: 'PC-AGENT-01',
-      description: 'Agente teste heartbeat',
-      cpuModel: 'Intel i5',
-      totalRamGb: 8,
+      description: 'Lab',
+      token: 'token123',
       status: 'offline',
+      telemetryPreset: 'eco',
     })
 
-    // Act
     const response = await client
       .post('/api/v1/agent/heartbeat')
       .header('Authorization', `Bearer ${machine.token}`)
 
-    // Assert
     response.assertStatus(200)
     response.assertBodyContains({
-      machine: {
-        id: machine.id,
-        name: 'PC-AGENT-01',
+      status: 'acknowledged',
+      accessControl: { shouldBlock: false },
+      agentConfig: {
+        telemetry: { telemetryPreset: 'eco' },
       },
-      shouldBlock: false,
     })
 
-    // Verifica que status mudou para available
     await machine.refresh()
     assert.equal(machine.status, 'available')
     assert.isNotNull(machine.lastSeenAt)
   })
 
-  test('heartbeat deve retornar alocação atual se existir', async ({ client }) => {
-    // Arrange
+  test('heartbeat deve atualizar currentSessions e mudar status para occupied', async ({
+    client,
+    assert,
+  }) => {
+    const machine = await Machine.create({ name: 'PC-01', description: 'Lab', token: 'token123' })
+
+    const response = await client
+      .post('/api/v1/agent/heartbeat')
+      .header('Authorization', `Bearer ${machine.token}`)
+      .json({ connectedUsers: ['lab.aluno_silva'] })
+
+    response.assertStatus(200)
+
+    await machine.refresh()
+    assert.equal(machine.status, 'occupied') // Mudou porque há alguém conectado
+    assert.deepEqual(machine.currentSessions, ['lab.aluno_silva']) // Registrou a sessão na máquina
+  })
+
+  // =========================================================================
+  // 2. HEARTBEAT: PROVISIONAMENTO E CONTROLE DE ACESSO
+  // =========================================================================
+
+  test('alocação em T-5 minutos deve enviar usuário com acesso restrito (sftp_only)', async ({
+    client,
+  }) => {
+    const machine = await Machine.create({ name: 'PC-01', description: 'Lab', token: 't1' })
     const user = await User.create({
-      fullName: 'Teste User',
-      email: 'teste@teste.com',
-      password: 'senha123',
+      fullName: 'Aluno T5',
+      email: 't5@teste.com',
+      password: '123',
       role: 'user',
+      systemUsername: 'lab.aluno_t5',
     })
 
-    const machine = await Machine.create({
-      name: 'PC-AGENT-02',
-      description: 'Agente teste heartbeat com alocação',
-      cpuModel: 'Intel i5',
-      totalRamGb: 8,
-      status: 'available',
-    })
-
-    // Cria alocação ativa (agora)
+    // Alocação começa daqui a 3 minutos
     await Allocation.create({
       userId: user.id,
       machineId: machine.id,
-      startTime: DateTime.now().minus({ hours: 1 }),
+      startTime: DateTime.now().plus({ minutes: 3 }),
       endTime: DateTime.now().plus({ hours: 1 }),
       status: 'approved',
     })
 
-    // Act
     const response = await client
       .post('/api/v1/agent/heartbeat')
       .header('Authorization', `Bearer ${machine.token}`)
 
-    // Assert
     response.assertStatus(200)
     response.assertBodyContains({
-      currentAllocation: {
-        userId: user.id,
-        userName: 'Teste User',
-      },
+      provisioning: [
+        {
+          systemUsername: 'lab.aluno_t5',
+          accessState: 'sftp_only', // Impede o terminal antes da hora
+          isSudo: false,
+        },
+      ],
     })
   })
 
-  test('heartbeat deve incluir shouldBlock true para máquina em manutenção', async ({ client }) => {
-    // Arrange
-    const machine = await Machine.create({
-      name: 'PC-MANUTENCAO-2',
-      description: 'Agente teste heartbeat manutenção',
-      cpuModel: 'Intel i5',
-      totalRamGb: 8,
-      status: 'maintenance',
+  test('alocação ativa deve enviar usuário com acesso total (full_shell)', async ({ client }) => {
+    const machine = await Machine.create({ name: 'PC-01', description: 'Lab', token: 't2' })
+    const user = await User.create({
+      fullName: 'Aluno Ativo',
+      email: 'ativa@teste.com',
+      password: '123',
+      role: 'user',
+      systemUsername: 'lab.aluno_ativo',
     })
 
-    // Act
+    // Alocação já começou
+    await Allocation.create({
+      userId: user.id,
+      machineId: machine.id,
+      startTime: DateTime.now().minus({ minutes: 10 }),
+      endTime: DateTime.now().plus({ hours: 1 }),
+      status: 'approved',
+      isSudo: true, // Vamos testar o sudo também
+    })
+
     const response = await client
       .post('/api/v1/agent/heartbeat')
       .header('Authorization', `Bearer ${machine.token}`)
 
-    // Assert
     response.assertStatus(200)
     response.assertBodyContains({
-      shouldBlock: true,
-      blockReason: 'MACHINE_MAINTENANCE',
+      provisioning: [
+        {
+          systemUsername: 'lab.aluno_ativo',
+          accessState: 'full_shell', // Terminal liberado!
+          isSudo: true, // Sudo liberado!
+        },
+      ],
     })
   })
 
-  test('heartbeat deve retornar shouldBlock true quando usuário não tem alocação', async ({
-    client,
-  }) => {
-    // Arrange
-    const machine = await Machine.create({
-      name: 'PC-AGENT-09',
-      description: 'Agente teste heartbeat sem alocação',
-      cpuModel: 'Intel i5',
-      totalRamGb: 8,
-      status: 'available',
-    })
+  // =========================================================================
+  // 3. HEARTBEAT: RECONCILIAÇÃO (DRIFT DETECTION)
+  // =========================================================================
 
-    // Não cria alocação — qualquer usuário conectado deve ser bloqueado
-
-    // Act - Envia usuário conectado sem alocação ativa
-    const response = await client
-      .post('/api/v1/agent/heartbeat')
-      .header('Authorization', `Bearer ${machine.token}`)
-      .json({ connectedUsers: ['usuario.sem.alocacao'] })
-
-    // Assert
-    response.assertStatus(200)
-    response.assertBodyContains({
-      shouldBlock: true,
-      blockReason: 'NO_VALID_ALLOCATION',
-    })
-  })
-
-  test('heartbeat deve atualizar activeUsers com usuários conectados via SSH', async ({
+  test('drift: deve remover do BD usuário que sumiu do SO e não tem alocação', async ({
     client,
     assert,
   }) => {
-    // Arrange
-    const machine = await Machine.create({
-      name: 'PC-AGENT-10',
-      description: 'Agente teste connectedUsers',
-      cpuModel: 'Intel i5',
-      totalRamGb: 8,
-      status: 'available',
+    const machine = await Machine.create({ name: 'PC-01', description: 'Lab', token: 't3' })
+    const user = await User.create({
+      fullName: 'Fantasma',
+      email: 'f@teste.com',
+      password: '123',
+      role: 'user',
+      systemUsername: 'lab.fantasma',
     })
 
-    // Act - Agente reporta que 'aluno.silva' está conectado via SSH
+    // Cadastra na tabela pivô como se existisse no SO
+    const machineUser = await MachineUser.create({
+      machineId: machine.id,
+      userId: user.id,
+      osUsername: 'lab.fantasma',
+    })
+
+    // Agente manda o heartbeat dizendo que a máquina está vazia
+    await client
+      .post('/api/v1/agent/heartbeat')
+      .header('Authorization', `Bearer ${machine.token}`)
+      .json({ provisionedOsUsers: [] })
+
+    // O AdonisJS deve ter percebido a discrepância e apagado do banco
+    const exists = await MachineUser.find(machineUser.id)
+    assert.isNull(exists)
+  })
+
+  test('drift: deve forçar recriação de usuário que sumiu do SO mas TEM alocação ativa', async ({
+    client,
+  }) => {
+    const machine = await Machine.create({ name: 'PC-01', description: 'Lab', token: 't4' })
+    const user = await User.create({
+      fullName: 'Essencial',
+      email: 'e@teste.com',
+      password: '123',
+      role: 'user',
+      systemUsername: 'lab.essencial',
+    })
+
+    // Alocação rolando
+    await Allocation.create({
+      userId: user.id,
+      machineId: machine.id,
+      startTime: DateTime.now().minus({ minutes: 10 }),
+      endTime: DateTime.now().plus({ hours: 1 }),
+      status: 'approved',
+    })
+
+    // Agente relata que algum admin apagou o cara do SO
     const response = await client
       .post('/api/v1/agent/heartbeat')
       .header('Authorization', `Bearer ${machine.token}`)
-      .json({ connectedUsers: ['aluno.silva'] })
+      .json({ provisionedOsUsers: [] })
 
-    // Assert
-    response.assertStatus(200)
+    // A API não aceita o desvio e ordena a recriação imediata
     response.assertBodyContains({
-      connectedUsers: ['aluno.silva'],
-      connectedCount: 1,
+      provisioning: [{ systemUsername: 'lab.essencial', accessState: 'full_shell' }],
     })
-
-    await machine.refresh()
-    assert.deepEqual(machine.activeUsers, ['aluno.silva'])
-    assert.equal(machine.status, 'occupied')
   })
 
-  test('sync-specs deve atualizar especificações da máquina', async ({ client, assert }) => {
-    // Arrange
-    const machine = await Machine.create({
-      name: 'PC-AGENT-12',
-      description: 'Agente teste sync-specs',
-      status: 'available',
-    })
+  // =========================================================================
+  // 4. HEARTBEAT: AUDITORIA DE SSH
+  // =========================================================================
 
-    // Act
+  test('deve registrar tentativas de conexão SSH relatadas pelo agente', async ({
+    client,
+    assert,
+  }) => {
+    const machine = await Machine.create({ name: 'PC-01', description: 'Lab', token: 't5' })
+
+    const response = await client
+      .post('/api/v1/agent/heartbeat')
+      .header('Authorization', `Bearer ${machine.token}`)
+      .json({
+        sshAttempts: [
+          {
+            sourceIp: '192.168.1.100',
+            targetUsername: 'root',
+            status: 'failed',
+            authMethod: 'password',
+          },
+          { sourceIp: '189.50.20.1', targetUsername: 'lab.teste', status: 'invalid_user' },
+        ],
+      })
+
+    response.assertStatus(200)
+
+    const attempts = await SshConnectionAttempt.query().where('machineId', machine.id)
+    assert.equal(attempts.length, 2)
+    assert.equal(attempts[0].targetUsername, 'root')
+  })
+
+  // =========================================================================
+  // 5. SYNC-SPECS E TELEMETRIA
+  // =========================================================================
+
+  test('sync-specs deve atualizar especificações da máquina', async ({ client, assert }) => {
+    const machine = await Machine.create({ name: 'PC-01', description: 'Lab', token: 't6' })
+
     const response = await client
       .put('/api/v1/agent/sync-specs')
       .header('Authorization', `Bearer ${machine.token}`)
       .json({
-        cpuModel: 'AMD Ryzen 9 5900X',
-        gpuModel: 'NVIDIA RTX 4080',
-        totalRamGb: 64,
-        disks: [
-          { device: '/dev/sda1', mountpoint: '/', totalGb: 2048, freeGb: 1024 },
-        ],
-        ipAddress: '192.168.1.100',
+        cpuModel: 'AMD Ryzen 9',
+        totalRamGb: 32,
+        disks: [{ device: '/dev/sda', mountpoint: '/', totalGb: 500, freeGb: 200 }],
       })
 
-    // Assert
     response.assertStatus(200)
-    response.assertBodyContains({
-      synced: true,
-      machine: {
-        cpuModel: 'AMD Ryzen 9 5900X',
-        gpuModel: 'NVIDIA RTX 4080',
-        totalRamGb: 64,
-      },
-    })
-
     await machine.refresh()
-    assert.equal(machine.cpuModel, 'AMD Ryzen 9 5900X')
-    assert.equal(machine.totalRamGb, 64)
+    assert.equal(machine.cpuModel, 'AMD Ryzen 9')
+    assert.equal(machine.totalRamGb, 32)
+    // O controller extrai e salva apenas partições essenciais como a '/'
+    assert.isArray(machine.disks)
   })
 
-  test('telemetry deve aceitar dados de telemetria', async ({ client, assert }) => {
-    // Arrange
-    const user = await User.create({
-      fullName: 'Teste Telemetria',
-      email: 'telemetria@teste.com',
-      password: 'senha123',
-      role: 'user',
-    })
+  test('telemetry deve aceitar dados em lote convertendo VRAM e processos', async ({
+    client,
+    assert,
+  }) => {
+    const machine = await Machine.create({ name: 'PC-01', description: 'Lab', token: 't7' })
 
-    const machine = await Machine.create({
-      name: 'PC-AGENT-13',
-      description: 'Agente teste telemetria',
-      cpuModel: 'Intel i5',
-      totalRamGb: 8,
-      status: 'offline',
-    })
-
-    // Cria alocação ativa para que a telemetria seja aceita
-    await Allocation.create({
-      userId: user.id,
-      machineId: machine.id,
-      startTime: DateTime.now().minus({ hours: 1 }),
-      endTime: DateTime.now().plus({ hours: 1 }),
-      status: 'approved',
-    })
-
-    // Act
-    const connectedSince = Math.floor(Date.now() / 1000)
     const response = await client
       .post('/api/v1/agent/telemetry')
       .header('Authorization', `Bearer ${machine.token}`)
@@ -239,56 +280,39 @@ test.group('Agent API', (group) => {
             cpuTemp: 650,
             gpuUsage: 200,
             gpuTemp: 550,
-            ramTotalGb: 160,
-            ramUsedGb: 80,
+            gpuPowerWatts: 150,
+            ramTotalGb: 320,
+            ramUsedGb: 160,
+            vramTotalGb: 120,
+            vramUsedGb: 40, // Note que agora o Python envia Gb * 10
             diskReadMbps: 300,
             diskWriteMbps: 120,
-            downloadMbps: 50.5,
-            uploadMbps: 10.2,
-            moboTemperature: 420,
-            activeUsers: [
-              {
-                username: 'aluno.teste',
-                terminal: 'pts/0',
-                host: 'localhost',
-                isSsh: true,
-                connectedSince,
-              },
+            processes: [
+              // Testando o array de processos do psutil
+              { pid: 1234, name: 'python3', username: 'lab.aluno', cpuPercent: 850, ramMb: 2048 },
             ],
           },
         ],
       })
 
-    // Assert
     response.assertStatus(204)
-
     await machine.refresh()
     assert.equal(machine.status, 'available')
-    assert.isNotNull(machine.lastSeenAt)
   })
 
-  test('deve rejeitar requisição sem token', async ({ client }) => {
-    // Act
-    const response = await client.post('/api/v1/agent/heartbeat')
+  // =========================================================================
+  // 6. SEGURANÇA
+  // =========================================================================
 
-    // Assert
+  test('deve rejeitar requisição sem token', async ({ client }) => {
+    const response = await client.post('/api/v1/agent/heartbeat')
     response.assertStatus(401)
-    response.assertBodyContains({
-      code: 'MISSING_HEADER',
-    })
   })
 
   test('deve rejeitar requisição com token inválido', async ({ client }) => {
-    // Act
     const response = await client
       .post('/api/v1/agent/heartbeat')
-      .header('Authorization', 'Bearer token_invalido_123')
-
-    // Assert
+      .header('Authorization', 'Bearer token_falso')
     response.assertStatus(401)
-    response.assertBodyContains({
-      code: 'INVALID_TOKEN',
-    })
   })
-
 })

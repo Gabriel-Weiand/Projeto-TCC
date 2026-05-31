@@ -4,11 +4,11 @@ import AllocationMetric from '#models/allocation_metric'
 export default class AllocationMetricsController {
   /**
    * Remove uma métrica de alocação específica.
-   * 
-   * DELETE /api/v1/maintenance/metrics/:metricId
+   * * DELETE /api/v1/system/metrics/:id
    */
   async destroy({ params, response }: HttpContext) {
-    const metric = await AllocationMetric.findOrFail(params.metricId)
+    // CORREÇÃO: params.id ao invés de params.metricId
+    const metric = await AllocationMetric.findOrFail(params.id)
     await metric.delete()
 
     return response.noContent()

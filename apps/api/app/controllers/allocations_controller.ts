@@ -3,16 +3,40 @@ import { DateTime } from 'luxon'
 import Allocation from '#models/allocation'
 import AllocationMetric from '#models/allocation_metric'
 import Machine from '#models/machine'
-import SshSession from '#models/ssh_session'
-import { sshKeyStore } from '#controllers/agent_controller'
 import { summarizeAllocation } from '#services/allocation_summarizer'
 import {
   createAllocationValidator,
   updateAllocationValidator,
   listAllocationsValidator,
 } from '#validators/allocation'
+import { extendAllocationValidator } from '#validators/allocation'
 
 export default class AllocationsController {
+  /**
+   * Lista apenas as alocações do utilizador autenticado.
+   * GET /api/v1/allocations/my
+   */
+  async myAllocations({ auth, request, response }: HttpContext) {
+    const user = auth.user!
+
+    // Podemos reaproveitar o listAllocationsValidator para a paginação e status
+    const { status, page = 1, limit = 20 } = await request.validateUsing(listAllocationsValidator)
+
+    let query = Allocation.query()
+      .where('userId', user.id)
+      .where('userHidden', false)
+      .preload('machine')
+      .orderBy('startTime', 'desc')
+
+    if (status) {
+      query = query.where('status', status)
+    }
+
+    const allocations = await query.paginate(page, limit)
+
+    return response.ok(allocations)
+  }
+
   /**
    * Lista alocações com filtros opcionais.
    * - User normal: vê apenas suas próprias alocações
@@ -49,71 +73,94 @@ export default class AllocationsController {
   }
 
   /**
-   * Cria uma nova alocação (reserva).
-   * - User normal: cria alocação para si mesmo (userId vem do auth)
-   * - Admin: pode criar alocação para qualquer usuário
-   *
-   * POST /api/v1/allocations
+   * Cria uma nova alocação.
+   * Realiza validações de manutenção, conflito de horário (UTC) e regras de Sudo.
+   * * POST /api/v1/allocations
    */
   async store({ auth, request, response }: HttpContext) {
-    const currentUser = auth.user!
+    const user = auth.user!
     const data = await request.validateUsing(createAllocationValidator)
 
-    // Define o userId: Admin pode especificar, user normal usa seu próprio id
-    let targetUserId: number
-    if (currentUser.role === 'admin' && data.userId) {
-      targetUserId = data.userId
-    } else {
-      targetUserId = currentUser.id
-    }
+    // Forçar UTC para garantir consistência absoluta no banco (SQLite/Postgres)
+    data.startTime = data.startTime.toUTC()
+    data.endTime = data.endTime.toUTC()
 
-    // Verifica se a máquina existe e não está em manutenção
+    // 1. Verificação de Status da Máquina
     const machine = await Machine.findOrFail(data.machineId)
-    if (machine.status === 'maintenance') {
+    if (machine.status === 'maintenance' || machine.status === 'offline') {
       return response.badRequest({
         code: 'MACHINE_IN_MAINTENANCE',
-        message: 'Esta máquina está em manutenção e não pode receber alocações.',
+        message: 'A máquina selecionada está em manutenção ou offline.',
       })
     }
 
-    // Timestamps em milissegundos para comparação
-    const newStart = data.startTime.toMillis()
-    const newEnd = data.endTime.toMillis()
-
-    // Busca todas as alocações ativas da máquina
-    const existingAllocations = await Allocation.query()
+    // 2. Verificação de Conflito de Horário (Overlap Algorithm)
+    // Há conflito se (NovoInicio < FimExistente) E (NovoFim > InicioExistente)
+    // Apenas para status 'approved' ou 'pending'
+    const conflict = await Allocation.query()
       .where('machineId', data.machineId)
       .whereIn('status', ['approved', 'pending'])
-
-    // Gap mínimo obrigatório entre alocações (5 minutos)
-    const GAP_MS = 5 * 60 * 1000
-
-    // Verifica conflito de horário em JavaScript
-    // Considera gap de 5 minutos entre alocações
-    const conflict = existingAllocations.find((allocation) => {
-      const existingStart = allocation.startTime.toMillis()
-      const existingEnd = allocation.endTime.toMillis()
-      // Conflito: nova alocação precisa começar 5min depois da anterior terminar
-      // e terminar 5min antes da próxima começar
-      return newStart < existingEnd + GAP_MS && newEnd + GAP_MS > existingStart
-    })
+      .where('startTime', '<', data.endTime.toSQL()!)
+      .where('endTime', '>', data.startTime.toSQL()!)
+      .first()
 
     if (conflict) {
       return response.conflict({
         code: 'ALLOCATION_CONFLICT',
-        message: 'Já existe uma alocação neste horário para esta máquina.',
-        conflictingAllocation: conflict.id,
+        message: 'Já existe uma reserva ativa para esta máquina neste horário.',
       })
     }
 
-    const allocation = await Allocation.create({
-      ...data,
-      userId: targetUserId,
-    })
-    await allocation.load('user')
-    await allocation.load('machine')
+    // 3. Regras de Permissão e Sudo
+    if (user.role !== 'admin') {
+      data.userId = user.id // Trava o ID do usuário para ele mesmo
+      data.status = data.isSudo ? 'pending' : 'approved'
+    } else {
+      // Admin pode criar para outros usuários e status é default 'approved'
+      if (!data.userId) data.userId = user.id
+      if (!data.status) data.status = 'approved'
+    }
+
+    const allocation = await Allocation.create(data)
 
     return response.created(allocation)
+  }
+
+  /**
+   * Estende o tempo de uma alocação ativa (Grace Period).
+   * * POST /api/v1/allocations/:id/extend
+   */
+  async extend({ auth, params, request, response }: HttpContext) {
+    const user = auth.user!
+    const allocation = await Allocation.findOrFail(params.id)
+    const { additionalMinutes } = await request.validateUsing(extendAllocationValidator)
+
+    if (user.role !== 'admin' && allocation.userId !== user.id) {
+      return response.forbidden({ message: 'Apenas o dono pode estender a alocação.' })
+    }
+
+    if (allocation.status !== 'approved') {
+      return response.badRequest({ message: 'Apenas alocações ativas podem ser estendidas.' })
+    }
+
+    const now = DateTime.now()
+    const end = allocation.endTime
+
+    // Permite estender apenas se estiver durante a alocação ou no grace period (ex: até 5 min após o fim teórico)
+    if (now > end.plus({ minutes: 5 })) {
+      return response.badRequest({
+        message: 'O tempo limite para extensão expirou (Grace Period encerrado).',
+      })
+    }
+
+    // Adiciona o tempo
+    allocation.endTime = end.plus({ minutes: additionalMinutes })
+    await allocation.save()
+
+    return response.ok({
+      message: `Alocação estendida em ${additionalMinutes} minutos com sucesso.`,
+      newEndTime: allocation.endTime.toISO(),
+    })
   }
 
   /**
@@ -340,103 +387,5 @@ export default class AllocationsController {
     }
 
     return response.ok(allocation.metric)
-  }
-
-  // ============================================================
-  // SSH Access (Server Agent)
-  // ============================================================
-
-  /**
-   * Solicita acesso SSH para uma alocação ativa.
-   * Cria uma SshSession pendente que o agente servidor vai detectar via polling.
-   * Se a chave já estiver pronta, retorna o download imediatamente.
-   *
-   * POST /api/v1/allocations/:id/ssh-access
-   */
-  async requestSshAccess({ auth, params, response }: HttpContext) {
-    const user = auth.user!
-    const allocation = await Allocation.findOrFail(params.id)
-
-    // Verificar propriedade
-    if (user.role !== 'admin' && allocation.userId !== user.id) {
-      return response.forbidden({
-        code: 'NOT_OWNER',
-        message: 'Você só pode solicitar SSH para suas próprias alocações.',
-      })
-    }
-
-    // Verificar se alocação está ativa agora
-    const now = DateTime.now().toMillis()
-    if (
-      allocation.status !== 'approved' ||
-      allocation.startTime.toMillis() > now ||
-      allocation.endTime.toMillis() < now
-    ) {
-      return response.badRequest({
-        code: 'ALLOCATION_NOT_ACTIVE',
-        message: 'A alocação não está ativa no momento.',
-      })
-    }
-
-    // Verificar se a máquina tem system_username configurado
-    const machine = await Machine.findOrFail(allocation.machineId)
-    if (!machine.systemUsername) {
-      return response.badRequest({
-        code: 'NO_SYSTEM_USER',
-        message: 'Esta máquina não possui um usuário de sistema configurado para SSH.',
-      })
-    }
-
-    // Verificar se já existe sessão SSH ativa para esta alocação
-    let session = await SshSession.query()
-      .where('allocationId', allocation.id)
-      .where('status', 'active')
-      .first()
-
-    if (session && session.publicKeyFingerprint) {
-      // Chave já foi gerada pelo agente. Verificar se a privada ainda está disponível
-      const privateKey = sshKeyStore.get(session.id)
-      if (privateKey) {
-        // Entrega a chave e remove do store (single-use)
-        sshKeyStore.delete(session.id)
-        return response.ok({
-          status: 'ready',
-          privateKey,
-          systemUsername: session.systemUsername,
-          machineIp: machine.ipAddress,
-          expiresAt: allocation.endTime.toISO(),
-        })
-      }
-      return response.ok({
-        status: 'expired',
-        message: 'A chave já foi entregue ou expirou. Solicite novamente.',
-      })
-    }
-
-    if (session) {
-      // Sessão pendente mas agente ainda não gerou a chave
-      return response.ok({
-        status: 'pending',
-        message: 'Aguardando o agente gerar a chave SSH. Tente novamente em alguns segundos.',
-      })
-    }
-
-    // Criar nova sessão SSH pendente (agente vai detectar via polling)
-    session = await SshSession.create({
-      allocationId: allocation.id,
-      machineId: machine.id,
-      userId: user.id,
-      systemUsername: machine.systemUsername,
-      publicKeyFingerprint: '', // Será preenchido pelo agente
-      status: 'active',
-      expiresAt: allocation.endTime,
-    })
-
-    return response.created({
-      status: 'pending',
-      sessionId: session.id,
-      message:
-        'Solicitação de SSH enviada. O agente irá gerar a chave. Tente novamente em ~5 segundos.',
-    })
   }
 }
