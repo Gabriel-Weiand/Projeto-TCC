@@ -68,11 +68,6 @@ export default class MachinesController {
       const raw = telemetryBuffer.getLatest(machine.id)
       const serialized = machine.serialize()
 
-      // Oculta macAddress para usuários normais
-      if (user.role !== 'admin') {
-        delete serialized.macAddress
-      }
-
       return {
         ...serialized,
         latestTelemetry: this.normalizeTelemetry(raw),
@@ -137,11 +132,9 @@ export default class MachinesController {
       })),
     }
 
-    // Apenas admin pode ver o token e macAddress
+    // Apenas admin pode ver o token
     if (user.role === 'admin') {
       serialized.token = machine.token
-    } else {
-      delete serialized.macAddress
     }
 
     return response.ok(serialized)

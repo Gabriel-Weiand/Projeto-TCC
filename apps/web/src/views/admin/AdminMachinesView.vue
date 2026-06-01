@@ -180,7 +180,6 @@ function copyToken() {
         <thead>
           <tr>
             <th>Nome</th>
-            <th>MAC</th>
             <th>Status</th>
             <th>IP</th>
             <th>Último Report</th>

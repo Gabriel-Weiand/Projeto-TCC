@@ -88,7 +88,6 @@ nano .env
 
 | Variável             | Padrão | Descrição                                              |
 | -------------------- | ------ | ------------------------------------------------------ |
-| `MAC_ADDRESS`        | (auto) | Detectado automaticamente; defina se a detecção falhar |
 | `HEARTBEAT_INTERVAL` | `30`   | Intervalo do heartbeat em segundos                     |
 | `TELEMETRY_INTERVAL` | `5`    | Intervalo de envio de telemetria em segundos           |
 
@@ -185,13 +184,12 @@ python main.py
 
 O agente:
 
-1. Valida a configuração (token e MAC)
+1. Valida a configuração (token)
 2. Sincroniza specs de hardware com o servidor
-3. **Exibe o overlay fullscreen** (tela de bloqueio com login)
 4. Inicia o loop de heartbeat (a cada 30 s)
-5. Quando o usuário faz login com alocação válida → esconde overlay, libera desktop
-6. Envia telemetria (a cada 5 s) enquanto há alocação ativa
-7. Quando a alocação termina → exibe overlay novamente
+5. Quando o usuário faz login com alocação válida ssh libera shell
+6. Envia telemetria (a cada x s a depender da configuração) enquanto há alocação ativa
+7. Quando a alocação termina, usuário perde acesso shell e passa 24h com acesso sftp
 
 ### Como encerrar o agente (fase de testes)
 
@@ -305,7 +303,7 @@ Para desabilitar temporariamente: renomeie ou delete o arquivo em `~/.config/aut
 
 ### Cenário: mesma máquina (desenvolvimento)
 
-Use `SERVER_URL=http://localhost:3333` no `.env`. Para simular um MAC cadastrado no seed, defina `MAC_ADDRESS=AA:BB:CC:DD:01:01` (MAC do PC-LAB-01).
+Use `SERVER_URL=http://localhost:3333` no `.env`.
 
 ---
 
