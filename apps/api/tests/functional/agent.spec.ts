@@ -243,7 +243,10 @@ test.group('Agent API', (group) => {
   // 5. SYNC-SPECS E TELEMETRIA
   // =========================================================================
 
-  test('sync-specs deve atualizar especificações da máquina', async ({ client, assert }) => {
+  test('sync-specs deve atualizar especificações da máquina incluindo fingerprint', async ({
+    client,
+    assert,
+  }) => {
     const machine = await Machine.create({ name: 'PC-01', description: 'Lab', token: 't6' })
 
     const response = await client
@@ -253,12 +256,14 @@ test.group('Agent API', (group) => {
         cpuModel: 'AMD Ryzen 9',
         totalRamGb: 32,
         disks: [{ device: '/dev/sda', mountpoint: '/', totalGb: 500, freeGb: 200 }],
+        hostFingerprint: 'SHA256:abcd1234efgh5678ijkl_test_fingerprint', // <-- ENVIADO PELO AGENTE
       })
 
     response.assertStatus(200)
     await machine.refresh()
     assert.equal(machine.cpuModel, 'AMD Ryzen 9')
     assert.equal(machine.totalRamGb, 32)
+    assert.equal(machine.hostFingerprint, 'SHA256:abcd1234efgh5678ijkl_test_fingerprint') // <-- SALVO NO BANCO
     // O controller extrai e salva apenas partições essenciais como a '/'
     assert.isArray(machine.disks)
   })

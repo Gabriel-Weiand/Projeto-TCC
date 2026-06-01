@@ -19,7 +19,7 @@ export default class extends BaseSchema {
       table.string('name', 50).notNullable()
       table.string('description', 255).notNullable()
       table.string('system_username', 64).nullable()
-      table.string('host_fingerprint', 128).nullable().index()
+      table.string('host_fingerprint').nullable().index()
 
       // BEARER KEY DO AGENTE
       table.string('token', 128).notNullable().unique().index()

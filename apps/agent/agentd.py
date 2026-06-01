@@ -12,12 +12,23 @@ import threading
 import glob
 import os
 import re
+import pwd
+import shutil
 from datetime import datetime, timezone
 
 API_BASE    = "http://localhost:7372/api/v1/agent"
-TOKEN       = "871f482430e0fbea09e8fe6335b1d5c7d37efe5ec8037cea27c4b98b449484635c567f3c1aaffc0600a9880dfa12ba17a427f8075976f04b62af902b9d2a24df"
-MACHINE     = "PCCASA"
+TOKEN       = "e748e281830727794aab400a3daf938f8e6d4bd1542e4db6273d87677788e273c377cac05b943f1349711c80ce27cf90052cceb501e889b164a6bbd5fb90c176"
+MACHINE     = "PC-LAB-01"
 SYSTEM_USER = getpass.getuser()
+
+# Detecta o caminho real do sftp-server uma vez no boot.
+# O caminho varia por distro/versão — hardcoding quebraria silenciosamente.
+SFTP_SHELL  = (
+    shutil.which("sftp-server")
+    or next(iter(glob.glob("/usr/lib/openssh/sftp-server")), None)
+    or next(iter(glob.glob("/usr/lib/sftp-server")), None)
+    or "/usr/lib/openssh/sftp-server"  # fallback explícito
+)
 LAST_PROCESS_REQUEST_TS = None
 PROCESS_BATCHES_REMAINING = 0
 _process_io_prev = {} # Cache para calcular velocidade de disco (PID -> bytes)
@@ -447,6 +458,100 @@ def parse_ssh_line(line: str) -> dict | None:
             
     return None
 
+def apply_provisioning(provisioning_data: list) -> None:
+    """
+    Sincroniza o Linux com a verdade da API.
+
+    FASE 1 — Drift Correction: remove contas 'lab.*' que a API não listou.
+    FASE 2 — Provisioning: cria/atualiza conta, chave SSH, shell e sudo.
+    """
+    expected_users = {item["systemUsername"] for item in provisioning_data}
+
+    # ------------------------------------------------------------------
+    # FASE 1: DRIFT CORRECTION
+    # ------------------------------------------------------------------
+    for entry in pwd.getpwall():
+        uname = entry.pw_name
+        if uname.startswith("lab.") and uname not in expected_users:
+            print(f"[OS] Removendo conta expirada: {uname}")
+            subprocess.run(["pkill", "-u", uname], stderr=subprocess.DEVNULL)
+            subprocess.run(["userdel", "-r", "-f", uname], stderr=subprocess.DEVNULL)
+
+    # ------------------------------------------------------------------
+    # FASE 2: PROVISIONAMENTO
+    # ------------------------------------------------------------------
+    for item in provisioning_data:
+        uname   = item["systemUsername"]
+        pubkey  = item["sshPublicKey"].strip()
+        state   = item["accessState"]           # "full_shell" | "sftp_only"
+        is_sudo = item.get("isSudo", False)
+
+        # 1. Cria conta se não existir
+        # -K UMASK=0077 garante home 700 independente do login.defs global
+        user_exists = True
+        try:
+            pwd.getpwnam(uname)
+        except KeyError:
+            user_exists = False
+            print(f"[OS] Criando conta: {uname}")
+            subprocess.run(
+                ["useradd", "-m", "-s", "/bin/bash", "-K", "UMASK=0077", "-G", "lab", uname],
+                check=True
+            )
+
+        # 2. Garante que a home é 700 mesmo para contas pré-existentes
+        home = f"/home/{uname}"
+        if os.path.isdir(home):
+            subprocess.run(["chmod", "700", home], check=False)
+
+        # 3. Injeção da chave SSH — só reescreve se o conteúdo mudou
+        ssh_dir   = os.path.join(home, ".ssh")
+        auth_keys = os.path.join(ssh_dir, "authorized_keys")
+
+        os.makedirs(ssh_dir, mode=0o700, exist_ok=True)
+
+        current_key = ""
+        if os.path.exists(auth_keys):
+            try:
+                with open(auth_keys) as f:
+                    current_key = f.read().strip()
+            except OSError:
+                pass
+
+        if current_key != pubkey:
+            with open(auth_keys, "w") as f:
+                f.write(pubkey + "\n")
+
+        os.chmod(auth_keys, 0o600)
+        shutil.chown(ssh_dir,   user=uname, group=uname)
+        shutil.chown(auth_keys, user=uname, group=uname)
+
+        # 4. Controlo de shell (SFTP = bloqueio, Bash = acesso total)
+        target_shell = SFTP_SHELL if state == "sftp_only" else "/bin/bash"
+        subprocess.run(["usermod", "-s", target_shell, uname], check=True)
+
+        # 5. Gestão de sudo — adiciona ou remove do grupo
+        if is_sudo:
+            subprocess.run(["usermod", "-aG", "sudo", uname], stderr=subprocess.DEVNULL)
+        else:
+            subprocess.run(["gpasswd", "-d", uname, "sudo"], stderr=subprocess.DEVNULL)
+
+        action = "atualizada" if user_exists else "criada"
+        print(f"[OS] Conta {uname} {action} | shell={target_shell} | sudo={is_sudo}")
+
+def _host_fingerprint() -> str | None:
+    """Extrai o Fingerprint SHA256 da chave ed25519 da máquina (para o front validar)."""
+    try:
+        # Pega especificamente a chave ED25519
+        out = subprocess.check_output(["ssh-keygen", "-l", "-f", "/etc/ssh/ssh_host_ed25519_key.pub"], text=True)
+        # Saída esperada: "256 SHA256:abcd1234efgh... root@host (ED25519)"
+        match = re.search(r"(SHA256:\S+)", out)
+        if match:
+            return match.group(1)
+    except Exception as e:
+        print(f"[Specs] Aviso: Falha ao ler fingerprint ed25519: {e}")
+    return None
+
 def sync_specs() -> None:
     print("[Specs] Sincronizando hardware...")
     ram  = psutil.virtual_memory()
@@ -461,6 +566,7 @@ def sync_specs() -> None:
         "totalDiskGb": round(disk.total / 1024**3, 1),
         "ipAddress":   _local_ip(),
         "disks":       disks_info,
+        "hostFingerprint": _host_fingerprint()
     }
     specs = {k: v for k, v in specs.items() if v is not None}
 
@@ -481,8 +587,8 @@ def heartbeat_worker():
         try:
             users = _active_users()
             
-            # TODO: Ler provisionedOsUsers reais do /etc/passwd
-            os_users = [u['username'] for u in users] 
+            # Lê os usuários 'lab.*' reais do /etc/passwd para o Drift Detection
+            os_users = [entry.pw_name for entry in pwd.getpwall() if entry.pw_name.startswith("lab.")]
             
             payload = {
                 "connectedUsers": [u['username'] for u in users],
@@ -527,7 +633,10 @@ def heartbeat_worker():
                                 PROCESS_BATCHES_REMAINING = 5 # Arma o gatilho para os próximos 5 envios de telemetria
                                 print("[C2] Gatilho de Processos Ativado pelo Admin (5 batches).")
                 
-                # TODO: Processar ordens de 'provisioning' (useradd, authorized_keys, usermod)
+                # Aplica as ordens de provisionamento no Sistema Operacional
+                provisioning_orders = data.get("provisioning", [])
+                if provisioning_orders:
+                    apply_provisioning(provisioning_orders)
                     
         except Exception as e:
             print(f"[C2] Erro no Heartbeat: {e}")
@@ -775,7 +884,28 @@ def main():
     print("=== Lab Agent Daemon ===")
     print(f"Máquina : {MACHINE}")
     print(f"Server  : {API_BASE}")
-    print(f"GPU     : {_GPU.name}\n")
+    print(f"GPU     : {_GPU.name}")
+    print(f"SFTP    : {SFTP_SHELL}\n")
+
+    # ------------------------------------------------------------------
+    # HARDENING BASE (roda uma vez no boot, operações idempotentes)
+    # ------------------------------------------------------------------
+    try:
+        # Garante que o grupo 'lab' existe (usado pelo limits.conf e pelo useradd)
+        subprocess.run(["groupadd", "-f", "lab"], stderr=subprocess.DEVNULL)
+
+        # Força UMASK 077 no login.defs para qualquer valor atual que existir
+        with open("/etc/login.defs", "r") as f:
+            content = f.read()
+        new_content = re.sub(r"^(UMASK\s+)\d+", r"\g<1>077", content, flags=re.MULTILINE)
+        if new_content != content:
+            with open("/etc/login.defs", "w") as f:
+                f.write(new_content)
+            print("[OS] Hardening: UMASK atualizado para 077 no login.defs")
+        else:
+            print("[OS] Hardening: UMASK já estava correto.")
+    except Exception as e:
+        print(f"[OS] Aviso de Hardening: {e}")
 
     sync_specs()
 

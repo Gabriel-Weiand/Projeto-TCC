@@ -368,4 +368,46 @@ test.group('Machines', (group) => {
     // Verifica se os dados vieram anonimizados (sem o objeto 'user')
     assert.notExists(response.body().data[0]?.user)
   })
+  test('admin deve conseguir solicitar relatório de processos on-demand', async ({
+    client,
+    assert,
+  }) => {
+    const admin = await User.create({
+      fullName: 'Admin',
+      email: 'admin.process@teste.com',
+      password: 'senha123',
+      role: 'admin',
+    })
+
+    const machine = await Machine.create({
+      name: 'PC-PROCESS',
+      description: 'Máquina para teste on-demand',
+      status: 'available',
+    })
+
+    // Act: Admin pede um relatório focando no Top 15 processos que usam mais de 100MB de VRAM
+    const response = await client
+      .post(`/api/v1/machines/${machine.id}/request-processes`)
+      .loginAs(admin)
+      .json({
+        topX: 15,
+        vramMb: 100,
+      })
+
+    // Assert
+    response.assertStatus(200)
+    response.assertBodyContains({
+      message: 'Gatilho enviado. Agente coletará o Top 15 nos próximos envios.',
+    })
+
+    // Verifica se o AdonisJS guardou o timestamp e os limites corretamente no JSONB
+    await machine.refresh()
+    const config = machine.customAgentConfig as any
+    assert.isNotNull(config.onDemandProcessConfig)
+    assert.exists(config.onDemandProcessConfig.requestTimestamp)
+    assert.equal(config.onDemandProcessConfig.thresholds.topX, 15)
+    assert.equal(config.onDemandProcessConfig.thresholds.vramMb, 100)
+    // Verifica se ele assumiu o valor padrão (2.0) para os campos que não enviámos
+    assert.equal(config.onDemandProcessConfig.thresholds.cpuPercent, 2)
+  })
 })
