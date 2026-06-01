@@ -18,7 +18,7 @@ export default class HeartbeatService {
       sshAttempts?: any[]
     }
   ) {
-    const now = DateTime.now()
+    const now = DateTime.utc()
 
     // ==========================================
     // 1. AUDITORIA: Salvar tentativas de SSH

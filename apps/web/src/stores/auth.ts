@@ -63,15 +63,26 @@ export const useAuthStore = defineStore("auth", () => {
     return data;
   }
 
+  // NOVO: Função dedicada para atualizar a chave SSH
+  async function updateSshKey(sshPublicKey: string) {
+    const { data } = await api.put<User>("/api/v1/users/me/ssh-key", {
+      sshPublicKey,
+    });
+    user.value = data;
+    localStorage.setItem("user", JSON.stringify(data));
+    return data;
+  }
+
   return {
     user,
     token,
     isAuthenticated,
     isAdmin,
-    loadFromStorage,
     login,
     logout,
     fetchMe,
     updateProfile,
+    updateSshKey,
+    loadFromStorage,
   };
 });

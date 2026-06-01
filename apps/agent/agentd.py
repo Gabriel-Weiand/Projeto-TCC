@@ -461,7 +461,6 @@ def parse_ssh_line(line: str) -> dict | None:
 def apply_provisioning(provisioning_data: list) -> None:
     """
     Sincroniza o Linux com a verdade da API.
-
     FASE 1 — Drift Correction: remove contas 'lab.*' que a API não listou.
     FASE 2 — Provisioning: cria/atualiza conta, chave SSH, shell e sudo.
     """
@@ -480,6 +479,8 @@ def apply_provisioning(provisioning_data: list) -> None:
     # ------------------------------------------------------------------
     # FASE 2: PROVISIONAMENTO
     # ------------------------------------------------------------------
+    import grp  # Importado para consultar os membros do grupo nativamente
+
     for item in provisioning_data:
         uname   = item["systemUsername"]
         pubkey  = item["sshPublicKey"].strip()
@@ -487,10 +488,9 @@ def apply_provisioning(provisioning_data: list) -> None:
         is_sudo = item.get("isSudo", False)
 
         # 1. Cria conta se não existir
-        # -K UMASK=0077 garante home 700 independente do login.defs global
         user_exists = True
         try:
-            pwd.getpwnam(uname)
+            user_info = pwd.getpwnam(uname)
         except KeyError:
             user_exists = False
             print(f"[OS] Criando conta: {uname}")
@@ -498,8 +498,9 @@ def apply_provisioning(provisioning_data: list) -> None:
                 ["useradd", "-m", "-s", "/bin/bash", "-K", "UMASK=0077", "-G", "lab", uname],
                 check=True
             )
+            user_info = pwd.getpwnam(uname)
 
-        # 2. Garante que a home é 700 mesmo para contas pré-existentes
+        # 2. Garante que a home é 700
         home = f"/home/{uname}"
         if os.path.isdir(home):
             subprocess.run(["chmod", "700", home], check=False)
@@ -526,18 +527,24 @@ def apply_provisioning(provisioning_data: list) -> None:
         shutil.chown(ssh_dir,   user=uname, group=uname)
         shutil.chown(auth_keys, user=uname, group=uname)
 
-        # 4. Controlo de shell (SFTP = bloqueio, Bash = acesso total)
+        # 4. Controlo de shell (SÓ EXECUTA SE HOUVER MUDANÇA REAL)
         target_shell = SFTP_SHELL if state == "sftp_only" else "/bin/bash"
-        subprocess.run(["usermod", "-s", target_shell, uname], check=True)
+        if user_info.pw_shell != target_shell:
+            subprocess.run(["usermod", "-s", target_shell, uname], check=True)
+            print(f"[OS] Shell de {uname} alterado para {target_shell}")
 
-        # 5. Gestão de sudo — adiciona ou remove do grupo
-        if is_sudo:
+        # 5. Gestão de sudo (SÓ EXECUTA SE HOUVER MUDANÇA REAL)
+        try:
+            is_currently_sudo = uname in grp.getgrnam("sudo").gr_mem
+        except KeyError:
+            is_currently_sudo = False
+
+        if is_sudo and not is_currently_sudo:
             subprocess.run(["usermod", "-aG", "sudo", uname], stderr=subprocess.DEVNULL)
-        else:
+            print(f"[OS] Usuário {uname} adicionado ao grupo sudo")
+        elif not is_sudo and is_currently_sudo:
             subprocess.run(["gpasswd", "-d", uname, "sudo"], stderr=subprocess.DEVNULL)
-
-        action = "atualizada" if user_exists else "criada"
-        print(f"[OS] Conta {uname} {action} | shell={target_shell} | sudo={is_sudo}")
+            print(f"[OS] Usuário {uname} removido do grupo sudo")
 
 def _host_fingerprint() -> str | None:
     """Extrai o Fingerprint SHA256 da chave ed25519 da máquina (para o front validar)."""

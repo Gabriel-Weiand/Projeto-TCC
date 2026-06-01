@@ -8,6 +8,7 @@ const form = reactive({
   fullName: "",
   email: "",
   password: "",
+  sshPublicKey: "",
 });
 
 const saving = ref(false);
@@ -18,6 +19,7 @@ onMounted(() => {
   if (auth.user) {
     form.fullName = auth.user.fullName;
     form.email = auth.user.email;
+    form.sshPublicKey = auth.user.sshPublicKey || "";
   }
 });
 
@@ -29,22 +31,34 @@ async function handleSave() {
   const payload: Record<string, string> = {};
   if (form.fullName && form.fullName !== auth.user.fullName)
     payload.fullName = form.fullName;
-  if (form.email && form.email !== auth.user.email) payload.email = form.email;
-  if (form.password) payload.password = form.password;
+  if (form.email && form.email !== auth.user.email) 
+    payload.email = form.email;
+  if (form.password) 
+    payload.password = form.password;
 
-  if (Object.keys(payload).length === 0) {
+  const sshKeyChanged = form.sshPublicKey !== (auth.user.sshPublicKey || "");
+
+  if (Object.keys(payload).length === 0 && !sshKeyChanged) {
     error.value = "Nenhuma alteração detectada.";
     return;
   }
 
   saving.value = true;
   try {
-    await auth.updateProfile(auth.user.id, payload);
+    // 1. Atualiza dados comuns
+    if (Object.keys(payload).length > 0) {
+      await auth.updateProfile(auth.user.id, payload);
+    }
+    // 2. Atualiza a chave SSH
+    if (sshKeyChanged) {
+      await auth.updateSshKey(form.sshPublicKey);
+    }
+    
     form.password = "";
     msg.value = "Perfil atualizado com sucesso!";
   } catch (err: any) {
     const status = err.response?.status;
-    if (status === 422) error.value = "Dados inválidos. Verifique os campos.";
+    if (status === 422) error.value = "Dados inválidos. Verifique os campos ou o formato da chave.";
     else error.value = "Erro ao atualizar perfil.";
   } finally {
     saving.value = false;
@@ -66,16 +80,11 @@ async function handleSave() {
       </div>
 
       <div class="profile-info">
+        <h2 style="font-weight: 600; margin-bottom: 0.25rem">{{ auth.user?.fullName }}</h2>
         <span class="info-role">
-          <span
-            :class="['badge', auth.isAdmin ? 'badge-accent' : 'badge-info']"
-          >
+          <span :class="['badge', auth.isAdmin ? 'badge-accent' : 'badge-info']">
             {{ auth.isAdmin ? "Administrador" : "Usuário" }}
           </span>
-        </span>
-        <span class="text-muted" style="font-size: 0.82rem">
-          Membro desde
-          {{ new Date(auth.user?.createdAt || "").toLocaleDateString("pt-BR") }}
         </span>
       </div>
 
@@ -86,12 +95,18 @@ async function handleSave() {
         </div>
         <div class="field">
           <label class="field-label">Email</label>
-          <input
-            v-model="form.email"
-            type="email"
-            placeholder="seu@email.com"
+          <input v-model="form.email" type="email" placeholder="seu@email.com" />
+        </div>
+
+        <div class="field">
+          <label class="field-label">Usuário do Sistema (Login SSH)</label>
+          <input 
+            :value="auth.user?.systemUsername || 'Aguardando...'" 
+            type="text" 
+            disabled 
           />
         </div>
+
         <div class="field">
           <label class="field-label"
             >Nova senha
@@ -103,6 +118,28 @@ async function handleSave() {
             placeholder="••••••••"
             autocomplete="new-password"
           />
+        </div>
+
+        <div class="ssh-section">
+          <h3 class="ssh-title">Acesso Remoto (SSH)</h3>
+          
+          <div class="ssh-status">
+            <span v-if="auth.user?.sshPublicKey" style="color: #10b981; font-weight: 600;">
+              ✅ Chave Pública Cadastrada
+            </span>
+            <span v-else style="color: #ef4444; font-weight: 600;">
+              ❌ Nenhuma chave cadastrada
+            </span>
+          </div>
+
+          <div class="field">
+            <label class="field-label">Configurar Nova Chave Pública (ed25519 ou rsa)</label>
+            <textarea 
+              v-model="form.sshPublicKey" 
+              rows="3" 
+              placeholder="Cole aqui o conteúdo do seu arquivo ~/.ssh/id_ed25519.pub..."
+            ></textarea>
+          </div>
         </div>
 
         <p v-if="msg" class="success-text" style="margin-top: 0.25rem">
@@ -146,10 +183,11 @@ async function handleSave() {
   display: flex;
   align-items: center;
   justify-content: center;
-  box-shadow: 0 4px 20px var(--accent-glow);
+  box-shadow: 0 4px 12px rgba(102, 126, 234, 0.3);
 }
+
 .avatar-letter {
-  font-size: 1.75rem;
+  font-size: 2rem;
   font-weight: 700;
   color: #fff;
 }
@@ -157,7 +195,7 @@ async function handleSave() {
 .profile-info {
   display: flex;
   flex-direction: column;
-  gap: 0.35rem;
+  gap: 0.25rem;
   align-items: center;
 }
 
@@ -167,5 +205,90 @@ async function handleSave() {
   flex-direction: column;
   gap: 1rem;
   text-align: left;
+}
+
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+}
+
+.field-label {
+  font-size: 0.85rem;
+  font-weight: 500;
+  color: var(--text-secondary);
+}
+
+/* Campos Padrões */
+input, textarea {
+  width: 100%;
+  padding: 0.6rem 0.8rem;
+  background: var(--bg-card-solid);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  color: var(--text-primary);
+  font-family: inherit;
+  font-size: 0.9rem;
+  transition:
+    border-color var(--transition),
+    box-shadow var(--transition);
+}
+
+input:focus, textarea:focus {
+  outline: none;
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px rgba(102, 126, 234, 0.15);
+}
+
+/* Novo CSS para Input Desativado (systemUsername) */
+input:disabled {
+  background: rgba(0, 0, 0, 0.04); /* Fundo mais escuro */
+  color: var(--text-muted);
+  cursor: not-allowed;
+  border-color: var(--border-subtle);
+}
+
+/* Novo CSS para Textarea (Chave SSH) */
+textarea {
+  resize: vertical;
+  font-family: monospace;
+  font-size: 0.8rem;
+}
+
+/* Nova Sessão Visual do SSH */
+.ssh-section {
+  margin-top: 0.5rem;
+  padding-top: 1.25rem;
+  border-top: 1px solid var(--border-subtle);
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+}
+
+.ssh-title {
+  font-size: 0.95rem;
+  font-weight: 600;
+  color: var(--text-primary);
+  margin: 0;
+}
+
+.ssh-status {
+  display: flex;
+  align-items: center;
+  padding: 0.75rem 1rem;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius);
+  background: rgba(0, 0, 0, 0.02); /* Fundo sutil */
+  font-size: 0.9rem;
+}
+
+/* Modo Dark Automático (se a sua aplicação tiver) */
+@media (prefers-color-scheme: dark) {
+  input:disabled {
+    background: rgba(255, 255, 255, 0.05);
+  }
+  .ssh-status {
+    background: rgba(255, 255, 255, 0.03);
+  }
 }
 </style>
