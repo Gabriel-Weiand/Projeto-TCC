@@ -27,7 +27,6 @@ export interface Machine {
   totalRamGb: number | null;
   totalDiskGb: number | null;
   ipAddress: string | null;
-  macAddress?: string;
   status: "available" | "occupied" | "maintenance" | "offline";
   lastSeenAt: string | null;
   activeUsers: any[] | null;
