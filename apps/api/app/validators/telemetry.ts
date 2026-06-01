@@ -6,6 +6,9 @@ const processSchema = vine.object({
   username: vine.string().maxLength(64),
   cpuPercent: vine.number().min(0).max(1000), // * 10
   ramMb: vine.number().min(0),
+  vramMb: vine.number().min(0).optional(),
+  diskReadKbps: vine.number().min(0).optional(),
+  diskWriteKbps: vine.number().min(0).optional(),
 })
 
 /**
@@ -50,7 +53,7 @@ const telemetrySchema = vine.object({
  */
 export const telemetryReportValidator = vine.compile(
   vine.object({
-    data: vine.array(telemetrySchema),
+    data: vine.array(telemetrySchema).minLength(1).maxLength(15),
   })
 )
 

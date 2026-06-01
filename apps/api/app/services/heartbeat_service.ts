@@ -146,15 +146,16 @@ export default class HeartbeatService {
     // Podemos ler o preset da máquina para ajustar a telemetria
     const isOccupied = !!currentAllocation
     const preset = machine.telemetryPreset || 'eco'
+    const customConfig = machine.customAgentConfig || {}
 
     return {
       status: 'acknowledged',
       agentConfig: {
         telemetry: {
-          // Se a máquina estiver vazia, acalma a telemetria. Se estiver em uso, capta mais rápido.
-          intervalSeconds: isOccupied ? 5 : 60,
-          batchSize: isOccupied ? 5 : 20,
+          intervalSeconds: customConfig.intervalSeconds || (isOccupied ? 5 : 60),
+          batchSize: customConfig.batchSize || (isOccupied ? 5 : 15),
           telemetryPreset: preset,
+          onDemandProcessConfig: customConfig.onDemandProcessConfig || null,
         },
       },
       provisioning,

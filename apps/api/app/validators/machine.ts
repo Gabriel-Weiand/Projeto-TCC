@@ -47,10 +47,46 @@ export const updateMachineValidator = vine.compile(
 
     customAgentConfig: vine
       .object({
-        // Modos de captura do psutil: 'complete' (tudo), 'fast' (só pesados) ou 'off' (desligado)
-        processTelemetry: vine.enum(['complete', 'fast', 'off'] as const).optional(),
+        intervalSeconds: vine.number().min(1).max(600).optional(),
+        batchSize: vine.number().min(1).max(15).optional(),
+
+        // Configuração padrão de captura contínua de processos
+        processThresholds: vine
+          .object({
+            cpuPercent: vine.number().min(0).max(100).optional(),
+            ramMb: vine.number().min(0).optional(),
+            vramMb: vine.number().min(0).optional(),
+            diskReadKbps: vine.number().min(0).optional(), // <-- Separado
+            diskWriteKbps: vine.number().min(0).optional(), // <-- Separado
+            topX: vine.number().min(1).max(50).optional(),
+          })
+          .optional(),
+
+        telemetrySet: vine
+          .object({
+            cpu: vine.boolean().optional(),
+            gpu: vine.boolean().optional(),
+            ramAndSwap: vine.boolean().optional(),
+            diskSpace: vine.boolean().optional(),
+            diskIO: vine.boolean().optional(),
+            networkIO: vine.boolean().optional(),
+            temperatures: vine.boolean().optional(),
+            activeUsers: vine.boolean().optional(),
+          })
+          .optional(),
       })
       .optional()
       .nullable(),
+  })
+)
+
+export const requestProcessReportValidator = vine.compile(
+  vine.object({
+    cpuPercent: vine.number().min(0).max(100).optional(), // Ex: > 2%
+    ramMb: vine.number().min(0).optional(), // Ex: > 200 MB
+    vramMb: vine.number().min(0).optional(), // Ex: > 50 MB
+    diskReadKbps: vine.number().min(0).optional(), // Ex: > 500 Kbps
+    diskWriteKbps: vine.number().min(0).optional(), // Ex: > 500 Kbps
+    topX: vine.number().min(1).max(50).optional(), // Ex: Top 10
   })
 )

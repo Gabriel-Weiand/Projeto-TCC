@@ -1,7 +1,11 @@
 import type { HttpContext } from '@adonisjs/core/http'
 import Machine from '#models/machine'
 import Allocation from '#models/allocation'
-import { createMachineValidator, updateMachineValidator } from '#validators/machine'
+import {
+  createMachineValidator,
+  requestProcessReportValidator,
+  updateMachineValidator,
+} from '#validators/machine'
 import { telemetryBuffer } from '#services/telemetry_buffer'
 import { machineCache } from '#services/machine_cache'
 import { DateTime } from 'luxon'
@@ -24,12 +28,16 @@ export default class MachinesController {
 
       gpuUsage: Number(r.gpuUsage ?? 0) / 10,
       gpuTemp: Number(r.gpuTemp ?? 0) / 10,
+      gpuPowerWatts: r.gpuPowerWatts != null ? Number(r.gpuPowerWatts) : null,
 
       // Valores absolutos enviados multiplicados por 10 pelo Python
       ramTotalGb: r.ramTotalGb != null ? Number(r.ramTotalGb) / 10 : null,
       ramUsedGb: r.ramUsedGb != null ? Number(r.ramUsedGb) / 10 : null,
       swapTotalGb: r.swapTotalGb != null ? Number(r.swapTotalGb) / 10 : null,
       swapUsedGb: r.swapUsedGb != null ? Number(r.swapUsedGb) / 10 : null,
+
+      vramTotalGb: r.vramTotalGb != null ? Number(r.vramTotalGb) / 10 : null,
+      vramUsedGb: r.vramUsedGb != null ? Number(r.vramUsedGb) / 10 : null,
 
       // Discos e Rede vêm diretamente como o agentd.py manda
       disksInfo: r.disks ?? null,
@@ -44,23 +52,6 @@ export default class MachinesController {
       // Timestamp original da coleta
       timestamp: r.timestamp ? String(r.timestamp) : new Date().toISOString(),
     }
-  }
-
-  /**
-   * Busca os discos/partições associados à máquina.
-   */
-  private async getDisks(machineId: number) {
-    const machine = await Machine.find(machineId)
-    if (!machine) return []
-    const arr = (machine.disks as any[]) || []
-    return arr.map((d, idx) => ({
-      id: d.id ?? idx + 1,
-      device: d.device,
-      mountpoint: d.mountpoint,
-      fstype: d.fstype ?? null,
-      totalGb: d.totalGb ?? null,
-      freeGb: d.freeGb ?? null,
-    }))
   }
 
   /**
@@ -290,6 +281,38 @@ export default class MachinesController {
       machineId: machine.id,
       entries: normalized,
       total: normalized.length,
+    })
+  }
+
+  /**
+   * Dispara o gatilho para o Agente reportar processos nos próximos 5 batches.
+   * POST /api/v1/machines/:id/request-processes
+   */
+  async requestProcessReport({ params, request, response }: HttpContext) {
+    const machine = await Machine.findOrFail(params.id)
+    const options = await request.validateUsing(requestProcessReportValidator)
+
+    const config = machine.customAgentConfig || {}
+
+    // Salva o timestamp do pedido e os filtros que o admin escolheu na hora
+    config.onDemandProcessConfig = {
+      requestTimestamp: DateTime.now().toISO(),
+      thresholds: {
+        cpuPercent: options.cpuPercent ?? 2.0,
+        ramMb: options.ramMb ?? 200,
+        vramMb: options.vramMb ?? 50,
+        diskReadKbps: options.diskReadKbps ?? 1000,
+        diskWriteKbps: options.diskWriteKbps ?? 1000,
+        topX: options.topX ?? 10,
+      },
+    }
+
+    machine.customAgentConfig = config
+    await machine.save()
+
+    return response.ok({
+      message: `Gatilho enviado. Agente coletará o Top ${config.onDemandProcessConfig.thresholds.topX} nos próximos envios.`,
+      machineId: machine.id,
     })
   }
 }

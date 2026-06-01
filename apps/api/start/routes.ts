@@ -110,6 +110,9 @@ router
               router
                 .post('/:id/regenerate-token', [MachinesController, 'regenerateToken'])
                 .as('machines.regenerateToken')
+              router
+                .post('/:id/request-processes', [MachinesController, 'requestProcessReport'])
+                .as('machines.requestProcesses')
             })
             .prefix('machines')
             .where('id', router.matchers.number())

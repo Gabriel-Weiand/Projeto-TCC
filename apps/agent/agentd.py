@@ -1,4 +1,5 @@
 # agentd.py — Lab Agent Daemon Unificado (TCC)
+# Configurar o handshake ssh para funcionar sempre encima de ed25519.
 
 import time
 import getpass
@@ -9,12 +10,18 @@ import psutil
 import requests
 import threading
 import glob
+import os
+import re
 from datetime import datetime, timezone
 
 API_BASE    = "http://localhost:7372/api/v1/agent"
 TOKEN       = "871f482430e0fbea09e8fe6335b1d5c7d37efe5ec8037cea27c4b98b449484635c567f3c1aaffc0600a9880dfa12ba17a427f8075976f04b62af902b9d2a24df"
 MACHINE     = "PCCASA"
 SYSTEM_USER = getpass.getuser()
+LAST_PROCESS_REQUEST_TS = None
+PROCESS_BATCHES_REMAINING = 0
+_process_io_prev = {} # Cache para calcular velocidade de disco (PID -> bytes)
+SSH_AUDIT_BUFFER = []
 
 HEADERS = {
     "Authorization": f"Bearer {TOKEN}",
@@ -49,6 +56,7 @@ class _GpuBackend:
     def usage(self) -> float: return 0.0
     def temp(self) -> float:  return 0.0
     def vram(self) -> tuple[int, int]: return 0, 0   # (used_mb, total_mb)
+    def power(self) -> int: return 0
 
 
 class _NvidiaBackend(_GpuBackend):
@@ -73,7 +81,16 @@ class _NvidiaBackend(_GpuBackend):
 
     def vram(self) -> tuple[int, int]:
         info = self._pynvml.nvmlDeviceGetMemoryInfo(self._handle)
-        return int(info.used // 1_048_576), int(info.total // 1_048_576)
+        # Converte de Bytes para GB com 1 casa decimal (escalado x10)
+        return round((info.used / 1024**3) * 10), round((info.total / 1024**3) * 10)
+    
+    def power(self) -> int:
+        try:
+            # A NVML retorna miliWatts. Dividimos por 1000 para Watts.
+            mw = self._pynvml.nvmlDeviceGetPowerUsage(self._handle)
+            return int(mw / 1000)
+        except Exception:
+            return 0
 
 
 class _AmdSysfsBackend(_GpuBackend):
@@ -105,17 +122,30 @@ class _AmdSysfsBackend(_GpuBackend):
         return 0.0
 
     def vram(self) -> tuple[int, int]:
-        # VRAM via sysfs (disponível em drivers amdgpu recentes)
         try:
             used_path  = glob.glob("/sys/class/drm/card*/device/mem_info_vram_used")
             total_path = glob.glob("/sys/class/drm/card*/device/mem_info_vram_total")
             if used_path and total_path:
-                used  = int(open(used_path[0]).read().strip()) // 1_048_576
-                total = int(open(total_path[0]).read().strip()) // 1_048_576
-                return used, total
+                used_bytes  = int(open(used_path[0]).read().strip())
+                total_bytes = int(open(total_path[0]).read().strip())
+                # Converte de Bytes para GB com 1 casa decimal (escalado x10)
+                return round((used_bytes / 1024**3) * 10), round((total_bytes / 1024**3) * 10)
         except Exception:
             pass
         return 0, 0
+    
+    def power(self) -> int:
+        try:
+            # A AMD geralmente expõe a potência em microWatts no hwmon
+            paths = glob.glob("/sys/class/drm/card*/device/hwmon/hwmon*/power1_average")
+            if not paths:
+                paths = glob.glob("/sys/class/drm/card*/device/hwmon/hwmon*/power1_input")
+            if paths:
+                uw = int(open(paths[0]).read().strip())
+                return int(uw / 1_000_000) # De microWatts para Watts
+        except Exception:
+            pass
+        return 0
 
 
 class _IntelSysfsBackend(_GpuBackend):
@@ -362,6 +392,61 @@ def _disk_partitions() -> list[dict]:
 # WORKERS E THREADS
 # ==============================================================================
 
+def parse_ssh_line(line: str) -> dict | None:
+    # Ignora rapidamente qualquer log que não seja do serviço SSH
+    if "sshd" not in line:
+        return None
+        
+    # 1. Login com Sucesso
+    if "Accepted" in line:
+        match = re.search(r"Accepted (\w+) for (\S+) from ([\d\.]+)", line)
+        if match:
+            auth_method, user, ip = match.groups()
+            fingerprint = None
+            
+            # Se for chave pública, extrai a Hash SHA256
+            if auth_method == "publickey":
+                fp_match = re.search(r"(SHA256:[a-zA-Z0-9+/=]+)", line)
+                if fp_match:
+                    fingerprint = fp_match.group(1)
+                    
+            return {
+                "sourceIp": ip,
+                "targetUsername": user,
+                "status": "success",
+                "authMethod": auth_method,
+                "clientFingerprint": fingerprint
+            }
+            
+    # 2. Falha de Senha/Chave (Usuário válido ou inválido)
+    elif "Failed" in line:
+        match = re.search(r"Failed (\w+) for (?:invalid user )?(\S+) from ([\d\.]+)", line)
+        if match:
+            auth_method, user, ip = match.groups()
+            status = "invalid_user" if "invalid user" in line else "failed"
+            return {
+                "sourceIp": ip,
+                "targetUsername": user,
+                "status": status,
+                "authMethod": auth_method,
+                "clientFingerprint": None
+            }
+            
+    # 3. Usuário Inválido (Quando a conexão é abortada antes mesmo de enviar a senha/chave)
+    elif "Invalid user" in line:
+        match = re.search(r"Invalid user (\S+) from ([\d\.]+)", line)
+        if match:
+            user, ip = match.groups()
+            return {
+                "sourceIp": ip,
+                "targetUsername": user,
+                "status": "invalid_user",
+                "authMethod": None,
+                "clientFingerprint": None
+            }
+            
+    return None
+
 def sync_specs() -> None:
     print("[Specs] Sincronizando hardware...")
     ram  = psutil.virtual_memory()
@@ -389,25 +474,157 @@ def sync_specs() -> None:
         print(f"[Specs] ✗ Erro de conexão: {e}")
 
 def heartbeat_worker():
+    global SSH_AUDIT_BUFFER, LAST_PROCESS_REQUEST_TS, PROCESS_BATCHES_REMAINING
     print("[C2] Thread de Heartbeat iniciada.")
+    
     while True:
         try:
-            users   = _active_users()
-            payload = {"connectedUsers": users}
-            resp    = requests.post(f"{API_BASE}/heartbeat", json=payload, headers=HEADERS, timeout=5)
+            users = _active_users()
+            
+            # TODO: Ler provisionedOsUsers reais do /etc/passwd
+            os_users = [u['username'] for u in users] 
+            
+            payload = {
+                "connectedUsers": [u['username'] for u in users],
+                "provisionedOsUsers": os_users 
+            }
+
+            # Lógica de Despacho de SSH (20 itens ou 12:00 UTC)
+            # Lógica de Despacho Seguro de SSH (20 itens ou 12:00 UTC)
+            now_utc = datetime.now(timezone.utc)
+            buffer_copy = []
+            
+            with CONFIG_LOCK:
+                # Fazemos uma cópia sob lock para evitar perdas
+                buffer_size = len(SSH_AUDIT_BUFFER)
+                if buffer_size >= 20 or (now_utc.hour == 12 and now_utc.minute == 0 and buffer_size > 0):
+                    buffer_copy = list(SSH_AUDIT_BUFFER)
+                    payload["sshAttempts"] = buffer_copy
+
+            # ... Envia requests.post ...
+            resp = requests.post(f"{API_BASE}/heartbeat", json=payload, headers=HEADERS, timeout=5)
+            
             if resp.status_code == 200:
-                data       = resp.json()
+                # Se SUCESSO, removemos do buffer global Apenas a quantidade exata que foi enviada.
+                # Assim, se uma tentativa nova de SSH ocorreu durante o `requests.post`, ela NÃO será apagada.
+                if buffer_copy:
+                    with CONFIG_LOCK:
+                        SSH_AUDIT_BUFFER = SSH_AUDIT_BUFFER[len(buffer_copy):]
+                
+                data = resp.json()
+                
+                # Atualiza Config e Lê o Gatilho de Processos On-Demand
                 new_config = data.get("agentConfig")
                 if new_config:
                     with CONFIG_LOCK:
                         AGENT_CONFIG.update(new_config)
-        except Exception:
-            pass
+                        
+                        on_demand = new_config["telemetry"].get("onDemandProcessConfig")
+                        if on_demand:
+                            req_ts = on_demand.get("requestTimestamp")
+                            if req_ts and req_ts != LAST_PROCESS_REQUEST_TS:
+                                LAST_PROCESS_REQUEST_TS = req_ts
+                                PROCESS_BATCHES_REMAINING = 5 # Arma o gatilho para os próximos 5 envios de telemetria
+                                print("[C2] Gatilho de Processos Ativado pelo Admin (5 batches).")
+                
+                # TODO: Processar ordens de 'provisioning' (useradd, authorized_keys, usermod)
+                    
+        except Exception as e:
+            print(f"[C2] Erro no Heartbeat: {e}")
+            
         time.sleep(30)
 
+def _get_heavy_processes(thresholds: dict) -> list[dict]:
+    """Captura processos e ordena por VRAM > CPU > RAM > Leitura Disco > Escrita Disco."""
+    global _process_io_prev
+    
+    min_cpu   = thresholds.get("cpuPercent", 2.0)
+    min_ram   = thresholds.get("ramMb", 200)
+    min_vram  = thresholds.get("vramMb", 50)
+    min_read  = thresholds.get("diskReadKbps", 1000)
+    min_write = thresholds.get("diskWriteKbps", 1000)
+    top_x     = thresholds.get("topX", 10)
+    
+    # 1. Pega processos na GPU (Somente NVIDIA via pynvml)
+    gpu_procs = {}
+    if _GPU.name == "nvidia":
+        try:
+            import pynvml
+            nv_procs = pynvml.nvmlDeviceGetComputeRunningProcesses(_GPU._handle)
+            for p in nv_procs:
+                gpu_procs[p.pid] = int(p.usedGpuMemory / 1_048_576) if p.usedGpuMemory else 0
+        except Exception:
+            pass
+
+    procs = []
+    current_io = {}
+    now = time.monotonic()
+    
+    try:
+        for p in psutil.process_iter(['pid', 'name', 'username', 'cpu_percent', 'memory_info', 'io_counters']):
+            if p.info['username'] in ('root', 'systemd', 'messagebus'):
+                continue
+                
+            pid = p.info['pid']
+            cpu = p.info.get('cpu_percent') or 0.0
+            ram_mb = (p.info.get('memory_info').rss / 1_048_576) if p.info.get('memory_info') else 0.0
+            vram_mb = gpu_procs.get(pid, 0)
+            
+            # I/O de Disco Separado (Leitura e Escrita em Kbps)
+            r_kbps = w_kbps = 0.0
+            if p.info.get('io_counters'):
+                io = p.info['io_counters']
+                current_io[pid] = (io.read_bytes, io.write_bytes, now)
+                
+                if pid in _process_io_prev:
+                    p_read, p_write, p_time = _process_io_prev[pid]
+                    dt = now - p_time
+                    if dt > 0:
+                        r_kbps = ((io.read_bytes - p_read) / 1024) / dt
+                        w_kbps = ((io.write_bytes - p_write) / 1024) / dt
+
+            # Avalia se atinge ALGUM dos limites mínimos solicitados
+            if (cpu >= min_cpu or ram_mb >= min_ram or vram_mb >= min_vram or 
+                r_kbps >= min_read or w_kbps >= min_write):
+                procs.append({
+                    "pid": pid,
+                    "name": p.info['name'][:50],
+                    "username": p.info['username'],
+                    "cpuPercent": round(cpu * 10),
+                    "ramMb": round(ram_mb),
+                    "vramMb": vram_mb,
+                    "diskReadKbps": round(r_kbps),
+                    "diskWriteKbps": round(w_kbps)
+                })
+    except Exception:
+        pass
+        
+    _process_io_prev = current_io
+    
+    # 2. Ordenação mágica em tupla (Prioridade exata que você definiu)
+    procs.sort(key=lambda x: (x['vramMb'], x['cpuPercent'], x['ramMb'], x['diskReadKbps'], x['diskWriteKbps']), reverse=True)
+    return procs[:top_x]
+
 def collect_telemetry() -> dict:
+    global PROCESS_BATCHES_REMAINING
+    
     with CONFIG_LOCK:
-        t_set = AGENT_CONFIG["telemetry"]["telemetrySet"]
+        # Extrai de forma segura para não dar erro de NoneType se o Admin nunca clicou no botão
+        on_demand = AGENT_CONFIG["telemetry"].get("onDemandProcessConfig") or {}
+        p_thresholds = on_demand.get("thresholds", {
+            "cpuPercent": 2.0, "ramMb": 200, "vramMb": 50, 
+            "diskReadKbps": 1000, "diskWriteKbps": 1000, "topX": 10
+        })
+        t_set = AGENT_CONFIG["telemetry"].get("telemetrySet", {
+            "cpu": True, "gpu": True, "ramAndSwap": True,
+            "diskSpace": True, "diskIO": True, "networkIO": True,
+            "temperatures": True, "activeUsers": True
+        })
+
+    processes = None
+    if PROCESS_BATCHES_REMAINING > 0:
+        processes = _get_heavy_processes(p_thresholds)
+        PROCESS_BATCHES_REMAINING -= 1 # Desconta um da lista dos processos restantes para envio
 
     cpu_total = psutil.cpu_percent(interval=None)
     ram       = psutil.virtual_memory()
@@ -416,11 +633,13 @@ def collect_telemetry() -> dict:
     # GPU — delega inteiramente ao backend detectado no boot
     gpu_usage = 0
     gpu_temp  = 0.0
-    vram_used_mb = vram_total_mb = 0
+    gpu_power = 0
+    vram_used_gb = vram_total_gb = 0
     if t_set.get("gpu"):
         gpu_usage    = round(_GPU.usage() * 10)   # mantém escala ×10 igual ao CPU
         gpu_temp     = _GPU.temp()
-        vram_used_mb, vram_total_mb = _GPU.vram()
+        gpu_power    = _GPU.power()
+        vram_used_gb, vram_total_gb = _GPU.vram()
 
     if t_set.get("cpu"):
         freq        = psutil.cpu_freq(percpu=False)
@@ -453,8 +672,9 @@ def collect_telemetry() -> dict:
         "cpuFreqMhz":     avg_freq_mhz,
         "gpuUsage":       gpu_usage,
         "gpuTemp":        round(gpu_temp * 10),
-        "vramUsedMb":     vram_used_mb   if vram_total_mb > 0 else None,
-        "vramTotalMb":    vram_total_mb  if vram_total_mb > 0 else None,
+        "gpuPowerWatts":  gpu_power if gpu_power > 0 else None,
+        "vramUsedGb":     vram_used_gb   if vram_total_gb > 0 else None,
+        "vramTotalGb":    vram_total_gb  if vram_total_gb > 0 else None,
         "ramTotalGb":     round((ram.total / 1024**3) * 10),
         "ramUsedGb":      round(((ram.total - ram.available) / 1024**3) * 10),
         "swapTotalGb":    swap_tg,
@@ -466,6 +686,7 @@ def collect_telemetry() -> dict:
         "uploadMbps":     up,
         "moboTemperature": round(temps["moboTemp"] * 10) if temps["moboTemp"] else None,
         "activeUsers":    active_users,
+        "processes":      processes
     }
 
 def telemetry_worker():
@@ -505,6 +726,46 @@ def telemetry_worker():
 
         time.sleep(interval)
 
+def ssh_audit_worker():
+    global SSH_AUDIT_BUFFER
+    log_path = "/var/log/auth.log"
+    
+    print(f"[Audit] Aguardando {log_path}...")
+    while not os.path.exists(log_path):
+        time.sleep(5)
+        
+    print("[Audit] Monitoramento SSH em tempo real iniciado.")
+    
+    with open(log_path, "r") as f:
+        # Pula para o final do arquivo ao ligar.
+        # Assim não reenviamos tentativas velhas de dias atrás cada vez que o Agente for reiniciado.
+        f.seek(0, os.SEEK_END)
+        cur_ino = os.fstat(f.fileno()).st_ino
+        
+        while True:
+            line = f.readline()
+            
+            # Se não houver linha nova, pausa meio segundo e verifica Rotação de Log
+            if not line:
+                try:
+                    # Se o 'inode' mudou, significa que o Linux rodou um logrotate
+                    if os.stat(log_path).st_ino != cur_ino:
+                        f.close()
+                        f = open(log_path, "r")
+                        cur_ino = os.fstat(f.fileno()).st_ino
+                        continue
+                except Exception:
+                    pass
+                time.sleep(0.5)
+                continue
+            
+            # Se leu uma linha, analisa!
+            parsed = parse_ssh_line(line)
+            if parsed:
+                with CONFIG_LOCK:
+                    # Limita a 500 itens na memória para evitar crash se a API ficar offline por meses
+                    if len(SSH_AUDIT_BUFFER) < 500:
+                        SSH_AUDIT_BUFFER.append(parsed)
 
 # ==============================================================================
 # MAIN
@@ -520,9 +781,11 @@ def main():
 
     t_heartbeat = threading.Thread(target=heartbeat_worker, daemon=True)
     t_telemetry = threading.Thread(target=telemetry_worker, daemon=True)
+    t_audit     = threading.Thread(target=ssh_audit_worker, daemon=True)
 
     t_heartbeat.start()
     t_telemetry.start()
+    t_audit.start()
 
     try:
         while True:
