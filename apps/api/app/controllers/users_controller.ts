@@ -2,6 +2,7 @@ import type { HttpContext } from '@adonisjs/core/http'
 import User from '#models/user'
 import { registerValidator } from '#validators/auth_user'
 import { updateUserValidator, updateSshKeyValidator } from '#validators/user'
+import { notifySshKeyRequired } from '#services/notification_service'
 
 export default class UsersController {
   /**
@@ -22,6 +23,7 @@ export default class UsersController {
   async store({ request, response }: HttpContext) {
     const payload = await request.validateUsing(registerValidator)
     const user = await User.create(payload)
+    await notifySshKeyRequired(user.id)
 
     return response.created(user)
   }

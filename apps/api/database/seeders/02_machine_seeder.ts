@@ -67,6 +67,7 @@ export default class extends BaseSeeder {
         totalVramGb: 80,
         totalRamGb: 155,
         ipAddress: '192.168.8.3',
+        sshPort: 2222,
         status: 'occupied' as const,
         telemetryPreset: 'fast' as const,
         customAgentConfig: baseConfig,

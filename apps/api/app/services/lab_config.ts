@@ -78,6 +78,24 @@ export const labConfig = {
     pruneTokensCron: envString('LAB_SCHEDULER_PRUNE_TOKENS_CRON', '0 3 * * *'),
     autoFinalizeCron: envString('LAB_SCHEDULER_AUTO_FINALIZE_CRON', '*/5 * * * *'),
   },
+
+  notifications: {
+    /** Lembrete "reserva em breve" (minutos antes do início) */
+    upcomingMinutes: envInt('LAB_NOTIF_UPCOMING_MINUTES', 10),
+    /** Verificação de chave SSH (minutos antes do início) */
+    sshKeyReminderMinutes: envInt('LAB_NOTIF_SSH_KEY_MINUTES', 5),
+    sshFailureFlood: {
+      windowMinutes: envInt('LAB_NOTIF_SSH_FLOOD_WINDOW_MINUTES', 15),
+      threshold: envInt('LAB_NOTIF_SSH_FLOOD_THRESHOLD', 20),
+      cooldownHours: envInt('LAB_NOTIF_SSH_FLOOD_COOLDOWN_HOURS', 1),
+    },
+    agentOffline: {
+      /** Sem heartbeat neste intervalo → candidata a alerta (máquina available/occupied) */
+      offlineMinutes: envInt('LAB_NOTIF_AGENT_OFFLINE_MINUTES', 10),
+      /** Máximo 1 alerta por máquina neste intervalo (evita flood; reforça manutenção/retirada do parque) */
+      cooldownHours: envInt('LAB_NOTIF_AGENT_OFFLINE_COOLDOWN_HOURS', 24),
+    },
+  },
 } as const
 
 export function labNow(): DateTime {

@@ -3,20 +3,27 @@ import { ref, computed, onMounted, onUnmounted } from "vue";
 import { useMachinesStore } from "@/stores/machines";
 import { useAllocationsStore } from "@/stores/allocations";
 import { useAuthStore } from "@/stores/auth";
+import { useNotificationsStore } from "@/stores/notifications";
 import { useTelemetryPlayback } from "@/composables/useTelemetryPlayback";
 import MachineTelemetryPanel from "@/components/MachineTelemetryPanel.vue";
 import MachineLiveSections from "@/components/MachineLiveSections.vue";
 import CalendarGanttScroll from "@/components/CalendarGanttScroll.vue";
+import ProfileAllocationConnectModal from "@/components/ProfileAllocationConnectModal.vue";
 import type { Machine, Allocation } from "@/types";
 import { useRouter } from "vue-router";
 import { useLabConfigStore } from "@/stores/labConfig";
-import { wallClockToUtcIso } from "@/utils/datetime";
+import {
+  wallClockToUtcIso,
+  isNowBeforeUtc,
+  isNowInUtcRange,
+} from "@/utils/datetime";
 import { ALLOCATION_REASON_MAX_LENGTH } from "@/utils/allocationLabels";
 
 const props = defineProps<{ id: string | number }>();
 const machinesStore = useMachinesStore();
 const allocationsStore = useAllocationsStore();
 const auth = useAuthStore();
+const notifications = useNotificationsStore();
 const lab = useLabConfigStore();
 const router = useRouter();
 
@@ -25,6 +32,7 @@ const machine = ref<Machine | null>(null);
 const scheduleAllocations = ref<Allocation[]>([]);
 const loading = ref(true);
 const showForm = ref(false);
+const connectTarget = ref<Allocation | null>(null);
 const debugRefreshing = ref(false);
 const debugStreamPreview = ref<unknown>(null);
 
@@ -77,6 +85,26 @@ const liveData = computed(
 );
 
 const ganttMachines = computed(() => (machine.value ? [machine.value] : []));
+
+const myActiveAllocation = computed(() => {
+  const uid = auth.user?.id;
+  if (!uid || !machine.value) return null;
+  return (
+    scheduleAllocations.value.find(
+      (a) =>
+        (a.isOwn === true || a.userId === uid) &&
+        a.status === "approved" &&
+        !isNowBeforeUtc(a.startTime) &&
+        isNowInUtcRange(a.startTime, a.endTime),
+    ) ?? null
+  );
+});
+
+const connectAllocation = computed((): Allocation | null => {
+  const active = myActiveAllocation.value;
+  if (!active || !machine.value) return null;
+  return { ...active, machine: machine.value };
+});
 
 type ActiveUserRow = {
   key: string;
@@ -161,38 +189,68 @@ async function refreshFromApi() {
 }
 
 /* ---- Reserva ---- */
-const form = ref({ date: "", startTime: "", endTime: "", reason: "" });
+const form = ref({
+  startDate: "",
+  startTime: "",
+  endDate: "",
+  endTime: "",
+  reason: "",
+  isSudo: false,
+});
 const formSaving = ref(false);
 const formError = ref("");
 
 function openForm() {
-  form.value = { date: "", startTime: "", endTime: "", reason: "" };
+  form.value = {
+    startDate: "",
+    startTime: "",
+    endDate: "",
+    endTime: "",
+    reason: "",
+    isSudo: false,
+  };
   formError.value = "";
   showForm.value = true;
+}
+
+function openConnect() {
+  if (connectAllocation.value) {
+    connectTarget.value = connectAllocation.value;
+  }
 }
 
 async function handleCreate() {
   if (!machine.value) return;
   formError.value = "";
-  if (!form.value.date || !form.value.startTime || !form.value.endTime) {
+  if (
+    !form.value.startDate ||
+    !form.value.startTime ||
+    !form.value.endDate ||
+    !form.value.endTime
+  ) {
     formError.value = "Preencha todos os campos obrigatórios.";
-    return;
-  }
-  if (form.value.startTime >= form.value.endTime) {
-    formError.value = "Horário de início deve ser antes do fim.";
     return;
   }
   let startTime: string;
   let endTime: string;
   try {
     startTime = wallClockToUtcIso(
-      form.value.date,
+      form.value.startDate,
       form.value.startTime,
       lab.timezone,
     );
-    endTime = wallClockToUtcIso(form.value.date, form.value.endTime, lab.timezone);
+    endTime = wallClockToUtcIso(
+      form.value.endDate,
+      form.value.endTime,
+      lab.timezone,
+    );
   } catch {
     formError.value = "Data ou horário inválido.";
+    return;
+  }
+
+  if (endTime <= startTime) {
+    formError.value = "Data/horário de finalização deve ser após o início.";
     return;
   }
 
@@ -205,11 +263,13 @@ async function handleCreate() {
       reason:
         form.value.reason.trim().slice(0, ALLOCATION_REASON_MAX_LENGTH) ||
         undefined,
+      isSudo: auth.isAdmin ? undefined : form.value.isSudo,
     });
     showForm.value = false;
-    const sched = await machinesStore.fetchMachineAllocations(machineId.value, {
-      limit: 200,
-    });
+    const [sched] = await Promise.all([
+      machinesStore.fetchMachineAllocations(machineId.value, { limit: 200 }),
+      notifications.fetchNotifications(),
+    ]);
     scheduleAllocations.value = sched.data || [];
   } catch (err: unknown) {
     const status = (err as { response?: { status?: number } })?.response?.status;
@@ -283,6 +343,14 @@ function statusLabel(s: string) {
             @saved="onTelemetrySaved"
           />
           <button
+            v-if="connectAllocation"
+            type="button"
+            class="btn btn-primary btn-sm"
+            @click="openConnect"
+          >
+            Conectar SSH
+          </button>
+          <button
             v-if="machine.status !== 'maintenance'"
             class="btn btn-primary btn-sm"
             @click="openForm"
@@ -290,6 +358,14 @@ function statusLabel(s: string) {
             + Reservar
           </button>
         </div>
+      </div>
+
+      <div
+        v-if="connectAllocation && machine.hostFingerprint"
+        class="ssh-banner card"
+      >
+        <span class="text-muted">Fingerprint do host (SSH)</span>
+        <code class="ssh-banner-fp">{{ machine.hostFingerprint }}</code>
       </div>
 
       <div class="specs-grid">
@@ -395,20 +471,40 @@ function statusLabel(s: string) {
             <button type="button" class="btn-close" @click="showForm = false">✕</button>
           </div>
           <form class="modal-body" @submit.prevent="handleCreate">
-            <div class="field">
-              <label class="field-label">Data</label>
-              <input v-model="form.date" type="date" />
-            </div>
-            <div class="field-row">
-              <div class="field">
-                <label class="field-label">Início</label>
-                <input v-model="form.startTime" type="time" />
+            <div class="field-group">
+              <label class="field-label" style="font-weight: 600">Início</label>
+              <div class="field-row">
+                <div class="field">
+                  <label class="field-label" style="font-size: 0.75rem">Data</label>
+                  <input v-model="form.startDate" type="date" />
+                </div>
+                <div class="field">
+                  <label class="field-label" style="font-size: 0.75rem">Horário</label>
+                  <input v-model="form.startTime" type="time" />
+                </div>
               </div>
-              <div class="field">
-                <label class="field-label">Fim</label>
-                <input v-model="form.endTime" type="time" />
+            </div>
+            <div class="field-group">
+              <label class="field-label" style="font-weight: 600">Finalização</label>
+              <div class="field-row">
+                <div class="field">
+                  <label class="field-label" style="font-size: 0.75rem">Data</label>
+                  <input v-model="form.endDate" type="date" />
+                </div>
+                <div class="field">
+                  <label class="field-label" style="font-size: 0.75rem">Horário</label>
+                  <input v-model="form.endTime" type="time" />
+                </div>
               </div>
             </div>
+            <label v-if="!auth.isAdmin" class="sudo-toggle">
+              <input v-model="form.isSudo" type="checkbox" />
+              <span>
+                Solicitar privilégios <strong>sudo</strong> na máquina
+                <span class="text-muted">(requer aprovação do admin)</span>
+              </span>
+            </label>
+
             <div class="field">
               <label class="field-label"
                 >Motivo
@@ -440,6 +536,12 @@ function statusLabel(s: string) {
         </div>
       </div>
     </Teleport>
+
+    <ProfileAllocationConnectModal
+      v-if="connectTarget"
+      :allocation="connectTarget"
+      @close="connectTarget = null"
+    />
   </div>
 </template>
 
@@ -458,6 +560,20 @@ function statusLabel(s: string) {
   gap: 0.75rem;
   align-items: center;
   flex-wrap: wrap;
+}
+
+.ssh-banner {
+  margin-bottom: 1.25rem;
+  padding: 0.85rem 1rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+}
+
+.ssh-banner-fp {
+  font-size: 0.78rem;
+  word-break: break-all;
+  line-height: 1.4;
 }
 
 .specs-grid {
@@ -576,6 +692,19 @@ function statusLabel(s: string) {
 .modal-title {
   font-size: 1.05rem;
   font-weight: 600;
+}
+
+.sudo-toggle {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.5rem;
+  font-size: 0.88rem;
+  line-height: 1.4;
+  cursor: pointer;
+}
+
+.sudo-toggle input {
+  margin-top: 0.2rem;
 }
 
 .modal-body {

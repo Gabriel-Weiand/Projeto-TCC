@@ -11,6 +11,11 @@ import {
 } from '#validators/allocation'
 import { extendAllocationValidator } from '#validators/allocation'
 import { assertAllocationEndWithinLimit, canSeeAllocationOwnerNames } from '#services/lab_config'
+import {
+  notifyAdminsPendingSudoAllocation,
+  notifyAllocationStatusChange,
+  notifySessionSummaryReady,
+} from '#services/notification_service'
 import { parseUtcFromIso } from '#utils/datetime'
 
 export default class AllocationsController {
@@ -145,6 +150,8 @@ export default class AllocationsController {
     }
 
     const allocation = await Allocation.create(data)
+    await allocation.load('machine')
+    await notifyAdminsPendingSudoAllocation(allocation, machine)
 
     return response.created(allocation)
   }
@@ -278,11 +285,13 @@ export default class AllocationsController {
       }
     }
 
+    const previousStatus = allocation.status
     allocation.merge(data)
     await allocation.save()
 
     await allocation.load('user')
     await allocation.load('machine')
+    await notifyAllocationStatusChange(allocation, allocation.machine, previousStatus)
 
     return response.ok(allocation)
   }
@@ -321,6 +330,8 @@ export default class AllocationsController {
       })
     }
 
+    const previousStatus = allocation.status
+
     // Se pendente ou aprovada e ainda não começou → cancela automaticamente
     if (['pending', 'approved'].includes(allocation.status) && now < startMs) {
       allocation.status = 'cancelled'
@@ -328,6 +339,10 @@ export default class AllocationsController {
 
     allocation.userHidden = true
     await allocation.save()
+    await allocation.load('machine')
+    if (allocation.status !== previousStatus) {
+      await notifyAllocationStatusChange(allocation, allocation.machine, previousStatus)
+    }
 
     return response.ok({
       message: 'Alocação removida do seu histórico.',
@@ -427,6 +442,8 @@ export default class AllocationsController {
         message: 'Não há dados de telemetria para este período.',
       })
     }
+
+    await notifySessionSummaryReady(allocation, allocation.machine)
 
     return response.created(metric)
   }

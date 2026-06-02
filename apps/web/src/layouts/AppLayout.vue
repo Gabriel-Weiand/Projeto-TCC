@@ -2,12 +2,20 @@
 import { RouterView, RouterLink, useRoute } from "vue-router";
 import { useAuthStore } from "@/stores/auth";
 import { useRouter } from "vue-router";
-import { ref } from "vue";
+import { ref, onMounted } from "vue";
+import { useNotificationsStore } from "@/stores/notifications";
+import NotificationsPanel from "@/components/NotificationsPanel.vue";
 
 const auth = useAuthStore();
 const router = useRouter();
 const route = useRoute();
+const notifications = useNotificationsStore();
 const mobileMenuOpen = ref(false);
+const notifOpen = ref(false);
+
+onMounted(() => {
+  void notifications.fetchNotifications();
+});
 
 async function handleLogout() {
   await auth.logout();
@@ -77,6 +85,33 @@ function isActive(name: string | string[]): boolean {
         </div>
       </div>
       <div class="nav-right">
+        <button
+          type="button"
+          class="btn btn-ghost btn-sm nav-notif-btn"
+          title="Notificações"
+          aria-label="Abrir notificações"
+          @click="notifOpen = true"
+        >
+          <svg
+            class="nav-notif-icon"
+            xmlns="http://www.w3.org/2000/svg"
+            width="18"
+            height="18"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="2"
+            stroke-linecap="round"
+            stroke-linejoin="round"
+            aria-hidden="true"
+          >
+            <path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9" />
+            <path d="M13.73 21a2 2 0 0 1-3.46 0" />
+          </svg>
+          <span v-if="notifications.unreadCount" class="nav-notif-badge">{{
+            notifications.unreadCount > 9 ? "9+" : notifications.unreadCount
+          }}</span>
+        </button>
         <span class="nav-user">
           <span v-if="auth.isAdmin" class="admin-dot"></span>
           {{ auth.user?.fullName }}
@@ -90,6 +125,8 @@ function isActive(name: string | string[]): boolean {
     <main class="main-content">
       <RouterView />
     </main>
+
+    <NotificationsPanel :open="notifOpen" @close="notifOpen = false" />
   </div>
 </template>
 
@@ -180,6 +217,41 @@ function isActive(name: string | string[]): boolean {
   display: flex;
   align-items: center;
   gap: 0.75rem;
+}
+
+.nav-notif-btn {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 2.25rem;
+  min-height: 2.25rem;
+  padding: 0.35rem;
+  color: var(--text-secondary);
+}
+
+.nav-notif-btn:hover {
+  color: var(--text-primary);
+}
+
+.nav-notif-icon {
+  display: block;
+}
+
+.nav-notif-badge {
+  position: absolute;
+  top: -2px;
+  right: -4px;
+  min-width: 1.1rem;
+  height: 1.1rem;
+  padding: 0 0.25rem;
+  border-radius: 999px;
+  background: var(--accent);
+  color: #fff;
+  font-size: 0.65rem;
+  font-weight: 700;
+  line-height: 1.1rem;
+  text-align: center;
 }
 
 .nav-user {

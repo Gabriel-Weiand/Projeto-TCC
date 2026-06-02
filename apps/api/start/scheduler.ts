@@ -11,6 +11,10 @@ import { DateTime } from 'luxon'
 import logger from '@adonisjs/core/services/logger'
 import { autoFinalizeExpired } from '#services/allocation_summarizer'
 import { labConfig } from '#services/lab_config'
+import {
+  runScheduledAllocationReminders,
+  notifyOfflineAgents,
+} from '#services/notification_service'
 
 /**
  * Remove tokens de acesso expirados do banco de dados.
@@ -63,7 +67,32 @@ function scheduleAutoFinalize() {
  * Inicializa todos os schedulers.
  * Chamado no boot do servidor.
  */
+/**
+ * Lembretes T-10, chave SSH T-5/T-0 e alerta de agente offline.
+ * Roda no mesmo intervalo do auto-finalize (padrão: a cada 5 min).
+ * Agente offline: verifica a cada tick, mas renotifica no máximo 1×/24 h por máquina (LAB_NOTIF_AGENT_OFFLINE_COOLDOWN_HOURS).
+ */
+function scheduleNotificationJobs() {
+  cron.schedule(labConfig.schedulers.autoFinalizeCron, async () => {
+    try {
+      const reminders = await runScheduledAllocationReminders()
+      const offline = await notifyOfflineAgents()
+      const total = reminders.upcoming + reminders.sshT5 + reminders.sshT0 + offline
+      if (total > 0) {
+        logger.info(
+          `[Scheduler] Notifications: upcoming=${reminders.upcoming} sshT5=${reminders.sshT5} sshT0=${reminders.sshT0} offline=${offline}`
+        )
+      }
+    } catch (error) {
+      logger.error('[Scheduler] Failed notification jobs:', error)
+    }
+  })
+
+  logger.info(`[Scheduler] Notification jobs (${labConfig.schedulers.autoFinalizeCron})`)
+}
+
 export function initScheduler() {
   schedulePruneTokens()
   scheduleAutoFinalize()
+  scheduleNotificationJobs()
 }

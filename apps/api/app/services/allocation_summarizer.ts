@@ -3,6 +3,7 @@ import AllocationMetric from '#models/allocation_metric'
 import Telemetry from '#models/telemetry'
 import logger from '@adonisjs/core/services/logger'
 import { DateTime } from 'luxon'
+import { notifyAllocationAutoFinished } from '#services/notification_service'
 
 /**
  * Calcula métricas agregadas usando Time-Weighted Average (Média Ponderada no Tempo).
@@ -160,6 +161,8 @@ export async function autoFinalizeExpired(): Promise<number> {
     try {
       allocation.status = 'finished'
       await allocation.save()
+      await allocation.load('machine')
+      await notifyAllocationAutoFinished(allocation, allocation.machine)
 
       await summarizeAllocation(allocation)
       count++

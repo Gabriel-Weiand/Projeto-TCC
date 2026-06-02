@@ -1,5 +1,6 @@
 import { test } from '@japa/runner'
 import User from '#models/user'
+import Notification from '#models/notification'
 import testUtils from '@adonisjs/core/services/test_utils'
 
 test.group('Users', (group) => {
@@ -32,6 +33,11 @@ test.group('Users', (group) => {
       email: 'gabriel@teste.com',
       systemUsername: 'lab.gabriel_weiand_junior', // Verifica o Hook @beforeCreate
     })
+
+    const userId = response.body().id as number
+    const notifications = await Notification.query().where('userId', userId)
+    assert.lengthOf(notifications, 1)
+    assert.equal(notifications[0].title, 'Cadastre sua chave SSH')
   })
 
   test('sistema deve resolver conflitos de system_username idênticos', async ({
@@ -185,6 +191,51 @@ test.group('Users', (group) => {
     response.assertStatus(200)
     await user.refresh()
     assert.equal(user.fullName, 'John Updated')
+  })
+
+  test('usuário deve atualizar senha via /me e autenticar com a nova senha', async ({
+    client,
+    assert,
+  }) => {
+    const user = await User.create({
+      fullName: 'Senha Me',
+      email: 'senha-me@teste.com',
+      password: 'senhaAntiga1',
+      role: 'user',
+    })
+
+    const update = await client.put('/api/v1/users/me').loginAs(user).json({
+      password: 'senhaNova99',
+    })
+    update.assertStatus(200)
+
+    const oldLogin = await client.post('/api/v1/login').json({
+      email: 'senha-me@teste.com',
+      password: 'senhaAntiga1',
+    })
+    assert.notEqual(oldLogin.status(), 200)
+
+    const newLogin = await client.post('/api/v1/login').json({
+      email: 'senha-me@teste.com',
+      password: 'senhaNova99',
+    })
+    newLogin.assertStatus(200)
+    assert.equal(newLogin.body().user.email, 'senha-me@teste.com')
+  })
+
+  test('nome curto demais em /me retorna 422', async ({ client }) => {
+    const user = await User.create({
+      fullName: 'Ana',
+      email: 'ana-curta@teste.com',
+      password: 'senha123',
+      role: 'user',
+    })
+
+    const response = await client.put('/api/v1/users/me').loginAs(user).json({
+      fullName: 'Bob',
+    })
+
+    response.assertStatus(422)
   })
 
   test('usuário NÃO pode alterar a própria role para admin', async ({ client, assert }) => {

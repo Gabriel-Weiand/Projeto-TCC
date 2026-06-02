@@ -26,8 +26,8 @@ onMounted(() => {
   }
 });
 
-function openSshPanel() {
-  showSshPanel.value = true;
+function toggleSshPanel() {
+  showSshPanel.value = !showSshPanel.value;
 }
 
 function closeSshPanel() {
@@ -66,16 +66,15 @@ async function handleSave() {
 </script>
 
 <template>
-  <div
-    class="fade-in profile-page"
-    :class="{ 'profile-page--wide': showSshPanel }"
-  >
-    <div class="page-header">
-      <h1 class="page-title">Perfil</h1>
-    </div>
+  <div class="fade-in profile-page">
+    <div class="account-shell">
+      <div class="profile-column">
+        <div class="page-header">
+          <h1 class="page-title">Perfil</h1>
+        </div>
 
-    <div class="account-shell" :class="{ 'account-shell--split': showSshPanel }">
-      <div class="profile-main card profile-card">
+        <div class="profile-row" :class="{ 'profile-row--ssh-open': showSshPanel }">
+        <div class="profile-main card profile-card">
         <div class="profile-hero">
           <div class="profile-hero-main">
             <div class="profile-avatar">
@@ -96,7 +95,7 @@ async function handleSave() {
             type="button"
             class="ssh-tile"
             :class="hasSshKey ? 'ssh-tile--ok' : 'ssh-tile--missing'"
-            @click="openSshPanel"
+            @click="toggleSshPanel"
           >
             <span class="ssh-tile-body">
               <span class="ssh-tile-label">Acesso remoto</span>
@@ -104,7 +103,21 @@ async function handleSave() {
                 {{ hasSshKey ? "Chave cadastrada" : "Configurar chave SSH" }}
               </span>
             </span>
-            <span class="ssh-tile-arrow" aria-hidden="true">›</span>
+            <span class="ssh-tile-chevron" aria-hidden="true">
+              <svg
+                xmlns="http://www.w3.org/2000/svg"
+                width="18"
+                height="18"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="2"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+              >
+                <polyline points="9 18 15 12 9 6" />
+              </svg>
+            </span>
           </button>
         </div>
 
@@ -147,10 +160,12 @@ async function handleSave() {
             {{ saving ? "Salvando..." : "Salvar alterações" }}
           </button>
         </form>
-      </div>
+        </div>
 
-      <div v-if="showSshPanel" class="ssh-panel-wrap">
-        <ProfileSshPanel @close="closeSshPanel" />
+        <aside class="ssh-panel-aside" :class="{ 'is-open': showSshPanel }">
+          <ProfileSshPanel @close="closeSshPanel" />
+        </aside>
+        </div>
       </div>
     </div>
   </div>
@@ -158,34 +173,71 @@ async function handleSave() {
 
 <style scoped>
 .profile-page {
-  max-width: 520px;
-  margin: 0 auto;
+  width: 100%;
+  max-width: 100%;
 }
 
-.profile-page--wide {
-  max-width: 900px;
+.profile-column {
+  width: fit-content;
+  max-width: 100%;
+}
+
+.profile-column .page-header {
+  margin-bottom: 1.75rem;
 }
 
 .account-shell {
-  display: flex;
-  flex-direction: column;
-  gap: 0.75rem;
+  width: fit-content;
+  max-width: 100%;
+  margin: 0 auto;
 }
 
-.account-shell--split {
-  flex-direction: row;
+.profile-row {
+  display: flex;
   align-items: flex-start;
+  gap: 0;
+  transition: gap 0.32s ease;
+}
+
+.profile-row--ssh-open {
   gap: 1.5rem;
 }
 
-.account-shell--split .profile-main {
-  flex: 1;
+.profile-main {
+  flex: 0 0 520px;
+  width: 520px;
+  max-width: 100%;
   min-width: 0;
 }
 
-.ssh-panel-wrap {
-  flex-shrink: 0;
+.ssh-panel-aside {
+  flex: 0 0 auto;
   width: 360px;
+  max-width: 0;
+  overflow: hidden;
+  opacity: 0;
+  pointer-events: none;
+  transition:
+    max-width 0.32s ease,
+    opacity 0.28s ease;
+}
+
+.ssh-panel-aside.is-open {
+  max-width: 360px;
+  opacity: 1;
+  pointer-events: auto;
+}
+
+.ssh-panel-aside.is-open :deep(.panel-card) {
+  position: static;
+  top: auto;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .account-shell,
+  .ssh-panel-aside {
+    transition: none;
+  }
 }
 
 .profile-card {
@@ -301,11 +353,23 @@ async function handleSave() {
   color: var(--text-muted);
 }
 
-.ssh-tile-arrow {
-  font-size: 1rem;
-  color: var(--text-muted);
-  line-height: 1;
+.ssh-tile-chevron {
   flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--text-muted);
+  transition:
+    transform 0.28s ease,
+    color 0.2s ease;
+}
+
+.ssh-tile-chevron svg {
+  display: block;
+}
+
+.ssh-tile:hover .ssh-tile-chevron {
+  color: var(--text-secondary);
 }
 
 .profile-form {
@@ -376,12 +440,28 @@ input:disabled {
 }
 
 @media (max-width: 900px) {
-  .account-shell--split {
-    flex-direction: column;
+  .profile-column,
+  .profile-main {
+    width: 100%;
   }
 
-  .ssh-panel-wrap {
+  .account-shell {
     width: 100%;
+    max-width: 520px;
+  }
+
+  .profile-row,
+  .profile-row--ssh-open {
+    flex-direction: column;
+    gap: 1rem;
+  }
+
+  .ssh-panel-aside {
+    width: 100%;
+  }
+
+  .ssh-panel-aside.is-open {
+    max-width: 100%;
   }
 }
 </style>

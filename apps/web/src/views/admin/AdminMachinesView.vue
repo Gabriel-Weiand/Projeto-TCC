@@ -13,6 +13,8 @@ const editing = ref<Machine | null>(null);
 const form = reactive({
   name: "",
   description: "",
+  ipAddress: "",
+  sshPort: "" as string,
   status: "offline" as string,
 });
 const saving = ref(false);
@@ -42,10 +44,30 @@ const filtered = computed(() => {
   );
 });
 
+function parseSshPortInput(raw: string): number | null {
+  const trimmed = raw.trim();
+  if (!trimmed) return null;
+  const n = Number.parseInt(trimmed, 10);
+  return Number.isFinite(n) ? n : null;
+}
+
+function machinePayload() {
+  const ip = form.ipAddress.trim();
+  return {
+    name: form.name,
+    description: form.description,
+    status: form.status,
+    ipAddress: ip || null,
+    sshPort: parseSshPortInput(form.sshPort),
+  };
+}
+
 function openCreate() {
   editing.value = null;
   form.name = "";
   form.description = "";
+  form.ipAddress = "";
+  form.sshPort = "";
   form.status = "offline";
   error.value = "";
   showModal.value = true;
@@ -55,6 +77,8 @@ function openEdit(m: Machine) {
   editing.value = m;
   form.name = m.name;
   form.description = m.description || "";
+  form.ipAddress = m.ipAddress || "";
+  form.sshPort = m.sshPort != null ? String(m.sshPort) : "";
   form.status = m.status;
   error.value = "";
   showModal.value = true;
@@ -70,15 +94,14 @@ async function handleSave() {
   saving.value = true;
   try {
     if (editing.value) {
-      await store.updateMachine(editing.value.id, {
-        name: form.name,
-        description: form.description,
-        status: form.status,
-      });
+      await store.updateMachine(editing.value.id, machinePayload());
     } else {
+      const { status, ...createBody } = machinePayload();
       const created = await store.createMachine({
-        name: form.name,
-        description: form.description,
+        name: createBody.name,
+        description: createBody.description,
+        ipAddress: createBody.ipAddress ?? undefined,
+        sshPort: createBody.sshPort,
       });
       // Show token for newly created machine
       if (created.token) {
@@ -268,6 +291,27 @@ function copyToken() {
                 v-model="form.description"
                 type="text"
                 placeholder="Descrição da máquina"
+              />
+            </div>
+            <div class="field">
+              <label class="field-label">Endereço IP</label>
+              <input
+                v-model="form.ipAddress"
+                type="text"
+                placeholder="Ex: 192.168.1.10"
+              />
+            </div>
+            <div class="field">
+              <label class="field-label"
+                >Porta SSH
+                <span class="text-muted">(vazio = 22)</span></label
+              >
+              <input
+                v-model="form.sshPort"
+                type="number"
+                min="1"
+                max="65535"
+                placeholder="22"
               />
             </div>
             <div v-if="editing" class="field">

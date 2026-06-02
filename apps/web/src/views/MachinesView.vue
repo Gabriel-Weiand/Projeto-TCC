@@ -161,8 +161,21 @@ function toggleGroup(key: string) {
             class="park-group-chevron"
             :class="{ 'is-collapsed': isGroupCollapsed(section.key) }"
             aria-hidden="true"
-            >▲</span
           >
+            <svg
+              xmlns="http://www.w3.org/2000/svg"
+              width="20"
+              height="20"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+            >
+              <polyline points="6 9 12 15 18 9" />
+            </svg>
+          </span>
         </button>
 
         <div
@@ -250,18 +263,22 @@ function toggleGroup(key: string) {
   flex-shrink: 0;
   align-self: center;
   margin-right: 0.15rem;
-  font-size: 1.15rem;
-  line-height: 1;
   color: var(--text-muted);
-  display: inline-block;
-  transform: rotate(0deg);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  transform: rotate(180deg);
   transition:
     transform 0.28s ease,
     color 0.2s ease;
 }
 
+.park-group-chevron svg {
+  display: block;
+}
+
 .park-group-chevron.is-collapsed {
-  transform: rotate(180deg);
+  transform: rotate(0deg);
 }
 
 .park-group-header:hover .park-group-chevron {

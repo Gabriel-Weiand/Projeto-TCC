@@ -267,6 +267,12 @@ function copyToken() {
           <span class="stat-label">IP</span>
           <span class="stat-value" style="font-size: 1rem">{{ machine.ipAddress }}</span>
         </div>
+        <div class="stat-card">
+          <span class="stat-label">Porta SSH</span>
+          <span class="stat-value" style="font-size: 1rem">{{
+            machine.sshPort ?? 22
+          }}</span>
+        </div>
         <div v-if="machine.hostFingerprint" class="stat-card stat-card--wide">
           <span class="stat-label">Fingerprint SSH (host)</span>
           <code class="stat-value fingerprint">{{ machine.hostFingerprint }}</code>

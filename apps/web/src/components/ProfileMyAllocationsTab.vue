@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { ref, computed, onMounted } from "vue";
 import { useAllocationsStore } from "@/stores/allocations";
+import { useNotificationsStore } from "@/stores/notifications";
 import { useLabConfigStore } from "@/stores/labConfig";
 import type { Allocation } from "@/types";
 import AllocationUsageStatsModal from "@/components/AllocationUsageStatsModal.vue";
@@ -18,6 +19,7 @@ import {
 } from "@/utils/datetime";
 
 const store = useAllocationsStore();
+const notifications = useNotificationsStore();
 const lab = useLabConfigStore();
 
 const loading = ref(true);
@@ -121,6 +123,7 @@ async function handleCancel(a: Allocation) {
     const updated = await store.cancelAllocation(a.id);
     const idx = list.value.findIndex((x) => x.id === updated.id);
     if (idx !== -1) list.value[idx] = updated;
+    await notifications.fetchNotifications();
   } catch {
     alert("Erro ao cancelar reserva.");
   } finally {
@@ -128,9 +131,10 @@ async function handleCancel(a: Allocation) {
   }
 }
 
-function onExtended(updated: Allocation) {
+async function onExtended(updated: Allocation) {
   const idx = list.value.findIndex((x) => x.id === updated.id);
   if (idx !== -1) list.value[idx] = updated;
+  await notifications.fetchNotifications();
 }
 
 async function handleDelete(a: Allocation) {

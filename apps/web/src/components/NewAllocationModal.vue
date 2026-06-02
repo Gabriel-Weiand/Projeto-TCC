@@ -1,6 +1,8 @@
 <script setup lang="ts">
 import { ref, reactive } from "vue";
 import { useAllocationsStore } from "@/stores/allocations";
+import { useAuthStore } from "@/stores/auth";
+import { useNotificationsStore } from "@/stores/notifications";
 import { useLabConfigStore } from "@/stores/labConfig";
 import type { Machine } from "@/types";
 import { wallClockToUtcIso } from "@/utils/datetime";
@@ -10,14 +12,18 @@ const props = defineProps<{ machines: Machine[] }>();
 const emit = defineEmits<{ close: []; created: [] }>();
 
 const allocations = useAllocationsStore();
+const auth = useAuthStore();
+const notifications = useNotificationsStore();
 const lab = useLabConfigStore();
 
 const form = reactive({
   machineId: "" as string | number,
-  date: "",
+  startDate: "",
   startTime: "",
+  endDate: "",
   endTime: "",
   reason: "",
+  isSudo: false,
 });
 
 const saving = ref(false);
@@ -26,23 +32,29 @@ const error = ref("");
 async function handleCreate() {
   error.value = "";
 
-  if (!form.machineId || !form.date || !form.startTime || !form.endTime) {
+  if (
+    !form.machineId ||
+    !form.startDate ||
+    !form.startTime ||
+    !form.endDate ||
+    !form.endTime
+  ) {
     error.value = "Preencha todos os campos obrigatórios.";
-    return;
-  }
-
-  if (form.startTime >= form.endTime) {
-    error.value = "Horário de início deve ser antes do fim.";
     return;
   }
 
   let startTime: string;
   let endTime: string;
   try {
-    startTime = wallClockToUtcIso(form.date, form.startTime, lab.timezone);
-    endTime = wallClockToUtcIso(form.date, form.endTime, lab.timezone);
+    startTime = wallClockToUtcIso(form.startDate, form.startTime, lab.timezone);
+    endTime = wallClockToUtcIso(form.endDate, form.endTime, lab.timezone);
   } catch {
     error.value = "Data ou horário inválido.";
+    return;
+  }
+
+  if (endTime <= startTime) {
+    error.value = "Data/horário de finalização deve ser após o início.";
     return;
   }
 
@@ -54,7 +66,9 @@ async function handleCreate() {
       endTime,
       reason:
         form.reason.trim().slice(0, ALLOCATION_REASON_MAX_LENGTH) || undefined,
+      isSudo: auth.isAdmin ? undefined : form.isSudo,
     });
+    await notifications.fetchNotifications();
     emit("created");
   } catch (err: any) {
     const status = err.response?.status;
@@ -101,21 +115,41 @@ async function handleCreate() {
             </select>
           </div>
 
-          <div class="field">
-            <label class="field-label">Data</label>
-            <input v-model="form.date" type="date" />
+          <div class="field-group">
+            <label class="field-label field-group-title">Início</label>
+            <div class="field-row">
+              <div class="field">
+                <label class="field-label field-sublabel">Data</label>
+                <input v-model="form.startDate" type="date" />
+              </div>
+              <div class="field">
+                <label class="field-label field-sublabel">Horário</label>
+                <input v-model="form.startTime" type="time" />
+              </div>
+            </div>
           </div>
 
-          <div class="field-row">
-            <div class="field">
-              <label class="field-label">Início</label>
-              <input v-model="form.startTime" type="time" />
-            </div>
-            <div class="field">
-              <label class="field-label">Fim</label>
-              <input v-model="form.endTime" type="time" />
+          <div class="field-group">
+            <label class="field-label field-group-title">Finalização</label>
+            <div class="field-row">
+              <div class="field">
+                <label class="field-label field-sublabel">Data</label>
+                <input v-model="form.endDate" type="date" />
+              </div>
+              <div class="field">
+                <label class="field-label field-sublabel">Horário</label>
+                <input v-model="form.endTime" type="time" />
+              </div>
             </div>
           </div>
+
+          <label v-if="!auth.isAdmin" class="sudo-toggle">
+            <input v-model="form.isSudo" type="checkbox" />
+            <span>
+              Solicitar privilégios <strong>sudo</strong> na máquina
+              <span class="text-muted">(requer aprovação do admin)</span>
+            </span>
+          </label>
 
           <div class="field">
             <label class="field-label"
@@ -193,6 +227,29 @@ async function handleCreate() {
   display: flex;
   flex-direction: column;
   gap: 1rem;
+}
+
+.field-group-title {
+  font-weight: 600;
+  margin-bottom: 0.35rem;
+  display: block;
+}
+
+.field-sublabel {
+  font-size: 0.75rem;
+}
+
+.sudo-toggle {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.5rem;
+  font-size: 0.88rem;
+  line-height: 1.4;
+  cursor: pointer;
+}
+
+.sudo-toggle input {
+  margin-top: 0.2rem;
 }
 
 .modal-actions {

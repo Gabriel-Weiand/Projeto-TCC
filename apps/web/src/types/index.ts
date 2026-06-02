@@ -59,6 +59,8 @@ export interface Machine {
   totalRamGb: number | null;
   totalDiskGb: number | null;
   ipAddress: string | null;
+  /** null = porta SSH 22 */
+  sshPort: number | null;
   status: "available" | "occupied" | "maintenance" | "offline";
   lastSeenAt: string | null;
   activeUsers: any[] | null;
@@ -105,6 +107,7 @@ export interface Allocation {
   endTime: string;
   reason: string | null;
   status: "pending" | "approved" | "denied" | "cancelled" | "finished";
+  isSudo?: boolean;
   userHidden: boolean;
   /** Presente quando a rota retorna dados anonimizados (usuário não-admin) */
   isOwn?: boolean;
@@ -140,6 +143,17 @@ export interface AllocationMetric {
   avgMoboTemp: number | null;
   maxMoboTemp: number | null;
   sessionDurationMinutes: number;
+  createdAt: string;
+  updatedAt: string | null;
+}
+
+export interface Notification {
+  id: number;
+  userId: number;
+  title: string;
+  message: string;
+  isRead: boolean;
+  readAt: string | null;
   createdAt: string;
   updatedAt: string | null;
 }

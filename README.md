@@ -560,8 +560,9 @@ cp .env.example .env
 # Opcional: limites do calendário, validade do token, nomes públicos no Gantt
 # (LAB_ALLOCATION_PUBLIC_NAMES=true — ver LAB_* em .env.example).
 
-# Execute as migrations
+# Execute as migrations (dev: se o schema mudou, use fresh + seed)
 node ace migration:run
+# node ace migration:fresh --seed
 
 # (Opcional) Execute os seeders para dados de teste
 node ace db:seed

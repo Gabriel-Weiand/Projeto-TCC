@@ -75,6 +75,45 @@ $TWA = \frac{\sum (v_i \cdot \Delta t_i)}{T_{total}}$
 
 - `system_username` deve ser estável/imutável por regra de negócio (a constraint explícita não está no schema).
 - Autenticação do agente: apenas `Authorization: Bearer <token>` (512 bits).
+
+## Notificações (`notification_service`)
+
+Política central em `#services/notification_service.ts`. Disparos por controller, heartbeat ou scheduler (`start/scheduler.ts`, mesmo cron do auto-finalize). Variáveis: `LAB_NOTIF_*` em `.env.example`.
+
+### Usuário
+
+| Título | Gatilho |
+|--------|---------|
+| Reserva aprovada | `pending` → `approved` |
+| Reserva negada | status `denied` |
+| Reserva cancelada | status `cancelled` (qualquer fluxo) |
+| Reserva cancelada (manutenção) | máquina entra em `maintenance` (todas `approved`/`pending` canceladas) |
+| Reserva em breve | scheduler: início em até **10 min** (`LAB_NOTIF_UPCOMING_MINUTES`) |
+| Chave SSH — reserva em 5 min | scheduler: início em até **5 min**, sem `ssh_public_key` |
+| Chave SSH — reserva iniciada | scheduler (sessão ativa) ou **heartbeat** (alocação corrente), sem chave |
+| Sessão encerrada | auto-finalize (`finished`) |
+| Resumo da sessão disponível | `POST /allocations/:id/summary` |
+| Cadastre sua chave SSH | `POST /users` (criação de conta) |
+
+Marcador `[alloc#id#]` na mensagem evita duplicata nos lembretes agendados (e `[machine#id#]` para alertas admin).
+
+### Admin
+
+| Título | Gatilho |
+|--------|---------|
+| Nova reserva pendente (sudo) | criação `pending` + `isSudo` |
+| Reserva sudo negada / cancelada | `pending` → `denied` ou `cancelled` (sudo) |
+| Possível flood SSH | **heartbeat** com `sshAttempts`: ≥20 falhas em 15 min (`LAB_NOTIF_SSH_FLOOD_*`), cooldown 1 h por máquina |
+| Agente offline | scheduler (a cada 5 min): `lastSeenAt` ausente ou &gt; **10 min** em máquina `available`/`occupied`; **no máximo 1 alerta a cada 24 h** por máquina (`LAB_NOTIF_AGENT_OFFLINE_COOLDOWN_HOURS`) — sinal para colocar em **manutenção** ou retirar do parque, sem flood |
+
+Flood SSH **não** roda no endpoint de telemetria — só quando o agente envia tentativas no heartbeat.
+
+**Agente offline:** o job roda no mesmo cron do auto-finalize; a detecção é frequente, mas o cooldown de 24 h garante um lembrete diário por máquina problemática (labs remotos dependem do heartbeat).
+
+### Manutenção de máquina
+
+`PUT /machines/:id` com `status: maintenance` cancela **todas** as alocações `approved`/`pending` da máquina e notifica cada usuário. Resposta inclui `cancelledAllocations` quando > 0.
+
 ---
 
 ## Arquitetura interna (API)

@@ -23,7 +23,10 @@ test.group('SSH Attempts', (group) => {
       status: 'failed',
     })
 
-    const response = await client.get('/api/v1/ssh-attempts').loginAs(admin)
+    const response = await client
+      .get('/api/v1/ssh-attempts')
+      .qs({ machineId: machine.id })
+      .loginAs(admin)
 
     response.assertStatus(200)
     assert.equal(response.body().meta.total, 1)

@@ -27,6 +27,7 @@ export const useAllocationsStore = defineStore("allocations", () => {
     endTime: string;
     reason?: string;
     userId?: number;
+    isSudo?: boolean;
   }) {
     const { data } = await api.post<Allocation>("/api/v1/allocations", payload);
     allocations.value.unshift(data);

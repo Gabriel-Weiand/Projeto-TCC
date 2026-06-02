@@ -36,6 +36,8 @@ export default class extends BaseSchema {
 
       // Identificador de Rede
       table.string('ip_address', 45).nullable()
+      /** null = porta SSH padrão 22 */
+      table.smallint('ssh_port').unsigned().nullable()
 
       // Status da máquina e configurações do agente
       table.enum('status', ['available', 'occupied', 'maintenance', 'offline']).defaultTo('offline')

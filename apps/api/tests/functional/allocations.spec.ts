@@ -232,7 +232,11 @@ test.group('Allocations', (group) => {
 
     response.assertStatus(200)
     await allocation.refresh()
-    assert.equal(allocation.endTime.toISO(), newEnd)
+    // SQLite grava segundos (sem ms)
+    assert.equal(
+      allocation.endTime.toUTC().toISO(),
+      DateTime.fromISO(newEnd).toUTC().startOf('second').toISO()
+    )
   })
 
   test('deve negar extensão se a alocação já tiver passado do grace period', async ({ client }) => {
@@ -416,14 +420,17 @@ test.group('Allocations', (group) => {
       userHidden: false,
     })
 
-    const active = await client.get('/api/v1/allocations').loginAs(admin)
+    const active = await client
+      .get('/api/v1/allocations')
+      .qs({ machineId: machine.id, userId: user.id })
+      .loginAs(admin)
     active.assertStatus(200)
     assert.equal(active.body().meta.total, 1)
     assert.isFalse(active.body().data[0].userHidden)
 
     const hidden = await client
       .get('/api/v1/allocations')
-      .qs({ userHidden: true })
+      .qs({ machineId: machine.id, userId: user.id, userHidden: true })
       .loginAs(admin)
     hidden.assertStatus(200)
     assert.equal(hidden.body().meta.total, 1)

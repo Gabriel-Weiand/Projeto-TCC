@@ -5,6 +5,10 @@ import MachineUser from '#models/machine_user'
 import SshConnectionAttempt from '#models/ssh_connection_attempt'
 import logger from '@adonisjs/core/services/logger'
 import { buildAgentTelemetryConfig } from '#services/telemetry_presets'
+import {
+  checkSshFailureFlood,
+  maybeNotifyMissingSshKeyAtSessionStart,
+} from '#services/notification_service'
 
 export default class HeartbeatService {
   /**
@@ -32,6 +36,7 @@ export default class HeartbeatService {
             ...attempt,
           }))
         )
+        await checkSshFailureFlood(machine)
       } catch (error) {
         logger.error(`[Heartbeat] Falha ao gravar auditoria SSH da máquina ${machine.id}`, error)
       }
@@ -116,6 +121,7 @@ export default class HeartbeatService {
         accessState: 'full_shell',
         isSudo: Boolean(currentAllocation.isSudo), // <-- Garante que vira true/false
       })
+      await maybeNotifyMissingSshKeyAtSessionStart(currentAllocation, machine)
     }
 
     // Montar o payload final e garantir a tabela pivô (`machine_users`) atualizada

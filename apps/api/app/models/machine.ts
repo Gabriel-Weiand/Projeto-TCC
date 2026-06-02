@@ -54,6 +54,10 @@ export default class Machine extends BaseModel {
   @column()
   declare ipAddress: string | null
 
+  /** null = SSH na porta 22 */
+  @column()
+  declare sshPort: number | null
+
   @column()
   declare status: 'available' | 'occupied' | 'maintenance' | 'offline'
 

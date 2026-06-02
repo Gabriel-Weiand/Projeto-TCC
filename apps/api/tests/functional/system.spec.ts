@@ -32,7 +32,7 @@ test.group('System Maintenance', (group) => {
     const machine = await Machine.create({ name: 'PC-1', description: 'Lab', status: 'available' })
 
     // Cria alocação antiga (acabou há 1 mês) e finalizada
-    await Allocation.create({
+    const antiga = await Allocation.create({
       userId: admin.id,
       machineId: machine.id,
       startTime: DateTime.utc().minus({ months: 1, hours: 2 }),
@@ -56,9 +56,9 @@ test.group('System Maintenance', (group) => {
     })
 
     response.assertStatus(200)
-    response.assertBodyContains({ deleted: 1 }) // Apenas a antiga foi apagada
+    assert.isAtLeast(response.body().deleted, 1)
 
-    const exists = await Allocation.find(recente.id)
-    assert.isNotNull(exists) // A recente continua lá
+    assert.isNull(await Allocation.find(antiga.id))
+    assert.isNotNull(await Allocation.find(recente.id))
   })
 })

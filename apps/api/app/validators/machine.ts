@@ -17,6 +17,8 @@ export const createMachineValidator = vine.compile(
 
     // Rede (opcionais)
     ipAddress: vine.string().trim().maxLength(45).optional(),
+    /** omitido ou null = porta 22 */
+    sshPort: vine.number().withoutDecimals().min(1).max(65535).nullable().optional(),
 
     // Status inicial
     status: vine.enum(['available', 'occupied', 'maintenance', 'offline'] as const).optional(),
@@ -41,6 +43,7 @@ export const updateMachineValidator = vine.compile(
     totalRamGb: vine.number().withoutDecimals().min(1).max(10240).nullable().optional(),
 
     ipAddress: vine.string().trim().maxLength(45).nullable().optional(),
+    sshPort: vine.number().withoutDecimals().min(1).max(65535).nullable().optional(),
 
     status: vine.enum(['available', 'occupied', 'maintenance', 'offline'] as const).optional(),
 

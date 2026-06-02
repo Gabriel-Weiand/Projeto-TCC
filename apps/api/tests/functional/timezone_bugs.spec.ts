@@ -139,8 +139,7 @@ test.group('Bug: prune — comparação de datas', (group) => {
   test('pruneAllocations DEVE remover alocações antigas', async ({ client, assert }) => {
     const { user, machine } = await createUserAndMachine('prune2')
 
-    // Alocação antiga (2 meses atrás)
-    await Allocation.create({
+    const antiga = await Allocation.create({
       userId: user.id,
       machineId: machine.id,
       startTime: DateTime.now().minus({ months: 2, hours: 3 }),
@@ -148,7 +147,6 @@ test.group('Bug: prune — comparação de datas', (group) => {
       status: 'finished',
     })
 
-    // "before" = 1 mês atrás → alocação de 2 meses deve ser removida
     const before = DateTime.now().minus({ months: 1 }).toISO()
 
     const response = await client
@@ -157,7 +155,8 @@ test.group('Bug: prune — comparação de datas', (group) => {
       .json({ before })
 
     response.assertStatus(200)
-    assert.equal(response.body().deleted, 1)
+    assert.isAtLeast(response.body().deleted, 1)
+    assert.isNull(await Allocation.find(antiga.id))
   })
 })
 

@@ -9,6 +9,7 @@ import {
 import { telemetryBuffer } from '#services/telemetry_buffer'
 import { machineCache } from '#services/machine_cache'
 import { DateTime } from 'luxon'
+import { cancelAllocationsForMaintenance } from '#services/notification_service'
 
 export default class MachinesController {
   /** Agente envia GB×10; respostas HTTP ao front em GB (1 decimal). */
@@ -161,22 +162,10 @@ export default class MachinesController {
     machine.merge(updateData)
     await machine.save()
 
-    // Se entrou em manutenção, cancela alocações futuras
+    // Se entrou em manutenção, cancela todas as reservas ativas/pendentes
     let cancelledCount = 0
     if (wasNotInMaintenance && isEnteringMaintenance) {
-      const now = DateTime.now().toMillis()
-
-      const futureAllocations = await Allocation.query()
-        .where('machineId', machine.id)
-        .whereIn('status', ['approved', 'pending'])
-
-      const toCancel = futureAllocations.filter((a) => a.startTime.toMillis() > now)
-
-      for (const allocation of toCancel) {
-        allocation.status = 'cancelled'
-        await allocation.save()
-        cancelledCount++
-      }
+      cancelledCount = await cancelAllocationsForMaintenance(machine)
     }
 
     machineCache.invalidateById(machine.id)

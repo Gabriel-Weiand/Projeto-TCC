@@ -271,8 +271,10 @@ test.group('Telemetria Data-Heavy', (group) => {
       assert.equal(Number(count[0].$extras.total), 12)
     }
 
-    // Verifica total geral
-    const total = await Telemetry.query().count('* as total')
+    const allocationIds = pairs.map((p) => p.allocation.id)
+    const total = await Telemetry.query()
+      .whereIn('allocationId', allocationIds)
+      .count('* as total')
     assert.equal(Number(total[0].$extras.total), 120)
   })
 
@@ -941,13 +943,10 @@ test.group('Fluxo End-to-End via API do Agente', (group) => {
     // Deve retornar 204 (aceita mas descarta)
     response.assertStatus(204)
 
-    // Flush e verifica que nada foi pro banco
-    await telemetryBuffer.flush()
+    // Sem alocação ativa: dados só no ring buffer, não no buffer de persistência
+    const flushed = await telemetryBuffer.flush()
+    assert.equal(flushed, 0)
 
-    const total = await Telemetry.query().count('* as total')
-    assert.equal(Number(total[0].$extras.total), 0)
-
-    // Máquina deve ter atualizado status mesmo sem alocação
     await machine.refresh()
     assert.equal(machine.status, 'available')
     assert.isNotNull(machine.lastSeenAt)

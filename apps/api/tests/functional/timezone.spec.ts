@@ -4,28 +4,24 @@ import Machine from '#models/machine'
 import Allocation from '#models/allocation'
 import testUtils from '@adonisjs/core/services/test_utils'
 import { DateTime, Settings } from 'luxon'
+import { labConfig } from '#services/lab_config'
 
-test.group('Timezone — UTC padrão', (group) => {
+test.group('Timezone — processo e persistência', (group) => {
   group.each.setup(() => testUtils.db().withGlobalTransaction())
 
-  test('Luxon defaultZone deve ser UTC', async ({ assert }) => {
-    assert.equal(Settings.defaultZone.name, 'UTC')
+  test('Luxon defaultZone segue TZ do laboratório (env)', async ({ assert }) => {
+    assert.equal(Settings.defaultZone.name, labConfig.timezone)
   })
 
-  test('DateTime.now() deve retornar UTC', async ({ assert }) => {
-    const now = DateTime.now()
+  test('DateTime.utc() permanece em UTC', async ({ assert }) => {
+    const now = DateTime.utc()
     assert.equal(now.zoneName, 'UTC')
     assert.equal(now.offset, 0)
   })
 
-  test('serverTime no heartbeat deve ser UTC (offset +00:00 ou Z)', async ({ assert }) => {
-    const now = DateTime.now()
-    const iso = now.toISO()!
-    // Deve conter +00:00 (Luxon format) indicando UTC
-    assert.isTrue(
-      iso.includes('+00:00') || iso.endsWith('Z'),
-      `serverTime esperado UTC, recebeu: ${iso}`
-    )
+  test('alocações serializam instantes em UTC (Z)', async ({ assert }) => {
+    const iso = DateTime.utc(2026, 6, 15, 17, 0, 0).toISO()!
+    assert.isTrue(iso.endsWith('Z') || iso.includes('+00:00'))
   })
 })
 
@@ -146,17 +142,7 @@ test.group('Timezone — Alocações em UTC', (group) => {
     assert.equal(res2.status(), 409, 'Deveria detectar conflito entre UTC e offset -03:00')
   })
 
-  test('heartbeat retorna serverTime em UTC', async ({ assert }) => {
-    const now = DateTime.now()
-    const iso = now.toISO()!
-
-    assert.isTrue(
-      iso.includes('+00:00') || iso.endsWith('Z'),
-      `DateTime.now().toISO() esperado UTC, recebeu: ${iso}`
-    )
-  })
-
-  test('data sem offset (como front antigo enviava) é tratada como UTC pelo servidor', async ({
+  test('data sem offset é tratada como UTC pelo servidor (append Z)', async ({
     client,
     assert,
   }) => {

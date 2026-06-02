@@ -50,3 +50,5 @@ Arquivo: `src/utils/datetime.ts`
 3. **API com `TZ=America/Sao_Paulo`** — Lucid lia/gravava `dateTime` no SQLite como hora local (+3 h ao reler). Corrigido em `Allocation` com `prepare`/`consume` UTC (`#utils/datetime`).
 
 Correção: sempre `wallClockToUtcIso` ao enviar, `formatLabDateTime` ao exibir, API com colunas UTC no modelo.
+
+Teste rápido (Node): `node apps/web/src/utils/datetime.spec.mjs`

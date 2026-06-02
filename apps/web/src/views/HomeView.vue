@@ -5,6 +5,7 @@ import { useAllocationsStore } from "@/stores/allocations";
 import { useMachinesStore } from "@/stores/machines";
 import { useAuthStore } from "@/stores/auth";
 import { useLabConfigStore } from "@/stores/labConfig";
+import { useNotificationsStore } from "@/stores/notifications";
 import type { Allocation } from "@/types";
 import { wallClockToUtcIso } from "@/utils/datetime";
 import { ALLOCATION_REASON_MAX_LENGTH } from "@/utils/allocationLabels";
@@ -13,6 +14,7 @@ const allocationsStore = useAllocationsStore();
 const machinesStore = useMachinesStore();
 const auth = useAuthStore();
 const lab = useLabConfigStore();
+const notifications = useNotificationsStore();
 
 const showForm = ref(false);
 
@@ -52,6 +54,7 @@ const form = ref({
   endDate: "", // Data de finalização (ex: 2026-05-14)
   endTime: "", // Hora de finalização (ex: 17:00)
   reason: "",
+  isSudo: false,
 });
 const formSaving = ref(false);
 const formError = ref("");
@@ -64,6 +67,7 @@ function openForm() {
     endDate: "",
     endTime: "",
     reason: "",
+    isSudo: false,
   };
   formError.value = "";
   showForm.value = true;
@@ -114,9 +118,10 @@ async function handleCreate() {
       startTime,
       endTime,
       reason: form.value.reason.trim().slice(0, ALLOCATION_REASON_MAX_LENGTH) || undefined,
+      isSudo: auth.isAdmin ? undefined : form.value.isSudo,
     });
     showForm.value = false;
-    await loadGanttAllocations();
+    await Promise.all([loadGanttAllocations(), notifications.fetchNotifications()]);
   } catch (err: any) {
     const status = err.response?.status;
     if (status === 409)
@@ -231,6 +236,14 @@ async function handleCreate() {
               </div>
             </div>
 
+            <label v-if="!auth.isAdmin" class="sudo-toggle">
+              <input v-model="form.isSudo" type="checkbox" />
+              <span>
+                Solicitar privilégios <strong>sudo</strong> na máquina
+                <span class="text-muted">(requer aprovação do admin)</span>
+              </span>
+            </label>
+
             <div class="field">
               <label class="field-label"
                 >Motivo
@@ -318,6 +331,19 @@ async function handleCreate() {
   display: flex;
   flex-direction: column;
   gap: 0.9rem;
+}
+
+.sudo-toggle {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.5rem;
+  font-size: 0.88rem;
+  line-height: 1.4;
+  cursor: pointer;
+}
+
+.sudo-toggle input {
+  margin-top: 0.2rem;
 }
 .panel-actions {
   display: flex;

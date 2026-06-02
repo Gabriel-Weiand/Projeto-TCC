@@ -71,6 +71,30 @@ test.group('Machines', (group) => {
     assert.exists(response.body().token)
   })
 
+  test('admin deve definir e limpar porta SSH da máquina', async ({ client, assert }) => {
+    const admin = await User.create({
+      fullName: 'Admin SSH',
+      email: 'admin-ssh@teste.com',
+      password: 'senha123',
+      role: 'admin',
+    })
+
+    const created = await client.post('/api/v1/machines').loginAs(admin).json({
+      name: 'PC-SSH-PORT',
+      description: 'Porta custom',
+      sshPort: 2222,
+    })
+    created.assertStatus(201)
+    assert.equal(created.body().sshPort, 2222)
+
+    const id = created.body().id as number
+    const cleared = await client.put(`/api/v1/machines/${id}`).loginAs(admin).json({
+      sshPort: null,
+    })
+    cleared.assertStatus(200)
+    assert.isNull(cleared.body().sshPort)
+  })
+
   test('usuário comum NÃO deve criar máquina', async ({ client }) => {
     // Arrange
     const user = await User.create({

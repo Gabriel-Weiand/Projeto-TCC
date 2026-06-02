@@ -9,8 +9,41 @@ Aplicação SPA para alunos e administradores. A interface centraliza reservas, 
 - **Autenticação**: login em `/api/v1/login`, token salvo localmente e enviado em todas as requisições.
 - **Reservas**: CRUD de alocações, com validação de conflitos e estados (pending/approved/denied).
 - **Máquinas**: listagem, detalhe, telemetria recente e histórico consolidado.
-- **Notificações**: consumo de inbox para aprovações, recusas e manutenção.
+- **Notificações**: `GET/PATCH /api/v1/notifications` — sino no `AppLayout`, painel `NotificationsPanel.vue`, store `notifications.ts`. Atualiza após criar/cancelar reserva.
 - **SSH**: cadastro da chave pública do usuário e instruções de conexão quando há alocação ativa.
+
+## Notificações (inbox)
+
+A API gera eventos; o front apenas lista e marca como lidas.
+
+### Usuário vê
+
+| Título (API) | Quando |
+|--------------|--------|
+| Reserva aprovada | sudo aprovado pelo admin |
+| Reserva negada | admin negou |
+| Reserva cancelada | cancelamento manual ou soft-delete |
+| Reserva cancelada (manutenção) | máquina em manutenção |
+| Reserva em breve | ~10 min antes do início |
+| Chave SSH — reserva em 5 min / reserva iniciada | sem chave ed25519 no perfil (lembrete reavaliado no scheduler e no heartbeat) |
+| Sessão encerrada | fim automático da janela |
+| Resumo da sessão disponível | admin gerou métricas |
+| Cadastre sua chave SSH | conta criada pelo admin |
+
+### Admin vê
+
+| Título (API) | Quando |
+|--------------|--------|
+| Nova reserva pendente (sudo) | nova solicitação sudo |
+| Reserva sudo negada / cancelada | auditoria de pedidos sudo |
+| Possível flood SSH | muitas falhas SSH na máquina (alerta com cooldown) |
+| Agente offline | scheduler: sem heartbeat &gt;10 min; no máximo 1×/24 h por máquina (manutenção/retirar do parque) |
+
+Componentes: `src/stores/notifications.ts`, `src/components/NotificationsPanel.vue`, tipo `Notification` em `src/types/index.ts`.
+
+**Conectar SSH:** `ProfileAllocationConnectModal.vue` (perfil → Minhas alocações e detalhe da máquina) exibe nome, grupo, descrição, IP, login SSH, janela da reserva e aviso de que o IP costuma exigir rede local do campus. Comando via `utils/ssh.ts`: `-p` só quando `machine.sshPort` ≠ 22 (null no banco = 22). Admin configura IP/porta em `AdminMachinesView.vue`; detalhe mostra porta em `AdminMachineDetailView.vue`.
+
+**Reserva sudo:** toggle nos formulários de alocação (`HomeView`, `NewAllocationModal`, `MachineDetailView`) para usuários não-admin → API `pending` + notificação admin.
 
 ## Estado local
 
