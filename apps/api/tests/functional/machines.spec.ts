@@ -196,8 +196,7 @@ test.group('Machines', (group) => {
     response.assertStatus(404)
   })
 
-  test('admin deve visualizar token da máquina no GET', async ({ client, assert }) => {
-    // Arrange
+  test('GET show não expõe token do agente (nem para admin)', async ({ client, assert }) => {
     const admin = await User.create({
       fullName: 'Admin',
       email: 'admin@teste.com',
@@ -209,17 +208,14 @@ test.group('Machines', (group) => {
       name: 'PC-COM-TOKEN',
       description: 'Máquina com token visível',
       cpuModel: 'Intel i5',
-      totalRamGb: 8,
+      totalRamGb: 80,
       status: 'available',
     })
 
-    // Act
     const response = await client.get(`/api/v1/machines/${machine.id}`).loginAs(admin)
 
-    // Assert
     response.assertStatus(200)
-    assert.exists(response.body().token)
-    assert.equal(response.body().token, machine.token)
+    assert.notExists(response.body().token)
   })
 
   test('admin deve regenerar token da máquina', async ({ client, assert }) => {

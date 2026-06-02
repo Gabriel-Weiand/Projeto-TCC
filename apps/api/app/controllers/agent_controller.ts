@@ -55,6 +55,7 @@ export default class AgentController {
         name: machine.name,
         cpuModel: machine.cpuModel,
         gpuModel: machine.gpuModel,
+        totalVramGb: machine.totalVramGb,
         totalRamGb: machine.totalRamGb,
       },
     })

@@ -1,4 +1,5 @@
 import axios from "axios";
+import { useLabConfigStore } from "@/stores/labConfig";
 
 const API_BASE = import.meta.env.VITE_API_URL || "http://localhost:3333";
 
@@ -14,15 +15,19 @@ let intervalId: ReturnType<typeof setInterval> | null = null;
 async function sync(): Promise<void> {
   try {
     const before = Date.now();
-    const { data } = await axios.get<{ utc: string; unixMs: number }>(
-      `${API_BASE}/api/time`,
-      { timeout: 5000 },
-    );
+    const { data } = await axios.get<{
+      utc: string;
+      unixMs: number;
+      localDate?: string;
+    }>(`${API_BASE}/api/time`, { timeout: 5000 });
     const after = Date.now();
     const rtt = after - before;
     const localMid = before + rtt / 2;
     offsetMs = data.unixMs - localMid;
     synced = true;
+    if (data.localDate) {
+      useLabConfigStore().config.now.localDate = data.localDate;
+    }
   } catch {
     // keep previous offset if sync fails
   }

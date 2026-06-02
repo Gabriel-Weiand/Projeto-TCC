@@ -14,6 +14,7 @@ const SystemController = () => import('#controllers/system_controller')
 const UtilsController = () => import('#controllers/utils_controller')
 const NotificationsController = () => import('#controllers/notifications_controller') // NOVO
 const SshAttemptsController = () => import('#controllers/ssh_attempts_controller') // NOVO (Substitui o antigo SshSessionsController)
+const LabTelemetryController = () => import('#controllers/lab_telemetry_controller')
 
 /**
  * Public Utils Routes (no auth required)
@@ -22,6 +23,7 @@ router
   .group(() => {
     router.get('alive', [UtilsController, 'alive']).as('utils.alive')
     router.get('time', [UtilsController, 'time']).as('utils.time')
+    router.get('config', [UtilsController, 'config']).as('utils.config')
   })
   .prefix('api')
 
@@ -73,6 +75,19 @@ router
             .prefix('users')
             .where('id', router.matchers.number())
             .use(middleware.isAdmin()) // Admin Only
+
+          // --- Lab telemetry presets fast/eco (Admin Only) ---
+          router
+            .group(() => {
+              router
+                .get('telemetry-presets', [LabTelemetryController, 'show'])
+                .as('lab.telemetryPresets.show')
+              router
+                .put('telemetry-presets', [LabTelemetryController, 'update'])
+                .as('lab.telemetryPresets.update')
+            })
+            .prefix('lab')
+            .use(middleware.isAdmin())
 
           // --- Machine Groups (Admin Only) ---
           router

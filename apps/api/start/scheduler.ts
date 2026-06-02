@@ -10,6 +10,7 @@ import db from '@adonisjs/lucid/services/db'
 import { DateTime } from 'luxon'
 import logger from '@adonisjs/core/services/logger'
 import { autoFinalizeExpired } from '#services/allocation_summarizer'
+import { labConfig } from '#services/lab_config'
 
 /**
  * Remove tokens de acesso expirados do banco de dados.
@@ -18,7 +19,7 @@ import { autoFinalizeExpired } from '#services/allocation_summarizer'
 function schedulePruneTokens() {
   // Cron: minuto hora dia mês dia-da-semana
   // '0 3 * * *' = todo dia às 3:00
-  cron.schedule('0 3 * * *', async () => {
+  cron.schedule(labConfig.schedulers.pruneTokensCron, async () => {
     try {
       const now = DateTime.now().toSQL()
 
@@ -32,7 +33,9 @@ function schedulePruneTokens() {
     }
   })
 
-  logger.info('[Scheduler] Token pruning scheduled for 3:00 AM daily')
+  logger.info(
+    `[Scheduler] Token pruning scheduled (${labConfig.schedulers.pruneTokensCron})`
+  )
 }
 
 /**
@@ -40,7 +43,7 @@ function schedulePruneTokens() {
  * Roda a cada 5 minutos.
  */
 function scheduleAutoFinalize() {
-  cron.schedule('*/5 * * * *', async () => {
+  cron.schedule(labConfig.schedulers.autoFinalizeCron, async () => {
     try {
       const count = await autoFinalizeExpired()
       if (count > 0) {
@@ -51,7 +54,9 @@ function scheduleAutoFinalize() {
     }
   })
 
-  logger.info('[Scheduler] Auto-finalize scheduled every 5 minutes')
+  logger.info(
+    `[Scheduler] Auto-finalize scheduled (${labConfig.schedulers.autoFinalizeCron})`
+  )
 }
 
 /**

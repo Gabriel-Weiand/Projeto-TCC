@@ -555,6 +555,8 @@ cd apps/api
 
 # Configure o ambiente
 cp .env.example .env
+# Ajuste TZ para o fuso do laboratório (ex.: America/Sao_Paulo).
+# Opcional: limites do calendário, validade do token (LAB_* no .env.example).
 
 # Execute as migrations
 node ace migration:run

@@ -11,6 +11,12 @@ import { machineCache } from '#services/machine_cache'
 import { DateTime } from 'luxon'
 
 export default class MachinesController {
+  /** Agente envia GB×10; respostas HTTP ao front em GB (1 decimal). */
+  private agentGbToApi(wire: number | null | undefined): number | null {
+    if (wire == null) return null
+    return Number(wire) / 10
+  }
+
   /**
    * Normaliza telemetria bruta (escala 0-1000 / 0-1500) para valores legíveis.
    * Usage: 0-1000 → 0-100 (porcentagem)
@@ -30,14 +36,12 @@ export default class MachinesController {
       gpuTemp: Number(r.gpuTemp ?? 0) / 10,
       gpuPowerWatts: r.gpuPowerWatts != null ? Number(r.gpuPowerWatts) : null,
 
-      // Valores absolutos enviados multiplicados por 10 pelo Python
-      ramTotalGb: r.ramTotalGb != null ? Number(r.ramTotalGb) / 10 : null,
-      ramUsedGb: r.ramUsedGb != null ? Number(r.ramUsedGb) / 10 : null,
-      swapTotalGb: r.swapTotalGb != null ? Number(r.swapTotalGb) / 10 : null,
-      swapUsedGb: r.swapUsedGb != null ? Number(r.swapUsedGb) / 10 : null,
-
-      vramTotalGb: r.vramTotalGb != null ? Number(r.vramTotalGb) / 10 : null,
-      vramUsedGb: r.vramUsedGb != null ? Number(r.vramUsedGb) / 10 : null,
+      ramTotalGb: this.agentGbToApi(r.ramTotalGb as number | null),
+      ramUsedGb: this.agentGbToApi(r.ramUsedGb as number | null),
+      swapTotalGb: this.agentGbToApi(r.swapTotalGb as number | null),
+      swapUsedGb: this.agentGbToApi(r.swapUsedGb as number | null),
+      vramTotalGb: this.agentGbToApi(r.vramTotalGb as number | null),
+      vramUsedGb: this.agentGbToApi(r.vramUsedGb as number | null),
 
       // Discos e Rede vêm diretamente como o agentd.py manda
       disksInfo: r.disks ?? null,
@@ -73,6 +77,8 @@ export default class MachinesController {
 
     return {
       ...serialized,
+      totalVramGb: this.agentGbToApi(machine.totalVramGb),
+      totalRamGb: this.agentGbToApi(machine.totalRamGb),
       totalDiskGb: machine.totalDiskGb,
       machineGroupId: machine.machineGroupId,
       group: group
@@ -116,35 +122,26 @@ export default class MachinesController {
     const machine = await Machine.create(createData)
 
     // Retorna com o token (apenas na criação!)
+    const presented = this.serializeMachineForApi(machine, null) as Record<string, unknown>
     return response.created({
-      ...machine.serialize(),
+      ...presented,
       token: machine.token,
-      disks: [],
     })
   }
 
   /**
-   * Exibe detalhes de uma máquina.
-   * - Admin: vê o token para configurar o agente
-   * - User normal: vê specs e telemetria (sem token)
+   * Exibe detalhes de uma máquina (specs + telemetria recente).
+   * O token do agente nunca é exposto aqui — apenas em POST (criação) e regenerate-token.
    *
    * GET /api/v1/machines/:id
    */
-  async show({ auth, params, response }: HttpContext) {
-    const user = auth.user!
+  async show({ params, response }: HttpContext) {
     const machine = await Machine.findOrFail(params.id)
     await machine.load('group')
 
-    const serialized = this.serializeMachineForApi(
-      machine,
-      telemetryBuffer.getLatest(machine.id)
-    ) as Record<string, unknown>
-
-    if (user.role === 'admin') {
-      serialized.token = machine.token
-    }
-
-    return response.ok(serialized)
+    return response.ok(
+      this.serializeMachineForApi(machine, telemetryBuffer.getLatest(machine.id))
+    )
   }
 
   /**
@@ -184,8 +181,13 @@ export default class MachinesController {
 
     machineCache.invalidateById(machine.id)
 
+    const presented = this.serializeMachineForApi(
+      machine,
+      telemetryBuffer.getLatest(machine.id)
+    ) as Record<string, unknown>
+
     return response.ok({
-      ...machine.serialize(),
+      ...presented,
       cancelledAllocations: cancelledCount > 0 ? cancelledCount : undefined,
     })
   }

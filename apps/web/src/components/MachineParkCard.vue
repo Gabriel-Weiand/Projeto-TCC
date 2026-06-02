@@ -7,10 +7,19 @@ import {
   getLargestDisk,
   primaryDiskDeviceName,
 } from "@/utils/machineDisks";
-
 const props = defineProps<{
   machine: Machine;
 }>();
+
+const gpuModelLine = computed(() => props.machine.gpuModel?.trim() || null);
+
+const vramTotalLine = computed(() => {
+  const gb = props.machine.totalVramGb;
+  if (gb == null || gb <= 0) return null;
+  const n = Number(gb);
+  const text = Number.isInteger(n) ? String(n) : n.toFixed(1);
+  return `${text} GB`;
+});
 
 const primaryPartition = computed(() => getLargestDisk(props.machine.disks));
 const primaryDiskSize = computed(() =>
@@ -56,21 +65,36 @@ function statusLabel(s: string) {
     <p class="mc-desc truncate-2">{{ machine.description || "Sem descrição" }}</p>
 
     <div class="mc-specs">
-      <div v-if="machine.cpuModel" class="spec-item">
+      <div v-if="machine.cpuModel" class="spec-item spec-item--cpu">
         <span class="spec-label">CPU</span>
-        <span class="spec-value truncate" :title="machine.cpuModel">{{ machine.cpuModel }}</span>
+        <span class="spec-value spec-value--cpu truncate" :title="machine.cpuModel">
+          {{ machine.cpuModel }}
+        </span>
       </div>
-      <div v-if="machine.gpuModel" class="spec-item">
-        <span class="spec-label">GPU</span>
-        <span class="spec-value truncate" :title="machine.gpuModel">{{ machine.gpuModel }}</span>
+
+      <div v-if="gpuModelLine || vramTotalLine" class="spec-row">
+        <div v-if="gpuModelLine" class="spec-item spec-item--main">
+          <span class="spec-label">GPU</span>
+          <span class="spec-value truncate" :title="gpuModelLine">{{ gpuModelLine }}</span>
+        </div>
+        <div v-if="vramTotalLine" class="spec-item spec-item--side">
+          <span class="spec-label">VRAM</span>
+          <span class="spec-value">{{ vramTotalLine }}</span>
+        </div>
       </div>
-      <div v-if="machine.totalRamGb" class="spec-item">
-        <span class="spec-label">RAM</span>
-        <span class="spec-value">{{ machine.totalRamGb }} GB</span>
-      </div>
-      <div v-if="displayTotalDiskGb(machine)" class="spec-item">
-        <span class="spec-label">Disco</span>
-        <span class="spec-value">{{ displayTotalDiskGb(machine) }} GB</span>
+
+      <div
+        v-if="machine.totalRamGb || displayTotalDiskGb(machine)"
+        class="spec-row"
+      >
+        <div v-if="machine.totalRamGb" class="spec-item spec-item--main">
+          <span class="spec-label">RAM</span>
+          <span class="spec-value">{{ machine.totalRamGb }} GB</span>
+        </div>
+        <div v-if="displayTotalDiskGb(machine)" class="spec-item spec-item--side">
+          <span class="spec-label">Disco</span>
+          <span class="spec-value">{{ displayTotalDiskGb(machine) }} GB</span>
+        </div>
       </div>
     </div>
 
@@ -158,16 +182,49 @@ function statusLabel(s: string) {
 }
 
 .mc-specs {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
-  gap: 0.35rem 1rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
 }
+
+.spec-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(4.75rem, auto);
+  gap: 0.35rem 1.75rem;
+  align-items: end;
+  min-width: 0;
+}
+
 .spec-item {
   display: flex;
   flex-direction: column;
   min-width: 0;
   overflow: hidden;
 }
+
+.spec-item--cpu {
+  width: 100%;
+}
+
+.spec-value--cpu {
+  max-width: 100%;
+}
+
+.spec-item--main {
+  overflow: hidden;
+}
+
+.spec-item--side {
+  text-align: right;
+  justify-self: end;
+  min-width: 4.75rem;
+  flex-shrink: 0;
+}
+
+.spec-item--side .spec-value {
+  white-space: nowrap;
+}
+
 .spec-label {
   font-size: 0.7rem;
   font-weight: 600;

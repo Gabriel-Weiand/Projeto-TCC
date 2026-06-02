@@ -53,6 +53,7 @@ export interface Machine {
   group?: MachineGroupSummary | null;
   cpuModel: string | null;
   gpuModel: string | null;
+  totalVramGb: number | null;
   totalRamGb: number | null;
   totalDiskGb: number | null;
   ipAddress: string | null;

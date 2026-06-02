@@ -63,6 +63,11 @@ function isActive(name: string | string[]): boolean {
               :class="{ active: isActive('admin-allocations') }"
               >Alocações</RouterLink
             >
+            <RouterLink
+              to="/admin/lab-telemetry"
+              :class="{ active: isActive('admin-lab-telemetry') }"
+              >Telemetria lab</RouterLink
+            >
           </template>
         </div>
       </div>

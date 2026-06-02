@@ -21,6 +21,7 @@ npm install
 
 # Configurar ambiente
 cp .env.example .env
+# Ajuste TZ (fuso do lab) e LAB_* — calendário, limite de reserva, token, crons (ver .env.example)
 
 # Executar as migrations
 node ace migration:run
@@ -41,23 +42,26 @@ node ace test
 
 ## Entradas de comunicação
 
-- **Frontend Web**: rotas REST sob `/api/v1` para login, CRUD de usuários, máquinas e alocações, além de leitura de métricas e notificações.
-- **Agentes**: rotas sob `/api/agent` para heartbeat, validação de login local e telemetria.
+- **Frontend Web**: rotas REST sob `/api/v1` (Bearer de usuário) — auth, usuários, grupos de máquinas, parque, alocações, notificações, auditoria SSH, manutenção em `/system`.
+- **Bootstrap público**: `GET /api/alive`, `/api/time`, `/api/config` (sem auth; calendário e `todayIso` no fuso `TZ`).
+- **Agentes** (`agentd.py`): `PUT/POST` sob `/api/v1/agent` — `sync-specs`, `heartbeat`, `telemetry` (Bearer do token da máquina, 512 bits).
 
 ## Saídas de comunicação
 
-- **Para agentes**: respostas de heartbeat com `shouldBlock`, `currentAllocation`, `nextAllocation` e instruções de provisionamento (usuário do SO + chave pública).
-- **Para frontend**: dados de alocação, máquinas e métricas consolidadas, além de notificações de sistema.
+- **Para agentes**: `agentConfig.telemetry` (preset `fast` / `eco` / `custom`), `provisioning` (`accessState`: `full_shell` | `sftp_only`, chave `ssh-ed25519`), `currentAllocation`, `accessControl.shouldBlock` (legado; controle real via shell SSH).
+- **Para frontend**: máquinas com telemetria recente (RAM/VRAM em GB decimal), alocações, resumo de sessão, notificações.
 
 ## Persistência (migrations atuais)
 
-- `users` com `system_username` e `ssh_public_key`.
-- `machines` com token do agente, specs e status.
-- `allocations` com janela de uso e `is_sudo`.
-- `telemetries` com amostras brutas e processos em JSON.
-- `allocation_metrics` com médias e picos por sessão.
-- `machine_accounts` para rastrear usuários do SO provisionados por máquina.
-- `notifications` como caixa de entrada por usuário.
+- `users` com `system_username` e `ssh_public_key` (ed25519).
+- `machine_groups` para agrupar o parque (ex.: CUDA vídeo, render).
+- `machines` com `agent_token`, specs (`total_ram_gb`, `total_vram_gb` em **wire GB×10**), `telemetry_preset`, `custom_agent_config`, `host_fingerprint`.
+- `machine_users` — vínculo usuário ↔ máquina provisionada no SO.
+- `allocations` com janela de uso e `is_sudo` (no seed dev, reservas típicas de **2–4 semanas**).
+- `telemetries` — amostras brutas (wire ×10 para uso/temp; processos em JSON).
+- `allocation_metrics` — TWA e picos por sessão.
+- `ssh_connection_attempts` — auditoria de login SSH.
+- `notifications` — caixa de entrada por usuário.
 
 ## Consolidação de telemetria
 
@@ -70,8 +74,7 @@ $TWA = \frac{\sum (v_i \cdot \Delta t_i)}{T_{total}}$
 ## Observações
 
 - `system_username` deve ser estável/imutável por regra de negócio (a constraint explícita não está no schema).
-- Autenticação do agente: apenas `Authorization: Bearer <token>` (512 bits). Não há MAC address no schema.
-
+- Autenticação do agente: apenas `Authorization: Bearer <token>` (512 bits).
 ---
 
 ## Arquitetura interna (API)
@@ -231,16 +234,16 @@ As senhas dos usuários **nunca são armazenadas em texto plano** no banco de da
 │                    FLUXO DE AUTENTICAÇÃO                    │
 ├─────────────────────────────────────────────────────────────┤
 │                                                             │
-│  1. Login: POST /api/auth/login                             │
+│  1. Login: POST /api/v1/login                               │
 │     Body: { email, password }                               │
 │     → Senha verificada contra hash no banco                 │
-│     Response: { token, user }                               │
+│     Response: { type, value, expiresAt, user }              │
 │                                                             │
 │  2. Requisições autenticadas:                               │
 │     Header: Authorization: Bearer <token>                   │
-│     → Token validado (hash SHA-256 comparado)               │
+│     → Access token Adonis (hash SHA-256 no banco)           │
 │                                                             │
-│  3. Logout: DELETE /api/auth/logout                         │
+│  3. Logout: DELETE /api/v1/logout                           │
 │     → Token invalidado (removido do banco)                  │
 │                                                             │
 └─────────────────────────────────────────────────────────────┘
@@ -256,7 +259,7 @@ As senhas dos usuários **nunca são armazenadas em texto plano** no banco de da
 │  • Cada máquina possui um Agent Key único de 512 bits       │
 │  • Header: Authorization: Bearer <token>                    │
 │  • Cache de 5 minutos para reduzir consultas ao banco       │
-│  • Usado apenas nas rotas /api/agent/*                      │
+│  • Usado apenas nas rotas /api/v1/agent/*                   │
 │                                                             │
 │  Geração do Agent Key:                                      │
 │  ┌────────────────────────────────────────────────────────┐ │
@@ -300,30 +303,9 @@ As senhas dos usuários **nunca são armazenadas em texto plano** no banco de da
 └─────────────────────────────────────────────────────────────────────────┘
 ```
 
-### Regra de Quick Allocate
+### Limite de antecedência (`LAB_MAX_ALLOCATION_DAYS_AHEAD`)
 
-```
-┌─────────────────────────────────────────────────────────────────────────┐
-│                      REGRA DE QUICK ALLOCATE                            │
-├─────────────────────────────────────────────────────────────────────────┤
-│                                                                         │
-│  Condições para permitir alocação rápida:                               │
-│  1. Máquina não deve ter alocação ativa no momento                      │
-│  2. Próxima alocação agendada deve estar a pelo menos 20 minutos        │
-│  3. Duração máxima: 60 minutos                                          │
-│  4. Duração padrão: mínimo entre 60 min e tempo até próxima alocação    │
-│                                                                         │
-│  Cenário permitido:                                                     │
-│  ┌──────────────────────────────────────────────────────────────────┐   │
-│  │ AGORA          +20min              +60min                        │   │
-│  │   │              │                    │                          │   │
-│  │   ├──────────────┼────────────────────┤                          │   │
-│  │   │   LIVRE      │    Quick Allocate  │  Próxima alocação        │   │
-│  │   │   (OK!)      │    (até 1h)        │  agendada                │   │
-│  └──────────────────────────────────────────────────────────────────┘   │
-│                                                                         │
-└─────────────────────────────────────────────────────────────────────────┘
-```
+Reservas futuras não podem terminar além do horizonte configurado no `.env` (padrão em `.env.example`). Create e `POST /allocations/:id/extend` retornam `ALLOCATION_TOO_FAR` se violar. No laboratório de vídeo, alocações costumam durar **semanas** (treino CUDA, renders); o seed reflete sessões de 2–4 semanas.
 
 ---
 
@@ -331,7 +313,17 @@ As senhas dos usuários **nunca são armazenadas em texto plano** no banco de da
 
 A API é segmentada por prefixos e versões para isolar a lógica de interação humana da lógica de automação das máquinas.
 
-**Base URL:** `/api/v1` (Para rotas de interface)
+**Base URL interface:** `/api/v1` · **Utilitários públicos:** `/api` · **Agente:** `/api/v1/agent`
+
+---
+
+### 0. Utilitários públicos (`/api`)
+
+| Método | Rota | Descrição |
+|--------|------|-----------|
+| GET | `/alive` | Health check. |
+| GET | `/time` | UTC + relógio local do lab (`TZ`). |
+| GET | `/config` | Calendário, limites, auth e **`telemetry.presets`** (`fast`/`eco`) + `defaultOfflinePreset: eco` para o agente antes do 1º heartbeat. |
 
 ---
 
@@ -345,7 +337,7 @@ _Destinadas ao Frontend Web/Mobile. Requer Header `Authorization: Bearer <USER_T
 
 ##### `POST /api/v1/login`
 
-Autenticação e geração de token JWT.
+Autenticação e emissão de access token Adonis (`type: bearer`).
 
 **Permissão:** Pública
 
@@ -684,55 +676,83 @@ Inventário de máquinas com status em tempo real.
     "status": "available",
     "hostFingerprint": "SHA256:abcd1234...",
     "latestTelemetry": {
-      "cpuUsage": 250,
-      "ramUsage": 450,
-      "createdAt": "2026-01-28T12:00:00.000Z"
+      "cpuUsage": 45,
+      "cpuTemp": 72,
+      "gpuUsage": 82,
+      "gpuTemp": 68,
+      "ramUsedGb": 96.5,
+      "ramTotalGb": 128,
+      "vramUsedGb": 38.2,
+      "vramTotalGb": 48,
+      "timestamp": "2026-01-28T12:00:00.000Z"
     }
   }
 ]
 ```
 
+> `latestTelemetry` vem do ring buffer (última amostra). Uso/temp em % e °C; RAM/VRAM em GB decimal.
+
 ---
 
 ##### `GET /api/v1/machines/:id`
 
-Detalhes técnicos de uma máquina específica.
+Detalhes técnicos de uma máquina específica (mesmo payload para admin e usuário autenticado).
 
 **Permissão:** Geral (autenticado)
 
-**Response para Admin (200):** Inclui `token` (para configurar o agente)
+**Segurança:** o `token` do agente **não** aparece nesta rota (nem para admin). Use `hostFingerprint` para conferência SSH. Token só em `POST /machines` (criação) e `POST /machines/:id/regenerate-token`.
+
+**Response (200):**
 
 ```json
 {
   "id": 1,
-  "name": "PC-LAB-01",
-  "description": "Computador do laboratório 1",
-  "cpuModel": "Intel Core i7-12700K",
-  "gpuModel": "NVIDIA GeForce RTX 3060",
-  "totalRamGb": 16,
-  "totalDiskGb": 512,
+  "name": "VID-RENDER-01",
+  "description": "Treino VideoMAE / export H.265",
+  "cpuModel": "AMD Ryzen Threadripper PRO 5975WX",
+  "gpuModel": "NVIDIA RTX A6000",
+  "totalRamGb": 128,
+  "totalVramGb": 48,
+  "totalDiskGb": 8000,
   "ipAddress": "192.168.1.100",
   "hostFingerprint": "SHA256:abcd1234...",
-  "status": "available",
+  "status": "occupied",
+  "telemetryPreset": "fast",
   "lastSeenAt": "2026-01-28T12:00:00.000Z",
-  "loggedUser": "gabriel.santos",
-  "token": "38429811d7f5e8841b961733e2f21821...",
   "tokenRotatedAt": null,
-  "createdAt": "2026-01-28T12:00:00.000Z",
-  "updatedAt": "2026-01-28T12:00:00.000Z",
+  "machineGroupId": 1,
+  "group": { "id": 1, "title": "CUDA — Pesquisa em vídeo", "description": "…" },
+  "disks": [
+    { "id": 0, "device": "/dev/nvme0n1", "mountpoint": "/", "fstype": "ext4", "totalGb": 190.2, "freeGb": 102.6 }
+  ],
   "latestTelemetry": {
-    "cpuUsage": 250,
-    "ramUsage": 450,
-    "createdAt": "2026-01-28T12:00:00.000Z"
-  }
+    "cpuUsage": 45,
+    "cpuTemp": 72,
+    "cpuFreqMhz": 4200,
+    "gpuUsage": 82,
+    "gpuTemp": 68,
+    "gpuPowerWatts": 285,
+    "ramTotalGb": 128,
+    "ramUsedGb": 96.5,
+    "swapTotalGb": 32,
+    "swapUsedGb": 4.2,
+    "vramTotalGb": 48,
+    "vramUsedGb": 38.2,
+    "disksInfo": [{ "mountpoint": "/", "usagePct": 65, "freeGb": 102.6, "readMbps": 120, "writeMbps": 45 }],
+    "diskReadMbps": 120,
+    "diskWriteMbps": 45,
+    "downloadMbps": 50,
+    "uploadMbps": 10,
+    "moboTemperature": 42,
+    "activeUsers": [{ "username": "lab.maria_silva", "terminal": "pts/0", "host": "10.0.0.5", "isSsh": true }],
+    "timestamp": "2026-01-28T12:00:00.000Z"
+  },
+  "createdAt": "2026-01-28T12:00:00.000Z",
+  "updatedAt": "2026-01-28T12:00:00.000Z"
 }
 ```
 
-**Response para Usuário Normal (200):** Sem `token`
-
-> 🔒 **Admin:** Resposta inclui `token`. **Usuário normal:** `token` é omitido.
-
-> ⚠️ **Importante:** O `token` é sensível. Use apenas para configurar o agente.
+> `processes` só aparece em histórico/stream ou quando o admin dispara `request-processes`; o snapshot de parque não inclui lista de processos.
 
 ---
 
@@ -810,21 +830,23 @@ Histórico de telemetria da máquina.
     {
       "id": 1,
       "machineId": 1,
-      "cpuUsage": 250,
-      "cpuTemp": 650,
-      "gpuUsage": 100,
-      "gpuTemp": 550,
-      "ramUsage": 450,
-      "diskUsage": 300,
-      "downloadUsage": 50,
-      "uploadUsage": 10,
-      "createdAt": "2026-01-28T12:00:00.000Z"
+      "cpuUsage": 850,
+      "cpuTemp": 720,
+      "gpuUsage": 620,
+      "gpuTemp": 680,
+      "ramTotalGb": 2560,
+      "ramUsedGb": 1400,
+      "vramTotalGb": 480,
+      "vramUsedGb": 120,
+      "downloadMbps": 50,
+      "uploadMbps": 10,
+      "timestamp": "2026-01-28T12:00:00.000Z"
     }
   ]
 }
 ```
 
-> 📊 **Nota:** Valores de uso são em escala 0-1000 (representa 0.0% a 100.0%). Temperaturas em décimos de grau (650 = 65.0°C).
+> 📊 **Nota:** `cpuUsage`/`gpuUsage` e temperaturas: escala ×10 (850 = 85,0%). RAM/VRAM no histórico: wire GB×10 no banco; o endpoint pode serializar em GB decimal conforme o controller.
 
 ---
 
@@ -1079,9 +1101,11 @@ Ver resumo/métricas de uma sessão.
 
 ---
 
-#### 🧹 Manutenção (Admin Only)
+#### 🧹 System — exclusão pontual e prune (Admin Only)
 
-##### `DELETE /api/v1/maintenance/telemetries/:telemetryId`
+Prefixo: `/api/v1/system`
+
+##### `DELETE /api/v1/system/telemetries/:id`
 
 Apagar um registro específico de telemetria.
 
@@ -1097,7 +1121,7 @@ Apagar um registro específico de telemetria.
 
 ---
 
-##### `DELETE /api/v1/maintenance/metrics/:metricId`
+##### `DELETE /api/v1/system/metrics/:id`
 
 Apagar um resumo de sessão específico.
 
@@ -1206,6 +1230,47 @@ Limpar métricas de alocação antigas.
 
 ---
 
+### 2. Agente (`/api/v1/agent`)
+
+Autenticação: `Authorization: Bearer <MACHINE_TOKEN>` (middleware `machineAuth`). Ver também `apps/agent/MODULE.md`.
+
+| Método | Rota | Descrição |
+|--------|------|-----------|
+| PUT | `/sync-specs` | Boot: CPU/GPU, RAM/VRAM (wire), discos, `hostFingerprint`. |
+| POST | `/heartbeat` | A cada ~30s: provisionamento SSH, usuários ativos, lote de `sshAttempts`. |
+| POST | `/telemetry` | Lotes de métricas (persistidas só com alocação ativa na API). |
+
+**Resposta típica do heartbeat:**
+
+```json
+{
+  "status": "acknowledged",
+  "agentConfig": {
+    "telemetry": {
+      "intervalSeconds": 5,
+      "batchSize": 5,
+      "telemetrySet": { "cpu": true, "gpu": true, "ramAndSwap": true }
+    }
+  },
+  "provisioning": [
+    {
+      "systemUsername": "lab.maria_silva",
+      "publicKey": "ssh-ed25519 AAAA…",
+      "accessState": "full_shell",
+      "isSudo": false
+    }
+  ],
+  "accessControl": { "shouldBlock": false },
+  "currentAllocation": { "id": 3, "userId": 5, "endTime": "2026-07-01T18:00:00.000Z" }
+}
+```
+
+**Telemetria global (admin):** `GET` / `PUT /api/v1/lab/telemetry-presets` — define fast/eco para todo o parque (persistido em `storage/lab/telemetry_presets.json`). Máquinas com `telemetry_preset: custom` usam só `custom_agent_config`.
+
+**Rotas de interface ainda não detalhadas neste doc** (ver `start/routes.ts`): `machine-groups`, `notifications`, `ssh-attempts`, `GET /allocations/my`, `POST /allocations/:id/extend`, `GET /machines/:id/telemetry/stream`, `POST /machines/:id/request-processes`.
+
+---
+
 ## Estrutura interna da API
 
 ```
@@ -1216,6 +1281,11 @@ apps/api/
 │   │   ├── allocations_controller.ts
 │   │   ├── auth_controller.ts
 │   │   ├── machines_controller.ts
+│   │   ├── machine_groups_controller.ts
+│   │   ├── notifications_controller.ts
+│   │   ├── ssh_attempts_controller.ts
+│   │   ├── system_controller.ts
+│   │   ├── utils_controller.ts
 │   │   └── users_controller.ts
 │   ├── middleware/       # Interceptadores de requisição
 │   │   ├── auth_middleware.ts
@@ -1227,6 +1297,9 @@ apps/api/
 │   │   ├── allocation.ts
 │   │   └── telemetry.ts
 │   ├── services/         # Serviços auxiliares
+│   │   ├── lab_config.ts
+│   │   ├── heartbeat_service.ts
+│   │   ├── allocation_summarizer.ts
 │   │   ├── machine_cache.ts
 │   │   └── telemetry_buffer.ts
 │   └── validators/       # Esquemas de validação

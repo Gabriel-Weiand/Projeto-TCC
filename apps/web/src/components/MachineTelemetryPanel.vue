@@ -1,6 +1,8 @@
 <script setup lang="ts">
 import { ref, reactive, watch, computed } from "vue";
 import { useMachinesStore } from "@/stores/machines";
+import { useLabConfigStore } from "@/stores/labConfig";
+import { TELEMETRY_METRIC_KEYS } from "@/utils/telemetryPresets";
 import type { Machine, TelemetryPreset } from "@/types";
 
 const props = withDefaults(
@@ -10,6 +12,7 @@ const props = withDefaults(
 const emit = defineEmits<{ saved: [machine: Machine] }>();
 
 const store = useMachinesStore();
+const labConfig = useLabConfigStore();
 const saving = ref(false);
 const error = ref("");
 const saved = ref(false);
@@ -17,32 +20,26 @@ const showModal = ref(false);
 
 const preset = ref<TelemetryPreset>("eco");
 
-const PRESET_INFO = {
-  fast: {
-    label: "Fast",
-    intervalSeconds: 30,
-    batchSize: 4,
-    blurb: "Amostras frequentes, todas as métricas.",
-  },
-  eco: {
-    label: "Eco",
-    intervalSeconds: 60,
-    batchSize: 15,
-    blurb: "Menos carga: intervalo maior, GPU/temp/rede off.",
-  },
-  custom: { label: "Custom", blurb: "Intervalo, lote e métricas personalizados." },
-} as const;
+const PRESET_INFO = computed(() => {
+  const p = labConfig.telemetryPresets;
+  return {
+    fast: {
+      label: "Fast",
+      intervalSeconds: p.fast.intervalSeconds,
+      batchSize: p.fast.batchSize,
+      blurb: "Perfil global do lab — amostras frequentes.",
+    },
+    eco: {
+      label: "Eco",
+      intervalSeconds: p.eco.intervalSeconds,
+      batchSize: p.eco.batchSize,
+      blurb: "Perfil global do lab — menor carga no host.",
+    },
+    custom: { label: "Custom", blurb: "Intervalo, lote e métricas só desta máquina." },
+  };
+});
 
-const METRIC_KEYS = [
-  { key: "cpu", label: "CPU" },
-  { key: "gpu", label: "GPU" },
-  { key: "ramAndSwap", label: "RAM / Swap" },
-  { key: "diskSpace", label: "Espaço em disco" },
-  { key: "diskIO", label: "I/O de disco" },
-  { key: "networkIO", label: "Rede" },
-  { key: "temperatures", label: "Temperaturas" },
-  { key: "activeUsers", label: "Usuários ativos" },
-] as const;
+const METRIC_KEYS = TELEMETRY_METRIC_KEYS;
 
 function defaultTelemetrySet() {
   return {
@@ -63,7 +60,7 @@ const custom = reactive({
   telemetrySet: defaultTelemetrySet(),
 });
 
-const activePresetInfo = computed(() => PRESET_INFO[preset.value]);
+const activePresetInfo = computed(() => PRESET_INFO.value[preset.value]);
 
 function loadFromMachine(m: Machine) {
   preset.value = (m.telemetryPreset as TelemetryPreset) || "eco";

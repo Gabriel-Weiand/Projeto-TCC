@@ -77,18 +77,54 @@ HEADERS = {
 }
 
 CONFIG_LOCK = threading.Lock()
-# Valores iniciais até o 1º heartbeat; depois a API substitui via agentConfig (fast/eco/custom).
-AGENT_CONFIG = {
-    "telemetry": {
-        "intervalSeconds": 5,
-        "batchSize": 5,
-        "telemetrySet": {
-            "cpu": True, "gpu": True, "ramAndSwap": True,
-            "diskSpace": True, "diskIO": True, "networkIO": True,
-            "temperatures": True, "activeUsers": True
-        }
-    }
+
+# Fallback local (eco) até a API responder — alinhado aos defaults em telemetry_presets.ts
+_ECO_TELEMETRY_OFFLINE = {
+    "intervalSeconds": 60,
+    "batchSize": 15,
+    "telemetryPreset": "eco",
+    "telemetrySet": {
+        "cpu": True, "gpu": False, "ramAndSwap": True,
+        "diskSpace": True, "diskIO": False, "networkIO": False,
+        "temperatures": False, "activeUsers": True,
+    },
 }
+
+AGENT_CONFIG = {"telemetry": dict(_ECO_TELEMETRY_OFFLINE)}
+
+
+def bootstrap_telemetry_from_lab_config() -> None:
+    """
+    Tenta GET /api/config (público) antes do 1º heartbeat.
+    Se a API estiver fora, permanece no perfil eco local.
+    """
+    try:
+        resp = requests.get(f"{SERVER_URL}/api/config", timeout=5)
+        if resp.status_code != 200:
+            print("[Config] API sem /api/config — telemetria em eco (offline).")
+            return
+        tel = (resp.json() or {}).get("telemetry") or {}
+        presets = tel.get("presets") or {}
+        preset_name = tel.get("defaultOfflinePreset") or "eco"
+        profile = presets.get(preset_name) or presets.get("eco")
+        if not profile:
+            print("[Config] /api/config sem presets — telemetria em eco (offline).")
+            return
+        t_set = {**_ECO_TELEMETRY_OFFLINE["telemetrySet"], **(profile.get("telemetrySet") or {})}
+        patch = {
+            "intervalSeconds": profile.get("intervalSeconds", 60),
+            "batchSize": profile.get("batchSize", 15),
+            "telemetryPreset": preset_name,
+            "telemetrySet": t_set,
+        }
+        with CONFIG_LOCK:
+            AGENT_CONFIG["telemetry"] = {**AGENT_CONFIG.get("telemetry", {}), **patch}
+        print(
+            f"[Config] Telemetria inicial '{preset_name}' "
+            f"({patch['intervalSeconds']}s, lote {patch['batchSize']}) via /api/config."
+        )
+    except Exception as e:
+        print(f"[Config] API indisponível — telemetria em eco local. ({e})")
 
 _net_prev    = {}
 _disk_io_prev = {"t": 0.0, "total_read": 0, "total_write": 0, "disks": {}}
@@ -103,7 +139,7 @@ class _GpuBackend:
     name = "none"
     def usage(self) -> float: return 0.0
     def temp(self) -> float:  return 0.0
-    def vram(self) -> tuple[int, int]: return 0, 0   # (used_mb, total_mb)
+    def vram(self) -> tuple[int, int]: return 0, 0   # (used_wire, total_wire) GB×10
     def power(self) -> int: return 0
 
 
@@ -129,8 +165,7 @@ class _NvidiaBackend(_GpuBackend):
 
     def vram(self) -> tuple[int, int]:
         info = self._pynvml.nvmlDeviceGetMemoryInfo(self._handle)
-        # Converte de Bytes para GB com 1 casa decimal (escalado x10)
-        return round((info.used / 1024**3) * 10), round((info.total / 1024**3) * 10)
+        return _gb_wire(info.used), _gb_wire(info.total)
     
     def power(self) -> int:
         try:
@@ -204,7 +239,7 @@ class _AmdSysfsBackend(_GpuBackend):
             if os.path.isfile(used_path) and os.path.isfile(total_path):
                 used_bytes = int(open(used_path).read().strip())
                 total_bytes = int(open(total_path).read().strip())
-                return round((used_bytes / 1024**3) * 10), round((total_bytes / 1024**3) * 10)
+                return _gb_wire(used_bytes), _gb_wire(total_bytes)
         except Exception:
             pass
         return 0, 0
@@ -303,7 +338,26 @@ _GPU: _GpuBackend = _detect_gpu_backend()
 
 
 # ==============================================================================
-# FUNÇÕES DE COLETA DE HARDWARE (sem alteração na interface pública)
+# MEMÓRIA — wire GB×10 (único formato enviado ao backend; API divide no JSON ao front)
+# ==============================================================================
+
+def _gb_wire(byte_count: int) -> int:
+    """Bytes → inteiro GB×10 (ex.: 15,5 GB RAM → 155)."""
+    return round((byte_count / 1024**3) * 10)
+
+
+def _ram_wire() -> tuple[int, int]:
+    ram = psutil.virtual_memory()
+    return _gb_wire(ram.total), _gb_wire(ram.total - ram.available)
+
+
+def _swap_wire() -> tuple[int, int]:
+    swap = psutil.swap_memory()
+    return _gb_wire(swap.total), _gb_wire(swap.used)
+
+
+# ==============================================================================
+# FUNÇÕES DE COLETA DE HARDWARE
 # ==============================================================================
 
 def _active_users() -> list[dict]:
@@ -332,11 +386,9 @@ def _cpu_model() -> str:
         pass
     return platform.processor() or "Unknown CPU"
 
-def _gpu_model() -> str | None:
+def _gpu_model_lspci() -> str | None:
     """
-    Nome da GPU via lspci (classe PCI de vídeo).
-    Não usa mapa fixo por modelo: o texto vem do banco de IDs do sistema (pode ser
-    genérico quando a AMD/NVIDIA compartilham o mesmo device ID entre variantes).
+    Nome da GPU via lspci (classe PCI de vídeo) — fallback quando o driver do vendor não expõe nome.
     Filtra por classe PCI — não por "3D" na linha (evita SSD NVMe com "3D NAND").
     """
     gpu_class_markers = (
@@ -358,6 +410,29 @@ def _gpu_model() -> str | None:
     except Exception:
         pass
     return None
+
+
+def _collect_gpu_specs() -> tuple[str | None, int | None]:
+    """
+    Modelo e VRAM total para sync-specs (mesmo backend da telemetria).
+    totalVramGb: int GB×10 via _GPU.vram(); modelo: NVML (NVIDIA) ou lspci.
+    """
+    model: str | None = None
+
+    if _GPU.name == "nvidia":
+        try:
+            raw = _GPU._pynvml.nvmlDeviceGetName(_GPU._handle)
+            model = (raw.decode("utf-8") if isinstance(raw, bytes) else str(raw)).strip()
+        except Exception:
+            pass
+
+    if not model:
+        model = _gpu_model_lspci()
+
+    _, total_scaled = _GPU.vram()
+    total_vram = total_scaled if total_scaled > 0 else None
+    return model, total_vram
+
 
 def _local_ip() -> str | None:
     try:
@@ -647,26 +722,35 @@ def _host_fingerprint() -> str | None:
 
 def sync_specs() -> None:
     print("[Specs] Sincronizando hardware...")
-    ram  = psutil.virtual_memory()
     disk = psutil.disk_usage("/")
     disks_info = _disk_partitions()
 
+    gpu_model, total_vram_wire = _collect_gpu_specs()
+    ram_total_wire, _ = _ram_wire()
+
     specs = {
         "cpuModel":    _cpu_model(),
-        "gpuModel":    _gpu_model(),
-        "gpuBackend":  _GPU.name,           # informa ao servidor qual backend está ativo
-        "totalRamGb":  round(ram.total  / 1024**3, 1),
+        "totalRamGb":  ram_total_wire,
         "totalDiskGb": round(disk.total / 1024**3, 1),
         "ipAddress":   _local_ip(),
         "disks":       disks_info,
-        "hostFingerprint": _host_fingerprint()
+        "hostFingerprint": _host_fingerprint(),
     }
+    if gpu_model:
+        specs["gpuModel"] = gpu_model
+    if total_vram_wire is not None:
+        specs["totalVramGb"] = total_vram_wire
     specs = {k: v for k, v in specs.items() if v is not None}
 
     try:
         resp = requests.put(f"{API_BASE}/sync-specs", json=specs, headers=HEADERS, timeout=5)
         if resp.status_code == 200:
-            print(f"[Specs] ✓ Hardware registrado. GPU backend: {_GPU.name}")
+            vram_note = (
+                f", VRAM {total_vram_wire / 10:.1f} GB"
+                if total_vram_wire is not None
+                else ""
+            )
+            print(f"[Specs] ✓ Hardware registrado ({_GPU.name}{vram_note}).")
         else:
             print(f"[Specs] ✗ Erro {resp.status_code}: {resp.text[:80]}")
     except Exception as e:
@@ -833,67 +917,68 @@ def collect_telemetry() -> dict:
         PROCESS_BATCHES_REMAINING -= 1 # Desconta um da lista dos processos restantes para envio
 
     cpu_total = psutil.cpu_percent(interval=None)
-    ram       = psutil.virtual_memory()
-    temps     = _read_temperatures() if t_set.get("temperatures") else {"cpuTemp": 0.0, "moboTemp": None}
+    temps = _read_temperatures() if t_set.get("temperatures") else {"cpuTemp": 0.0, "moboTemp": None}
 
-    # GPU — delega inteiramente ao backend detectado no boot
-    gpu_usage = 0
-    gpu_temp  = 0.0
-    gpu_power = 0
-    vram_used_gb = vram_total_gb = 0
-    if t_set.get("gpu"):
-        gpu_usage    = round(_GPU.usage() * 10)   # mantém escala ×10 igual ao CPU
-        gpu_temp     = _GPU.temp()
-        gpu_power    = _GPU.power()
-        vram_used_gb, vram_total_gb = _GPU.vram()
+    ram_total_wire, ram_used_wire = _ram_wire()
 
-    if t_set.get("cpu"):
-        freq        = psutil.cpu_freq(percpu=False)
-        avg_freq_mhz = round(freq.current) if freq else 0
-    else:
-        avg_freq_mhz = None
-
+    swap_total_wire = swap_used_wire = None
     if t_set.get("ramAndSwap"):
-        swap     = psutil.swap_memory()
-        swap_tg  = round((swap.total / 1024**3) * 10)
-        swap_ug  = round((swap.used  / 1024**3) * 10)
-    else:
-        swap_tg = swap_ug = None
+        swap_total_wire, swap_used_wire = _swap_wire()
 
-    down, up = _net_delta() if t_set.get("networkIO") else (None, None)
+    gpu_usage = gpu_temp = gpu_power = 0
+    vram_used_wire = vram_total_wire = 0
+    if t_set.get("gpu"):
+        gpu_usage = round(_GPU.usage() * 10)
+        gpu_temp = _GPU.temp()
+        gpu_power = _GPU.power()
+        vram_used_wire, vram_total_wire = _GPU.vram()
 
+    avg_freq_mhz = None
+    if t_set.get("cpu"):
+        freq = psutil.cpu_freq(percpu=False)
+        avg_freq_mhz = round(freq.current) if freq else 0
+
+    down = up = None
+    if t_set.get("networkIO"):
+        down, up = _net_delta()
+
+    disk_r = disk_w = disks_info = None
     opt_d_space = t_set.get("diskSpace", False)
-    opt_d_io    = t_set.get("diskIO",    False)
-    disk_r, disk_w, disks_info = (
-        _disk_metrics(opt_d_space, opt_d_io)
-        if (opt_d_space or opt_d_io) else (None, None, None)
-    )
+    opt_d_io = t_set.get("diskIO", False)
+    if opt_d_space or opt_d_io:
+        disk_r, disk_w, disks_info = _disk_metrics(opt_d_space, opt_d_io)
 
     active_users = _active_users() if t_set.get("activeUsers") else None
+    mobo_temp = round(temps["moboTemp"] * 10) if temps.get("moboTemp") else None
 
-    return {
-        "timestamp":      datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
-        "cpuUsage":       round(cpu_total * 10),
-        "cpuTemp":        round(temps["cpuTemp"] * 10),
-        "cpuFreqMhz":     avg_freq_mhz,
-        "gpuUsage":       gpu_usage,
-        "gpuTemp":        round(gpu_temp * 10),
-        "gpuPowerWatts":  gpu_power if gpu_power > 0 else None,
-        "vramUsedGb":     vram_used_gb   if vram_total_gb > 0 else None,
-        "vramTotalGb":    vram_total_gb  if vram_total_gb > 0 else None,
-        "ramTotalGb":     round((ram.total / 1024**3) * 10),
-        "ramUsedGb":      round(((ram.total - ram.available) / 1024**3) * 10),
-        "swapTotalGb":    swap_tg,
-        "swapUsedGb":     swap_ug,
-        "disks":          disks_info,
-        "diskReadMbps":   disk_r,
-        "diskWriteMbps":  disk_w,
-        "downloadMbps":   down,
-        "uploadMbps":     up,
-        "moboTemperature": round(temps["moboTemp"] * 10) if temps["moboTemp"] else None,
-        "activeUsers":    active_users,
-        "processes":      processes
+    payload = {
+        "timestamp": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
+        "cpuUsage": round(cpu_total * 10),
+        "cpuTemp": round(temps["cpuTemp"] * 10),
+        "cpuFreqMhz": avg_freq_mhz,
+        "gpuUsage": gpu_usage,
+        "gpuTemp": round(gpu_temp * 10),
+        "gpuPowerWatts": gpu_power if gpu_power > 0 else None,
+        "disks": disks_info,
+        "diskReadMbps": disk_r,
+        "diskWriteMbps": disk_w,
+        "downloadMbps": down,
+        "uploadMbps": up,
+        "moboTemperature": mobo_temp,
+        "activeUsers": active_users,
+        "processes": processes,
     }
+
+    payload["ramTotalGb"] = ram_total_wire
+    payload["ramUsedGb"] = ram_used_wire
+    if swap_total_wire is not None:
+        payload["swapTotalGb"] = swap_total_wire
+        payload["swapUsedGb"] = swap_used_wire
+    if vram_total_wire > 0:
+        payload["vramTotalGb"] = vram_total_wire
+        payload["vramUsedGb"] = vram_used_wire
+
+    return payload
 
 def telemetry_worker():
     print("[Telemetry] Thread de Coleta iniciada.")
@@ -1004,6 +1089,7 @@ def main():
     except Exception as e:
         print(f"[OS] Aviso de Hardening: {e}")
 
+    bootstrap_telemetry_from_lab_config()
     sync_specs()
 
     t_heartbeat = threading.Thread(target=heartbeat_worker, daemon=True)

@@ -10,6 +10,7 @@ import {
   listAllocationsValidator,
 } from '#validators/allocation'
 import { extendAllocationValidator } from '#validators/allocation'
+import { assertAllocationEndWithinLimit } from '#services/lab_config'
 
 export default class AllocationsController {
   /**
@@ -85,6 +86,21 @@ export default class AllocationsController {
     data.startTime = data.startTime.toUTC()
     data.endTime = data.endTime.toUTC()
 
+    if (data.endTime <= data.startTime) {
+      return response.badRequest({
+        code: 'INVALID_RANGE',
+        message: 'O horário de término deve ser posterior ao de início.',
+      })
+    }
+
+    const futureLimitMsg = assertAllocationEndWithinLimit(data.endTime)
+    if (futureLimitMsg) {
+      return response.badRequest({
+        code: 'ALLOCATION_TOO_FAR',
+        message: futureLimitMsg,
+      })
+    }
+
     // 1. Verificação de Status da Máquina
     const machine = await Machine.findOrFail(data.machineId)
     if (machine.status === 'maintenance' || machine.status === 'offline') {
@@ -153,8 +169,16 @@ export default class AllocationsController {
       })
     }
 
-    // Adiciona o tempo
-    allocation.endTime = end.plus({ minutes: additionalMinutes })
+    const newEnd = end.plus({ minutes: additionalMinutes })
+    const futureLimitMsg = assertAllocationEndWithinLimit(newEnd)
+    if (futureLimitMsg) {
+      return response.badRequest({
+        code: 'ALLOCATION_TOO_FAR',
+        message: futureLimitMsg,
+      })
+    }
+
+    allocation.endTime = newEnd
     await allocation.save()
 
     return response.ok({

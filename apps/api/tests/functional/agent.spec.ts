@@ -254,7 +254,9 @@ test.group('Agent API', (group) => {
       .header('Authorization', `Bearer ${machine.token}`)
       .json({
         cpuModel: 'AMD Ryzen 9',
-        totalRamGb: 32,
+        gpuModel: 'NVIDIA GeForce RTX 3060',
+        totalVramGb: 120,
+        totalRamGb: 320,
         disks: [
           { device: '/dev/sda1', mountpoint: '/boot', fstype: 'ext4', totalGb: 1, freeGb: 0.5 },
           { device: '/dev/sda2', mountpoint: '/', fstype: 'ext4', totalGb: 500, freeGb: 200 },
@@ -265,10 +267,11 @@ test.group('Agent API', (group) => {
     response.assertStatus(200)
     await machine.refresh()
     assert.equal(machine.cpuModel, 'AMD Ryzen 9')
-    assert.equal(machine.totalRamGb, 32)
+    assert.equal(machine.gpuModel, 'NVIDIA GeForce RTX 3060')
+    assert.equal(machine.totalVramGb, 120)
+    assert.equal(machine.totalRamGb, 320)
     assert.equal(machine.hostFingerprint, 'SHA256:abcd1234efgh5678ijkl_test_fingerprint') // <-- SALVO NO BANCO
-    assert.isArray(machine.disks)
-    assert.lengthOf(machine.disks, 2)
+    assert.equal(machine.disks?.length, 2)
   })
 
   test('telemetry deve aceitar dados em lote convertendo VRAM e processos', async ({

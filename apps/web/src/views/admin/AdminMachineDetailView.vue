@@ -17,6 +17,8 @@ const machine = ref<Machine | null>(null);
 const allocations = ref<Allocation[]>([]);
 const loading = ref(true);
 const tokenModal = ref(false);
+const tokenValue = ref("");
+const regeneratingToken = ref(false);
 const debugRefreshing = ref(false);
 const debugStreamPreview = ref<unknown>(null);
 
@@ -172,9 +174,30 @@ function onTelemetrySaved(m: Machine) {
   machine.value = m;
 }
 
+async function handleRegenerateToken() {
+  if (!machine.value) return;
+  if (
+    !confirm(
+      `Regenerar token de "${machine.value.name}"? O token atual será invalidado.`,
+    )
+  ) {
+    return;
+  }
+  regeneratingToken.value = true;
+  try {
+    const result = await machinesStore.regenerateToken(machine.value.id);
+    tokenValue.value = result.token;
+    tokenModal.value = true;
+  } catch {
+    alert("Erro ao regenerar token.");
+  } finally {
+    regeneratingToken.value = false;
+  }
+}
+
 function copyToken() {
-  if (machine.value?.token) {
-    navigator.clipboard.writeText(machine.value.token);
+  if (tokenValue.value) {
+    navigator.clipboard.writeText(tokenValue.value).catch(() => {});
   }
 }
 </script>
@@ -210,12 +233,12 @@ function copyToken() {
             @saved="onTelemetrySaved"
           />
           <button
-            v-if="machine.token"
             type="button"
             class="btn btn-ghost btn-sm"
-            @click="tokenModal = true"
+            :disabled="regeneratingToken"
+            @click="handleRegenerateToken"
           >
-            Token
+            {{ regeneratingToken ? "Gerando…" : "Regenerar token" }}
           </button>
         </div>
       </div>
@@ -225,9 +248,12 @@ function copyToken() {
           <span class="stat-label">CPU</span>
           <span class="stat-value" style="font-size: 1rem">{{ machine.cpuModel }}</span>
         </div>
-        <div v-if="machine.gpuModel" class="stat-card">
+        <div v-if="machine.gpuModel || machine.totalVramGb" class="stat-card">
           <span class="stat-label">GPU</span>
-          <span class="stat-value" style="font-size: 1rem">{{ machine.gpuModel }}</span>
+          <span class="stat-value" style="font-size: 1rem">{{ machine.gpuModel || "—" }}</span>
+          <span v-if="machine.totalVramGb" class="stat-sub text-muted">
+            {{ machine.totalVramGb }} GB VRAM
+          </span>
         </div>
         <div v-if="machine.totalRamGb" class="stat-card">
           <span class="stat-label">RAM</span>
@@ -240,6 +266,10 @@ function copyToken() {
         <div v-if="machine.ipAddress" class="stat-card">
           <span class="stat-label">IP</span>
           <span class="stat-value" style="font-size: 1rem">{{ machine.ipAddress }}</span>
+        </div>
+        <div v-if="machine.hostFingerprint" class="stat-card stat-card--wide">
+          <span class="stat-label">Fingerprint SSH (host)</span>
+          <code class="stat-value fingerprint">{{ machine.hostFingerprint }}</code>
         </div>
       </div>
 
@@ -309,7 +339,7 @@ function copyToken() {
 
     <!-- Modal: token -->
     <Teleport to="body">
-      <div v-if="tokenModal && machine?.token" class="modal-overlay" @click.self="tokenModal = false">
+      <div v-if="tokenModal && tokenValue" class="modal-overlay" @click.self="tokenModal = false">
         <div class="modal-glass fade-in">
           <div class="modal-header">
             <h2 class="modal-title">Token do agente</h2>
@@ -319,7 +349,7 @@ function copyToken() {
             <p class="text-secondary" style="font-size: 0.88rem">
               Use em <code>MACHINE_TOKEN</code> no <code>.env</code> do agente.
             </p>
-            <div class="token-box">{{ machine.token }}</div>
+            <div class="token-box">{{ tokenValue }}</div>
             <button type="button" class="btn btn-primary btn-sm" @click="copyToken">
               Copiar token
             </button>

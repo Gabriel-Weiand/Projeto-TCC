@@ -281,9 +281,12 @@ function statusLabel(s: string) {
           <span class="stat-label">CPU</span>
           <span class="stat-value" style="font-size: 1rem">{{ machine.cpuModel }}</span>
         </div>
-        <div v-if="machine.gpuModel" class="stat-card">
+        <div v-if="machine.gpuModel || machine.totalVramGb" class="stat-card">
           <span class="stat-label">GPU</span>
-          <span class="stat-value" style="font-size: 1rem">{{ machine.gpuModel }}</span>
+          <span class="stat-value" style="font-size: 1rem">{{ machine.gpuModel || "—" }}</span>
+          <span v-if="machine.totalVramGb" class="stat-sub text-muted">
+            {{ machine.totalVramGb }} GB VRAM
+          </span>
         </div>
         <div v-if="machine.totalRamGb" class="stat-card">
           <span class="stat-label">RAM</span>

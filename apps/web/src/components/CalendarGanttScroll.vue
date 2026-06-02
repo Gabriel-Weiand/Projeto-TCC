@@ -1,6 +1,12 @@
 <script setup lang="ts">
 import { ref, computed, onMounted, onBeforeUnmount, nextTick, watch } from "vue";
 import { useMachinesStore } from "@/stores/machines";
+import { useLabConfigStore } from "@/stores/labConfig";
+import {
+  buildTimelineDays,
+  dateKey,
+  futureRangeLabel,
+} from "@/utils/calendarDays";
 import type { Allocation, Machine } from "@/types";
 
 const props = withDefaults(
@@ -57,6 +63,19 @@ watch(() => props.loading, async (isLoading) => {
 }, { immediate: true });
 
 const machinesStore = useMachinesStore();
+const lab = useLabConfigStore();
+
+const futureDays = ref(lab.defaultFutureDays);
+
+watch(
+  () => lab.defaultFutureDays,
+  (d) => {
+    if (!futureDays.value || !lab.futureOptions.includes(futureDays.value)) {
+      futureDays.value = d;
+    }
+  },
+  { immediate: true },
+);
 
 // ---- Machine viewport: 8 visible at a time, snap scroll ----
 const PAGE_SIZE = 8;
@@ -109,9 +128,7 @@ function onLeftWheel(e: WheelEvent) {
   else if (e.deltaY < 0) scrollMachines(-1);
 }
 
-// ---- Timeline constants ----
-const PAST_DAYS = 30;
-const FUTURE_DAYS = 60;
+// ---- Timeline (passado fixo via API; futuro selecionável) ----
 const CELL_W = computed(() => (props.compact ? 40 : 46));
 const MONTH_HEADER_H = computed(() => (props.compact ? 24 : 30));
 const DAY_HEADER_H = computed(() => (props.compact ? 36 : 46));
@@ -121,29 +138,27 @@ const BTN_H = 20;
 const TOTAL_HEADER_H = computed(
   () => MONTH_HEADER_H.value + DAY_HEADER_H.value,
 );
-const TOTAL_DAYS = PAST_DAYS + 1 + FUTURE_DAYS;
 const MS_PER_DAY = 1000 * 60 * 60 * 24;
 
 const isSingleMachine = computed(() => (props.machines?.length ?? 0) <= 1);
 
-const todayRef = new Date();
-todayRef.setHours(0, 0, 0, 0);
+const pastDays = computed(() => lab.pastDays);
+const todayIso = computed(() => lab.todayIso);
 
-// ---- Timeline days array ----
-const timelineDays = computed(() => {
-  const days: Date[] = [];
-  for (let i = -PAST_DAYS; i <= FUTURE_DAYS; i++) {
-    const d = new Date(todayRef);
-    d.setDate(d.getDate() + i);
-    days.push(d);
-  }
-  return days;
-});
+const timelineDays = computed(() =>
+  buildTimelineDays(todayIso.value, pastDays.value, futureDays.value),
+);
 
-const totalWidth = computed(() => TOTAL_DAYS * CELL_W.value);
+const totalDays = computed(
+  () => pastDays.value + 1 + futureDays.value,
+);
 
-const todayLineX = computed(() => PAST_DAYS * CELL_W.value + CELL_W.value / 2);
-const todayColLeft = computed(() => PAST_DAYS * CELL_W.value);
+const totalWidth = computed(() => totalDays.value * CELL_W.value);
+
+const todayLineX = computed(
+  () => pastDays.value * CELL_W.value + CELL_W.value / 2,
+);
+const todayColLeft = computed(() => pastDays.value * CELL_W.value);
 
 // ---- Month spans (for header labels + bg gradient) ----
 const monthSpans = computed(() => {
@@ -202,7 +217,12 @@ const monthBgStyle = computed(() => {
 
 // ---- Helpers ----
 function isToday(d: Date) {
-  return d.toDateString() === todayRef.toDateString();
+  return dateKey(d) === todayIso.value;
+}
+
+function selectFutureRange(days: number) {
+  if (futureDays.value === days) return;
+  futureDays.value = days;
 }
 function isWeekend(d: Date) {
   return d.getDay() === 0 || d.getDay() === 6;
@@ -394,23 +414,62 @@ function jumpBy(px: number) {
 function scrollToToday() {
   if (!scrollEl.value) return;
   const w = scrollEl.value.clientWidth;
-  scrollEl.value.scrollTo({ left: todayLineX.value - w / 2, behavior: "smooth" });
+  scrollEl.value.scrollTo({
+    left: Math.max(0, todayLineX.value - w / 2),
+    behavior: "smooth",
+  });
 }
+
+function applyInitialScroll() {
+  if (!scrollEl.value) return;
+  const w = scrollEl.value.clientWidth;
+  if (w <= 0) return;
+  scrollEl.value.scrollLeft = Math.max(0, todayLineX.value - w / 2);
+  scrollLeft.value = scrollEl.value.scrollLeft;
+}
+
+let scrollListenersBound = false;
+
+function bindScrollElement() {
+  if (!scrollEl.value || scrollListenersBound) return;
+  scrollListenersBound = true;
+  scrollEl.value.style.cursor = "grab";
+  scrollEl.value.addEventListener("wheel", onWheel, { passive: false });
+  scrollEl.value.addEventListener("scroll", onScroll, { passive: true });
+}
+
+async function ensureScrollToToday() {
+  if (props.loading || lab.loading) return;
+  await nextTick();
+  bindScrollElement();
+  requestAnimationFrame(() => applyInitialScroll());
+}
+
+watch(
+  () => props.loading,
+  (loading) => {
+    if (loading) scrollListenersBound = false;
+  },
+);
+
+watch(
+  () =>
+    [props.loading, lab.loading, futureDays.value, todayIso.value] as const,
+  () => {
+    void ensureScrollToToday();
+  },
+);
 
 onMounted(async () => {
   await nextTick();
   updateAlignOffset();
-  window.addEventListener("resize", updateAlignOffset);
-  if (scrollEl.value) {
-    const w = scrollEl.value.clientWidth;
-    scrollEl.value.scrollLeft = todayLineX.value - w / 2;
-    scrollLeft.value = scrollEl.value.scrollLeft;
-    scrollEl.value.style.cursor = "grab";
-    scrollEl.value.addEventListener("wheel", onWheel, { passive: false });
-    scrollEl.value.addEventListener("scroll", onScroll, { passive: true });
-    document.addEventListener("mousemove", onMouseMove);
-    document.addEventListener("mouseup", stopDrag);
-  }
+  window.addEventListener("resize", () => {
+    updateAlignOffset();
+    applyInitialScroll();
+  });
+  document.addEventListener("mousemove", onMouseMove);
+  document.addEventListener("mouseup", stopDrag);
+  void ensureScrollToToday();
 });
 
 onBeforeUnmount(() => {
@@ -452,6 +511,19 @@ onBeforeUnmount(() => {
             <span class="leg-item drag-hint">
               <span class="drag-icon">⇄</span> Arraste ou role com o mouse
             </span>
+          </div>
+          <div v-if="!compact" class="range-picker">
+            <span class="range-picker-label">Horizonte</span>
+            <button
+              v-for="opt in lab.futureOptions"
+              :key="opt"
+              type="button"
+              class="btn btn-ghost btn-sm range-btn"
+              :class="{ active: futureDays === opt }"
+              @click="selectFutureRange(opt)"
+            >
+              {{ futureRangeLabel(opt) }}
+            </button>
           </div>
           <button class="btn btn-ghost btn-sm today-btn" @click="scrollToToday">
             ◎ Hoje
@@ -655,6 +727,25 @@ onBeforeUnmount(() => {
   gap: 1rem;
   flex-wrap: wrap;
 }
+.range-picker {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+  flex-wrap: wrap;
+}
+
+.range-picker-label {
+  font-size: 0.72rem;
+  color: var(--text-muted);
+  margin-right: 0.15rem;
+}
+
+.range-btn.active {
+  background: rgba(124, 108, 240, 0.2);
+  color: var(--accent);
+  font-weight: 600;
+}
+
 .today-btn {
   font-weight: 600;
 }

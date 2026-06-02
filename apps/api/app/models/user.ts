@@ -9,6 +9,7 @@ import db from '@adonisjs/lucid/services/db'
 import Allocation from '#models/allocation'
 import Machine from '#models/machine'
 import Notification from '#models/notification'
+import { labConfig } from '#services/lab_config'
 
 const AuthFinder = withAuthFinder(() => hash.use('scrypt'), {
   uids: ['email'],
@@ -60,7 +61,7 @@ export default class User extends compose(BaseModel, AuthFinder) {
 
   // O provedor de tokens fica isolado no final
   static accessTokens = DbAccessTokensProvider.forModel(User, {
-    expiresIn: '6 hours',
+    expiresIn: labConfig.auth.tokenExpiresIn,
   })
 
   // --- HOOKS ---

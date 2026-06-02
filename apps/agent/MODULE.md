@@ -24,6 +24,8 @@ O agente utiliza exclusivamente três rotas da API central. Todas exigem o heade
 
 ### 1. `PUT /api/v1/agent/sync-specs` (Setup de Boot)
 
+Envia, entre outros, `totalVramGb` e `totalRamGb` como **inteiro GB×10** (ex.: 12,0 GB VRAM → `120`; 15,5 GB RAM → `155`), alinhado à telemetria. VRAM/modelo vêm do backend do vendor (`_collect_gpu_specs`: NVML na NVIDIA, sysfs AMD, lspci como fallback). iGPU sem VRAM dedicada omite `totalVramGb`.
+
 Executada **apenas uma vez** quando o `agentd.py` inicia.
 
 - **O que faz:** Lê informações físicas e fixas — Modelo da CPU, Modelo da GPU, Total de RAM e Partições de Disco.
@@ -181,6 +183,7 @@ Um processo só entra no array `processes` se satisfizer **ao menos um** dos cri
 ┌─────────────────────────────────────────────────────────────────────────────────┐
 │                           1. BOOT DA MÁQUINA                                    │
 │  - Lê .env (SERVER_URL, MACHINE_TOKEN)                                          │
+│  - GET /api/config → telemetria inicial eco (ou presets do lab se API online) │
 │  - PUT /api/v1/agent/sync-specs (Registra Hardware no Backend)                  │
 └──────────────────────────────────────┬──────────────────────────────────────────┘
                                        │

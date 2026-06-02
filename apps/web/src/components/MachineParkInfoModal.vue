@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { computed } from "vue";
 import type { Machine } from "@/types";
 import {
   diskPartitionKey,
@@ -6,12 +7,17 @@ import {
   displayTotalDiskGb,
   sortDisksBySize,
 } from "@/utils/machineDisks";
+import { formatGpuWithVram } from "@/utils/machineGpu";
 
-defineProps<{
+const props = defineProps<{
   machine: Machine;
 }>();
 
 const emit = defineEmits<{ close: [] }>();
+
+const gpuSpecLine = computed(() =>
+  formatGpuWithVram(props.machine.gpuModel, props.machine.totalVramGb),
+);
 
 function statusBadge(s: string) {
   const map: Record<string, string> = {
@@ -65,9 +71,9 @@ function fmtGb(val: number | null | undefined): string {
               <dt>CPU</dt>
               <dd>{{ machine.cpuModel }}</dd>
             </template>
-            <template v-if="machine.gpuModel">
+            <template v-if="gpuSpecLine">
               <dt>GPU</dt>
-              <dd>{{ machine.gpuModel }}</dd>
+              <dd>{{ gpuSpecLine }}</dd>
             </template>
             <template v-if="machine.totalRamGb">
               <dt>RAM</dt>

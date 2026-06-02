@@ -4,11 +4,13 @@ import { ref, computed, onMounted } from "vue";
 import { useAllocationsStore } from "@/stores/allocations";
 import { useMachinesStore } from "@/stores/machines";
 import { useAuthStore } from "@/stores/auth";
+import { useLabConfigStore } from "@/stores/labConfig";
 import type { Allocation, AllocationMetric } from "@/types";
 
 const allocationsStore = useAllocationsStore();
 const machinesStore = useMachinesStore();
 const auth = useAuthStore();
+const lab = useLabConfigStore();
 
 const isAdmin = computed(() => auth.user?.role === "admin");
 
@@ -265,7 +267,7 @@ async function openStats(a: Allocation) {
           :machines="machinesStore.machines"
           :allocations="ganttAllocations"
           :current-user-id="auth.user?.id ?? null"
-          :loading="ganttLoading"
+          :loading="ganttLoading || lab.loading"
           @offset-calculated="(val) => (panelMarginTop = val)"
         />
       </section>

@@ -36,6 +36,11 @@ export default class Machine extends BaseModel {
   @column()
   declare gpuModel: string | null
 
+  /** VRAM total wire GB×10 (agente/sync-specs); conversão na serialização HTTP */
+  @column()
+  declare totalVramGb: number | null
+
+  /** RAM total wire GB×10; conversão na serialização HTTP */
   @column()
   declare totalRamGb: number | null
 

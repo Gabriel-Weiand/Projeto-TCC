@@ -1,5 +1,6 @@
 import type { HttpContext } from '@adonisjs/core/http'
 import { DateTime } from 'luxon'
+import { labConfig, labNow, labPublicConfig } from '#services/lab_config'
 
 export default class UtilsController {
   /**
@@ -22,10 +23,23 @@ export default class UtilsController {
    * GET /api/time
    */
   async time({ response }: HttpContext) {
-    const now = DateTime.now()
+    const nowUtc = DateTime.utc()
+    const nowLab = labNow()
     return response.ok({
-      utc: now.toISO(),
-      unixMs: now.toMillis(),
+      utc: nowUtc.toISO(),
+      unixMs: nowUtc.toMillis(),
+      timezone: labConfig.timezone,
+      localIso: nowLab.toISO(),
+      localDate: nowLab.toISODate(),
     })
+  }
+
+  /**
+   * Configuração pública do laboratório (calendário, limites de reserva, auth, fuso).
+   *
+   * GET /api/config
+   */
+  async config({ response }: HttpContext) {
+    return response.ok(labPublicConfig())
   }
 }

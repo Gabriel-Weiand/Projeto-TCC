@@ -4,11 +4,16 @@ import router from "./router";
 import App from "./App.vue";
 import "./assets/main.css";
 import { startTimeSync } from "./services/timeSync";
+import { useLabConfigStore } from "./stores/labConfig";
 
+const pinia = createPinia();
 const app = createApp(App);
-app.use(createPinia());
+app.use(pinia);
 app.use(router);
+
+const labConfig = useLabConfigStore(pinia);
+void labConfig.fetchConfig().then(() => labConfig.refreshToday());
+
 app.mount("#app");
 
-// Sync browser clock with server UTC
 startTimeSync();

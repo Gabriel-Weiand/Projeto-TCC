@@ -27,6 +27,8 @@ export default class extends BaseSchema {
       // Especificações de Hardware
       table.string('cpu_model', 100).nullable()
       table.string('gpu_model', 100).nullable()
+      // RAM/VRAM: inteiro ×10 (ex.: 15,5 GB → 155; 12,0 GB VRAM → 120)
+      table.integer('total_vram_gb').unsigned().nullable()
       table.integer('total_ram_gb').unsigned().nullable()
 
       // Convertido para JSONB para alta performance e portabilidade

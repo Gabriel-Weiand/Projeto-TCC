@@ -1,0 +1,30 @@
+{
+  "fast": {
+    "intervalSeconds": 20,
+    "batchSize": 6,
+    "telemetrySet": {
+      "cpu": true,
+      "gpu": true,
+      "ramAndSwap": true,
+      "diskSpace": true,
+      "diskIO": true,
+      "networkIO": true,
+      "temperatures": true,
+      "activeUsers": true
+    }
+  },
+  "eco": {
+    "intervalSeconds": 90,
+    "batchSize": 20,
+    "telemetrySet": {
+      "cpu": true,
+      "gpu": false,
+      "ramAndSwap": true,
+      "diskSpace": true,
+      "diskIO": false,
+      "networkIO": false,
+      "temperatures": false,
+      "activeUsers": true
+    }
+  }
+}

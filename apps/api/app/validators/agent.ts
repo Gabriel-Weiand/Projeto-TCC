@@ -47,7 +47,8 @@ export const syncSpecsValidator = vine.compile(
   vine.object({
     cpuModel: vine.string().trim().maxLength(100).optional(),
     gpuModel: vine.string().trim().maxLength(100).optional(),
-    totalRamGb: vine.number().positive().max(1024).optional(),
+    totalVramGb: vine.number().withoutDecimals().min(0).max(10240).optional(),
+    totalRamGb: vine.number().withoutDecimals().min(1).max(10240).optional(),
     ipAddress: vine.string().trim().maxLength(45).optional(),
     disks: vine.array(diskItemSchema).maxLength(32).optional(),
     hostFingerprint: vine.string().maxLength(255).nullable().optional(),

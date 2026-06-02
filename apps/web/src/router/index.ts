@@ -69,33 +69,12 @@ const router = createRouter({
           component: () => import("@/views/admin/AdminAllocationsView.vue"),
           meta: { admin: true },
         },
-
-        // ---- Prototype calendar views (development only) ----
         {
-          path: "lab",
-          name: "lab-prototypes",
-          component: () => import("@/views/prototypes/PrototypesIndex.vue"),
-        },
-        {
-          path: "lab/calendar-gantt",
-          name: "lab-calendar-gantt",
-          component: () => import("@/views/prototypes/MonthCalendarGantt.vue"),
-        },
-        {
-          path: "lab/calendar-grid",
-          name: "lab-calendar-grid",
-          component: () => import("@/views/prototypes/MonthCalendarGrid.vue"),
-        },
-        {
-          path: "lab/calendar-matrix",
-          name: "lab-calendar-matrix",
-          component: () => import("@/views/prototypes/MonthCalendarMatrix.vue"),
-        },
-        {
-          path: "lab/calendar-gantt-scroll",
-          name: "lab-calendar-gantt-scroll",
-          component: () => import("@/views/prototypes/MonthCalendarGanttScroll.vue"),
-        },
+          path: "admin/lab-telemetry",
+          name: "admin-lab-telemetry",
+          component: () => import("@/views/admin/AdminLabTelemetryView.vue"),
+          meta: { admin: true },
+        }
       ],
     },
   ],
