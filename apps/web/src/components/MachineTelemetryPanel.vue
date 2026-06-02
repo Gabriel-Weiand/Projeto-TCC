@@ -2,7 +2,9 @@
 import { ref, reactive, watch, computed } from "vue";
 import { useMachinesStore } from "@/stores/machines";
 import { useLabConfigStore } from "@/stores/labConfig";
-import { TELEMETRY_METRIC_KEYS } from "@/utils/telemetryPresets";
+import NumberStepper from "@/components/NumberStepper.vue";
+import TelemetryMetricGrid from "@/components/TelemetryMetricGrid.vue";
+import { TELEMETRY_BATCH_MAX } from "@/utils/telemetryPresets";
 import type { Machine, TelemetryPreset } from "@/types";
 
 const props = withDefaults(
@@ -38,8 +40,6 @@ const PRESET_INFO = computed(() => {
     custom: { label: "Custom", blurb: "Intervalo, lote e métricas só desta máquina." },
   };
 });
-
-const METRIC_KEYS = TELEMETRY_METRIC_KEYS;
 
 function defaultTelemetrySet() {
   return {
@@ -98,8 +98,12 @@ async function handleSave() {
   try {
     const payload: Record<string, unknown> = { telemetryPreset: preset.value };
     if (preset.value === "custom") {
-      if (custom.intervalSeconds < 1 || custom.batchSize < 1) {
-        error.value = "Intervalo e lote devem ser ≥ 1.";
+      if (custom.intervalSeconds < 1) {
+        error.value = "Intervalo deve ser ≥ 1.";
+        return;
+      }
+      if (custom.batchSize < 1 || custom.batchSize > TELEMETRY_BATCH_MAX) {
+        error.value = `Tamanho do lote deve ser entre 1 e ${TELEMETRY_BATCH_MAX}.`;
         return;
       }
       payload.customAgentConfig = {
@@ -157,33 +161,20 @@ async function handleSave() {
 
       <div v-if="preset === 'custom'" class="custom-block">
         <div class="custom-row">
-          <label class="field-label">
-            Intervalo (s)
-            <input
-              v-model.number="custom.intervalSeconds"
-              type="number"
-              min="1"
-              max="600"
-              class="field-input"
-            />
-          </label>
-          <label class="field-label">
-            Tamanho do lote
-            <input
-              v-model.number="custom.batchSize"
-              type="number"
-              min="1"
-              max="15"
-              class="field-input"
-            />
-          </label>
+          <NumberStepper
+            v-model="custom.intervalSeconds"
+            label="Intervalo (s)"
+            :min="1"
+            :max="600"
+          />
+          <NumberStepper
+            v-model="custom.batchSize"
+            label="Tamanho do lote"
+            :min="1"
+            :max="TELEMETRY_BATCH_MAX"
+          />
         </div>
-        <div class="metric-grid">
-          <label v-for="m in METRIC_KEYS" :key="m.key" class="metric-check">
-            <input v-model="(custom.telemetrySet as any)[m.key]" type="checkbox" />
-            {{ m.label }}
-          </label>
-        </div>
+        <TelemetryMetricGrid v-model="custom.telemetrySet" class="custom-metrics" />
       </div>
 
       <div class="panel-actions">
@@ -230,33 +221,20 @@ async function handleSave() {
 
           <div v-if="preset === 'custom'" class="custom-block">
             <div class="custom-row">
-              <label class="field-label">
-                Intervalo (s)
-                <input
-                  v-model.number="custom.intervalSeconds"
-                  type="number"
-                  min="1"
-                  max="600"
-                  class="field-input"
-                />
-              </label>
-              <label class="field-label">
-                Tamanho do lote
-                <input
-                  v-model.number="custom.batchSize"
-                  type="number"
-                  min="1"
-                  max="15"
-                  class="field-input"
-                />
-              </label>
+              <NumberStepper
+                v-model="custom.intervalSeconds"
+                label="Intervalo (s)"
+                :min="1"
+                :max="600"
+              />
+              <NumberStepper
+                v-model="custom.batchSize"
+                label="Tamanho do lote"
+                :min="1"
+                :max="TELEMETRY_BATCH_MAX"
+              />
             </div>
-            <div class="metric-grid">
-              <label v-for="m in METRIC_KEYS" :key="m.key" class="metric-check">
-                <input v-model="(custom.telemetrySet as any)[m.key]" type="checkbox" />
-                {{ m.label }}
-              </label>
-            </div>
+            <TelemetryMetricGrid v-model="custom.telemetrySet" class="custom-metrics" />
           </div>
 
           <div class="panel-actions">
@@ -346,43 +324,11 @@ async function handleSave() {
 .custom-row {
   display: flex;
   flex-wrap: wrap;
-  gap: 1rem;
+  gap: 1.25rem;
 }
 
-.field-label {
-  display: flex;
-  flex-direction: column;
-  gap: 0.35rem;
-  font-size: 0.78rem;
-  font-weight: 600;
-  color: var(--text-muted);
-  min-width: 120px;
-}
-
-.field-input {
-  padding: 0.45rem 0.6rem;
-  border-radius: 8px;
-  border: 1px solid var(--border-subtle);
-  background: var(--bg-input);
-  color: var(--text-primary);
-  font-size: 0.88rem;
-  max-width: 100px;
-}
-
-.metric-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
-  gap: 0.4rem 0.75rem;
-  margin-top: 0.75rem;
-}
-
-.metric-check {
-  display: flex;
-  align-items: center;
-  gap: 0.45rem;
-  font-size: 0.82rem;
-  color: var(--text-secondary);
-  cursor: pointer;
+.custom-metrics {
+  margin-top: 0.85rem;
 }
 
 .panel-actions {

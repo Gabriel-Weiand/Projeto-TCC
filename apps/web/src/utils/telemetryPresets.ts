@@ -1,3 +1,6 @@
+/** Máximo de amostras por lote enviadas ao agente (8 métricas distintas no total). */
+export const TELEMETRY_BATCH_MAX = 15;
+
 export type TelemetrySetConfig = {
   cpu: boolean;
   gpu: boolean;

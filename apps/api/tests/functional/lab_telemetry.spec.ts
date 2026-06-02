@@ -45,7 +45,7 @@ test.group('Lab telemetry presets', (group) => {
         },
         eco: {
           intervalSeconds: 90,
-          batchSize: 20,
+          batchSize: 15,
           telemetrySet: getRes.body().eco.telemetrySet,
         },
       })

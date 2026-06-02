@@ -1,7 +1,7 @@
 import axios from "axios";
 import { useLabConfigStore } from "@/stores/labConfig";
 
-const API_BASE = import.meta.env.VITE_API_URL || "http://localhost:3333";
+const API_BASE = import.meta.env.VITE_API_URL || "http://localhost:7372";
 
 /** Clock offset in milliseconds (server - local). */
 let offsetMs = 0;

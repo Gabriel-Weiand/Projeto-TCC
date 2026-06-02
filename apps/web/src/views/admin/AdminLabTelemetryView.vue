@@ -1,9 +1,11 @@
 <script setup lang="ts">
 import { reactive, ref, onMounted, computed } from "vue";
 import { useLabConfigStore } from "@/stores/labConfig";
+import NumberStepper from "@/components/NumberStepper.vue";
+import TelemetryMetricGrid from "@/components/TelemetryMetricGrid.vue";
 import {
-  TELEMETRY_METRIC_KEYS,
   DEFAULT_LAB_TELEMETRY_PRESETS,
+  TELEMETRY_BATCH_MAX,
   type LabTelemetryPresets,
 } from "@/utils/telemetryPresets";
 
@@ -38,15 +40,26 @@ onMounted(async () => {
   }
 });
 
+function validatePresets(): string | null {
+  for (const key of ["fast", "eco"] as const) {
+    const p = form[key];
+    if (p.intervalSeconds < 1) {
+      return "Intervalo deve ser ≥ 1 em fast e eco.";
+    }
+    if (p.batchSize < 1 || p.batchSize > TELEMETRY_BATCH_MAX) {
+      return `Tamanho do lote deve ser entre 1 e ${TELEMETRY_BATCH_MAX}.`;
+    }
+  }
+  return null;
+}
+
 async function handleSave() {
   error.value = "";
   saved.value = false;
-  for (const key of ["fast", "eco"] as const) {
-    const p = form[key];
-    if (p.intervalSeconds < 1 || p.batchSize < 1) {
-      error.value = "Intervalo e lote devem ser ≥ 1 em fast e eco.";
-      return;
-    }
+  const validationError = validatePresets();
+  if (validationError) {
+    error.value = validationError;
+    return;
   }
   saving.value = true;
   try {
@@ -90,38 +103,20 @@ async function handleSave() {
       >
         <h2 class="preset-title">{{ section.title }}</h2>
         <div class="preset-fields">
-          <label class="field">
-            <span class="field-label">Intervalo (s)</span>
-            <input
-              v-model.number="form[section.key].intervalSeconds"
-              type="number"
-              min="1"
-              max="600"
-            />
-          </label>
-          <label class="field">
-            <span class="field-label">Tamanho do lote</span>
-            <input
-              v-model.number="form[section.key].batchSize"
-              type="number"
-              min="1"
-              max="120"
-            />
-          </label>
+          <NumberStepper
+            v-model="form[section.key].intervalSeconds"
+            label="Intervalo (s)"
+            :min="1"
+            :max="600"
+          />
+          <NumberStepper
+            v-model="form[section.key].batchSize"
+            label="Tamanho do lote"
+            :min="1"
+            :max="TELEMETRY_BATCH_MAX"
+          />
         </div>
-        <div class="metrics-grid">
-          <label
-            v-for="m in TELEMETRY_METRIC_KEYS"
-            :key="`${section.key}-${m.key}`"
-            class="metric-check"
-          >
-            <input
-              v-model="(form[section.key].telemetrySet as Record<string, boolean>)[m.key]"
-              type="checkbox"
-            />
-            {{ m.label }}
-          </label>
-        </div>
+        <TelemetryMetricGrid v-model="form[section.key].telemetrySet" />
       </div>
 
       <p v-if="error" class="form-error">{{ error }}</p>
@@ -141,7 +136,7 @@ async function handleSave() {
 
 <style scoped>
 .admin-lab-telemetry {
-  max-width: 720px;
+  max-width: 820px;
 }
 .page-lead {
   margin-bottom: 1.5rem;
@@ -158,26 +153,9 @@ async function handleSave() {
 }
 .preset-fields {
   display: flex;
-  gap: 1rem;
+  gap: 1.25rem;
   flex-wrap: wrap;
-  margin-bottom: 0.85rem;
-}
-.field {
-  display: flex;
-  flex-direction: column;
-  gap: 0.25rem;
-  min-width: 140px;
-}
-.metrics-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
-  gap: 0.4rem 0.75rem;
-}
-.metric-check {
-  font-size: 0.85rem;
-  display: flex;
-  align-items: center;
-  gap: 0.4rem;
+  margin-bottom: 1rem;
 }
 .form-error {
   color: var(--danger);

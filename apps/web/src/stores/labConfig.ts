@@ -7,7 +7,7 @@ import {
   type LabTelemetryPresets,
 } from "@/utils/telemetryPresets";
 
-const API_BASE = import.meta.env.VITE_API_URL || "http://localhost:3333";
+const API_BASE = import.meta.env.VITE_API_URL || "http://localhost:7372";
 
 export interface LabPublicConfig {
   timezone: string;
