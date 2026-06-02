@@ -15,7 +15,7 @@
   },
   "eco": {
     "intervalSeconds": 90,
-    "batchSize": 20,
+    "batchSize": 15,
     "telemetrySet": {
       "cpu": true,
       "gpu": false,

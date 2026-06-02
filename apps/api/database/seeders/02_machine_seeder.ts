@@ -168,7 +168,7 @@ export default class extends BaseSeeder {
       },
       {
         name: 'PC-LAB-05',
-        description: 'RTX A5000 — optical flow e simulação CUDA (semanas)',
+        description: 'RTX A5000 — optical flow e simulação CUDA',
         machineGroupId: groupSimCuda.id,
         cpuModel: 'Intel Xeon Silver 4314 16-Core',
         gpuModel: 'NVIDIA RTX A5000 24GB',

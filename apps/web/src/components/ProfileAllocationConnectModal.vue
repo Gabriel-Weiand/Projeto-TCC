@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, ref } from "vue";
+import { computed } from "vue";
 import { useAuthStore } from "@/stores/auth";
 import { useLabConfigStore } from "@/stores/labConfig";
 import type { Allocation } from "@/types";
@@ -14,7 +14,6 @@ const emit = defineEmits<{ close: [] }>();
 
 const auth = useAuthStore();
 const lab = useLabConfigStore();
-const fingerprintConfirmed = ref(false);
 
 const machine = computed(() => props.allocation.machine);
 
@@ -28,11 +27,6 @@ const reservationWindow = computed(() => {
   }
 });
 
-const isPrivateIp = computed(() => {
-  const ip = machine.value?.ipAddress?.trim();
-  if (!ip) return false;
-  return /^(10\.|192\.168\.|172\.(1[6-9]|2\d|3[01])\.)/.test(ip);
-});
 const systemUser = computed(
   () => auth.user?.systemUsername || machine.value?.systemUsername,
 );
@@ -45,18 +39,6 @@ const sshCommand = computed(() => {
 });
 
 const fingerprint = computed(() => machine.value?.hostFingerprint ?? null);
-
-const missingConnectInfo = computed(() => {
-  if (!sshCommand.value) return "ip_or_user";
-  if (!fingerprint.value) return "fingerprint";
-  return null;
-});
-
-const canProceed = computed(
-  () =>
-    !!sshCommand.value &&
-    (!fingerprint.value || fingerprintConfirmed.value),
-);
 
 async function copyCommand() {
   if (!sshCommand.value) return;
@@ -110,12 +92,8 @@ async function copyCommand() {
 
           <p class="connect-network-note">
             <strong>Rede:</strong>
-            o IP informado costuma ser alcançável apenas na rede local do
-            laboratório (Wi‑Fi ou cabo do campus). Se o SSH falhar fora do prédio,
-            conecte-se à rede da instituição ou use a VPN indicada pelo suporte do lab.
-            <span v-if="isPrivateIp" class="connect-network-private">
-              Este endereço é de rede interna (RFC 1918).
-            </span>
+            o IP informado pode ser alcançável apenas na rede local do
+            laboratório.
           </p>
 
           <div v-if="sshCommand" class="command-block">
@@ -127,7 +105,7 @@ async function copyCommand() {
               </button>
             </div>
           </div>
-          <p v-else-if="missingConnectInfo === 'ip_or_user'" class="connect-warn">
+          <p v-else class="connect-warn">
             IP ou usuário do sistema indisponíveis. Verifique se a máquina está
             online e se seu perfil tem o login SSH configurado.
           </p>
@@ -139,35 +117,7 @@ async function copyCommand() {
               Fingerprint ainda não registrado pelo agente. Confirme com o
               administrador antes de aceitar a conexão.
             </p>
-            <label v-if="fingerprint" class="fingerprint-check">
-              <input v-model="fingerprintConfirmed" type="checkbox" />
-              Comparei o fingerprint do terminal com o valor acima
-            </label>
           </div>
-
-          <p class="connect-hint text-muted">
-            Na primeira conexão, o SSH pedirá confirmação. O fingerprint exibido
-            pelo terminal deve ser <strong>idêntico</strong> ao valor acima.
-          </p>
-
-          <p v-if="sshCommand && !canProceed" class="connect-warn">
-            Marque a confirmação do fingerprint antes de encerrar este painel.
-          </p>
-        </div>
-
-        <div class="modal-actions">
-          <button type="button" class="btn btn-ghost" @click="emit('close')">
-            Fechar
-          </button>
-          <button
-            v-if="sshCommand"
-            type="button"
-            class="btn btn-primary"
-            :disabled="!canProceed"
-            @click="emit('close')"
-          >
-            Pronto para conectar
-          </button>
         </div>
       </div>
     </div>
@@ -280,13 +230,6 @@ async function copyCommand() {
   border-radius: var(--radius);
 }
 
-.connect-network-private {
-  display: block;
-  margin-top: 0.35rem;
-  font-size: 0.78rem;
-  opacity: 0.9;
-}
-
 .command-row {
   display: flex;
   align-items: stretch;
@@ -321,12 +264,6 @@ async function copyCommand() {
   color: #f59e0b;
 }
 
-.connect-hint {
-  margin: 0;
-  font-size: 0.82rem;
-  line-height: 1.45;
-}
-
 .field-label {
   font-size: 0.82rem;
   font-weight: 500;
@@ -335,18 +272,4 @@ async function copyCommand() {
   display: block;
 }
 
-.fingerprint-check {
-  display: flex;
-  align-items: flex-start;
-  gap: 0.5rem;
-  margin-top: 0.75rem;
-  font-size: 0.86rem;
-  color: var(--text-secondary);
-  cursor: pointer;
-  line-height: 1.4;
-}
-
-.fingerprint-check input {
-  margin-top: 0.2rem;
-}
 </style>

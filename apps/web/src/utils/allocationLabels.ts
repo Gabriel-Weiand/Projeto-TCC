@@ -7,6 +7,10 @@ import {
 /** Limite do campo motivo (alinhado à API). */
 export const ALLOCATION_REASON_MAX_LENGTH = 200;
 
+/** Período preenchido com início/fim incoerentes (ex.: término antes do início). */
+export const PERIOD_INVALID_RANGE_MESSAGE =
+  "Horário inadequado para o período selecionado.";
+
 export function allocationStatusBadge(status: string): string {
   const map: Record<string, string> = {
     pending: "badge-warning",

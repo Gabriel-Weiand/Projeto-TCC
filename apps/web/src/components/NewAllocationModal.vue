@@ -7,6 +7,7 @@ import { useLabConfigStore } from "@/stores/labConfig";
 import type { Machine } from "@/types";
 import { wallClockToUtcIso } from "@/utils/datetime";
 import { ALLOCATION_REASON_MAX_LENGTH } from "@/utils/allocationLabels";
+import SudoAllocationToggle from "@/components/SudoAllocationToggle.vue";
 
 const props = defineProps<{ machines: Machine[] }>();
 const emit = defineEmits<{ close: []; created: [] }>();
@@ -143,13 +144,7 @@ async function handleCreate() {
             </div>
           </div>
 
-          <label v-if="!auth.isAdmin" class="sudo-toggle">
-            <input v-model="form.isSudo" type="checkbox" />
-            <span>
-              Solicitar privilégios <strong>sudo</strong> na máquina
-              <span class="text-muted">(requer aprovação do admin)</span>
-            </span>
-          </label>
+          <SudoAllocationToggle v-if="!auth.isAdmin" v-model="form.isSudo" />
 
           <div class="field">
             <label class="field-label"
@@ -237,19 +232,6 @@ async function handleCreate() {
 
 .field-sublabel {
   font-size: 0.75rem;
-}
-
-.sudo-toggle {
-  display: flex;
-  align-items: flex-start;
-  gap: 0.5rem;
-  font-size: 0.88rem;
-  line-height: 1.4;
-  cursor: pointer;
-}
-
-.sudo-toggle input {
-  margin-top: 0.2rem;
 }
 
 .modal-actions {

@@ -32,7 +32,7 @@ export default class AllocationsController {
     let query = Allocation.query()
       .where('userId', user.id)
       .where('userHidden', false)
-      .preload('machine')
+      .preload('machine', (machineQuery) => machineQuery.preload('group'))
       .orderBy('startTime', 'desc')
 
     if (status) {

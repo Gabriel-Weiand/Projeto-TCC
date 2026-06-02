@@ -139,8 +139,16 @@ button {
   color: var(--text-primary);
   border-color: rgba(255,255,255,0.12);
 }
-.btn-danger { background: transparent; color: var(--danger); border: 1px solid transparent; }
-.btn-danger:hover { background: var(--danger-soft); }
+.btn-danger {
+  background: transparent;
+  color: var(--danger);
+  border: 1px solid rgba(248, 113, 113, 0.45);
+}
+.btn-danger:hover {
+  background: var(--danger-soft);
+  border-color: var(--danger);
+  color: var(--danger);
+}
 .btn-success { background: transparent; color: var(--success); border: 1px solid transparent; }
 .btn-success:hover { background: var(--success-soft); }
 .btn-sm { font-size: 0.82rem; padding: 0.4rem 0.85rem; border-radius: 8px; }

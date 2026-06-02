@@ -4,6 +4,7 @@ import { useLabConfigStore } from "@/stores/labConfig";
 import {
   buildTimelineDays,
   dateKey,
+  daysBetweenIso,
   futureRangeLabel,
 } from "@/utils/calendarDays";
 import {
@@ -25,6 +26,8 @@ const props = withDefaults(
     highlightAllocationId?: number | null;
     /** Uma máquina: linha alta, sem scroll vertical de máquinas, setas no eixo da linha */
     singleMachineFocus?: boolean;
+    /** YYYY-MM-DD (TZ do lab): centraliza o scroll inicial neste dia em vez de hoje */
+    initialScrollIso?: string | null;
   }>(),
   {
     machines: () => [],
@@ -34,22 +37,28 @@ const props = withDefaults(
     compact: false,
     highlightAllocationId: null,
     singleMachineFocus: false,
+    initialScrollIso: null,
   },
 );
 
 // NOVO: Declarar o evento que envia o alinhamento para o elemento pai
 const emit = defineEmits<{
-  (e: "offset-calculated", offset: number): void;
+  (
+    e: "panel-align",
+    metrics: { top: number; height: number },
+  ): void;
 }>();
 
 const ganttOuterRef = ref<HTMLElement | null>(null);
 let resizeObserver: ResizeObserver | null = null;
 
-// NOVO: Função que calcula o topo exato do calendario
+/** Alinha painel lateral ao card do Gantt (topo da caixa + mesma altura, sem toolbar externa). */
 function updateAlignOffset() {
   if (ganttOuterRef.value) {
-    const offset = ganttOuterRef.value.offsetTop;
-    emit("offset-calculated", offset);
+    emit("panel-align", {
+      top: ganttOuterRef.value.offsetTop,
+      height: ganttOuterRef.value.offsetHeight,
+    });
   }
 }
 
@@ -137,9 +146,10 @@ function onLeftWheel(e: WheelEvent) {
 }
 
 // ---- Timeline (passado fixo via API; futuro selecionável) ----
-const CELL_W = computed(() => (props.compact ? 40 : 46));
-const MONTH_HEADER_H = computed(() => (props.compact ? 24 : 30));
-const DAY_HEADER_H = computed(() => (props.compact ? 36 : 46));
+/** Cabeçalhos mantêm tamanho padrão; compact só reduz linhas de máquina e toolbar. */
+const CELL_W = computed(() => 46);
+const MONTH_HEADER_H = computed(() => 30);
+const DAY_HEADER_H = computed(() => 46);
 const ROW_H = computed(() => {
   if (props.singleMachineFocus) return 92;
   if (props.compact) return 48;
@@ -175,6 +185,38 @@ const todayLineX = computed(
   () => pastDays.value * CELL_W.value + CELL_W.value / 2,
 );
 const todayColLeft = computed(() => pastDays.value * CELL_W.value);
+
+function dayIndexForIso(iso: string): number {
+  return timelineDays.value.findIndex((d) => dateKey(d) === iso);
+}
+
+function lineXForDayIndex(idx: number): number {
+  return idx * CELL_W.value + CELL_W.value / 2;
+}
+
+const initialScrollLineX = computed(() => {
+  const iso = props.initialScrollIso?.trim();
+  if (!iso) return todayLineX.value;
+  const idx = dayIndexForIso(iso);
+  if (idx < 0) return todayLineX.value;
+  return lineXForDayIndex(idx);
+});
+
+function ensureFutureDaysCover(iso: string) {
+  const diff = daysBetweenIso(todayIso.value, iso);
+  if (diff <= futureDays.value) return;
+  const opts = [...lab.futureOptions].sort((a, b) => a - b);
+  const fit = opts.find((o) => o >= diff) ?? opts[opts.length - 1];
+  if (fit != null) futureDays.value = fit;
+}
+
+watch(
+  () => props.initialScrollIso,
+  (iso) => {
+    if (iso?.trim()) ensureFutureDaysCover(iso.trim());
+  },
+  { immediate: true },
+);
 
 // ---- Month spans (for header labels + bg gradient) ----
 const monthSpans = computed(() => {
@@ -443,18 +485,22 @@ function scrollToToday() {
 }
 
 const ganttWrapStyle = computed(() => {
-  if (!props.singleMachineFocus) return undefined;
-  return {
-    "--gantt-header-h": `${TOTAL_HEADER_H.value}px`,
-    "--gantt-track-h": `${ROW_H.value}px`,
-  } as Record<string, string>;
+  const vars: Record<string, string> = {
+    "--gantt-cell-w": `${CELL_W.value}px`,
+  };
+  if (props.singleMachineFocus) {
+    vars["--gantt-header-h"] = `${TOTAL_HEADER_H.value}px`;
+    vars["--gantt-track-h"] = `${ROW_H.value}px`;
+  }
+  return vars;
 });
 
 function applyInitialScroll() {
   if (!scrollEl.value) return;
   const w = scrollEl.value.clientWidth;
   if (w <= 0) return;
-  scrollEl.value.scrollLeft = Math.max(0, todayLineX.value - w / 2);
+  const lineX = initialScrollLineX.value;
+  scrollEl.value.scrollLeft = Math.max(0, lineX - w / 2);
   scrollLeft.value = scrollEl.value.scrollLeft;
 }
 
@@ -489,7 +535,14 @@ watch(
 
 watch(
   () =>
-    [props.loading, lab.loading, futureDays.value, todayIso.value] as const,
+    [
+      props.loading,
+      lab.loading,
+      futureDays.value,
+      todayIso.value,
+      props.initialScrollIso,
+      timelineDays.value.length,
+    ] as const,
   () => {
     void ensureScrollToToday();
   },
@@ -521,7 +574,7 @@ onBeforeUnmount(() => {
       'gantt-wrap--compact': compact,
       'gantt-wrap--single-focus': singleMachineFocus,
     }"
-    :style="ganttWrapStyle"
+    :style="ganttWrapStyle as Record<string, string>"
   >
     <div v-if="loading" class="empty-state">Carregando calendário...</div>
 
@@ -743,10 +796,6 @@ onBeforeUnmount(() => {
             <span class="leg-item">
               <span class="leg-bar finished"></span>Finalizada
             </span>
-            <span class="leg-sep"></span>
-            <span class="leg-item drag-hint">
-              <span class="drag-icon">⇄</span> Arraste ou role com o mouse
-            </span>
           </div>
         </div>
       </div>
@@ -862,17 +911,6 @@ onBeforeUnmount(() => {
   background: rgba(255, 255, 255, 0.15);
   border-color: #fff;
   box-shadow: 0 0 6px rgba(255, 255, 255, 0.4);
-}
-.leg-sep {
-  width: 1px;
-  height: 14px;
-  background: var(--border);
-}
-.drag-hint {
-  color: var(--text-muted);
-}
-.drag-icon {
-  font-size: 1rem;
 }
 
 /* ---- Main gantt layout ---- */
@@ -1071,9 +1109,9 @@ onBeforeUnmount(() => {
   background-image: repeating-linear-gradient(
     to right,
     transparent 0px,
-    transparent 45px,
-    var(--border-subtle) 45px,
-    var(--border-subtle) 46px
+    transparent calc(var(--gantt-cell-w, 46px) - 1px),
+    var(--border-subtle) calc(var(--gantt-cell-w, 46px) - 1px),
+    var(--border-subtle) var(--gantt-cell-w, 46px)
   );
   pointer-events: none;
   z-index: 0;
@@ -1081,6 +1119,7 @@ onBeforeUnmount(() => {
 
 /* ---- Month header row ---- */
 .month-row {
+  flex-shrink: 0;
   border-bottom: 1px solid var(--border);
   background: rgba(255, 255, 255, 0.01);
 }
@@ -1111,6 +1150,7 @@ onBeforeUnmount(() => {
 /* ---- Day header row ---- */
 .day-row {
   display: flex;
+  flex-shrink: 0;
   border-bottom: 2px solid var(--border);
   background: rgba(255, 255, 255, 0.01);
   position: relative;
@@ -1119,11 +1159,12 @@ onBeforeUnmount(() => {
 
 .day-cell {
   flex-shrink: 0;
+  box-sizing: border-box;
   display: flex;
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  gap: 1px;
+  gap: 2px;
   position: relative;
   transition: background var(--transition);
 }

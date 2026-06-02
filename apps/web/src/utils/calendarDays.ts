@@ -41,6 +41,14 @@ export function buildTimelineDays(
   return days
 }
 
+/** Dias civis entre duas datas ISO (to − from; pode ser negativo). */
+export function daysBetweenIso(fromIso: string, toIso: string): number {
+  const from = localDateFromIso(fromIso)
+  const to = localDateFromIso(toIso)
+  const MS_PER_DAY = 86400000
+  return Math.round((to.getTime() - from.getTime()) / MS_PER_DAY)
+}
+
 export function futureRangeLabel(days: number): string {
   if (days >= 365) return '1 ano'
   if (days >= 180) return '6 meses'

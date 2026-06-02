@@ -7,6 +7,7 @@ import type { Allocation } from "@/types";
 import AllocationUsageStatsModal from "@/components/AllocationUsageStatsModal.vue";
 import ProfileAllocationConnectModal from "@/components/ProfileAllocationConnectModal.vue";
 import ExtendAllocationOverlay from "@/components/ExtendAllocationOverlay.vue";
+import MyAllocationDetailPanel from "@/components/MyAllocationDetailPanel.vue";
 import {
   allocationStatusBadge,
   allocationStatusLabel,
@@ -18,6 +19,8 @@ import {
   isNowWithinGraceAfterEnd,
 } from "@/utils/datetime";
 
+const GRACE_MINUTES = 5;
+
 const store = useAllocationsStore();
 const notifications = useNotificationsStore();
 const lab = useLabConfigStore();
@@ -27,12 +30,11 @@ const list = ref<Allocation[]>([]);
 const statusFilter = ref("all");
 const search = ref("");
 const updating = ref<number | null>(null);
+const detailTarget = ref<Allocation | null>(null);
 const connectTarget = ref<Allocation | null>(null);
 const extendTarget = ref<Allocation | null>(null);
 const usageStatsTarget = ref<Allocation | null>(null);
 const deleting = ref<number | null>(null);
-
-const GRACE_MINUTES = 5;
 
 const filterTabs = [
   { key: "all", label: "Todas" },
@@ -116,6 +118,29 @@ function hasActions(a: Allocation) {
   );
 }
 
+function openDetail(a: Allocation) {
+  detailTarget.value = a;
+}
+
+function closeDetail() {
+  detailTarget.value = null;
+}
+
+function openConnect(a: Allocation) {
+  closeDetail();
+  connectTarget.value = a;
+}
+
+function openExtend(a: Allocation) {
+  closeDetail();
+  extendTarget.value = a;
+}
+
+function openStatistics(a: Allocation) {
+  closeDetail();
+  usageStatsTarget.value = a;
+}
+
 async function handleCancel(a: Allocation) {
   if (!confirm("Deseja cancelar esta reserva?")) return;
   updating.value = a.id;
@@ -123,6 +148,7 @@ async function handleCancel(a: Allocation) {
     const updated = await store.cancelAllocation(a.id);
     const idx = list.value.findIndex((x) => x.id === updated.id);
     if (idx !== -1) list.value[idx] = updated;
+    if (detailTarget.value?.id === updated.id) detailTarget.value = updated;
     await notifications.fetchNotifications();
   } catch {
     alert("Erro ao cancelar reserva.");
@@ -134,6 +160,7 @@ async function handleCancel(a: Allocation) {
 async function onExtended(updated: Allocation) {
   const idx = list.value.findIndex((x) => x.id === updated.id);
   if (idx !== -1) list.value[idx] = updated;
+  if (detailTarget.value?.id === updated.id) detailTarget.value = updated;
   await notifications.fetchNotifications();
 }
 
@@ -143,6 +170,7 @@ async function handleDelete(a: Allocation) {
   try {
     await store.softDeleteAllocation(a.id);
     list.value = list.value.filter((x) => x.id !== a.id);
+    if (detailTarget.value?.id === a.id) closeDetail();
   } catch {
     alert("Erro ao remover alocação.");
   } finally {
@@ -191,7 +219,16 @@ async function handleDelete(a: Allocation) {
           </tr>
         </thead>
         <tbody>
-          <tr v-for="a in filtered" :key="a.id">
+          <tr
+            v-for="a in filtered"
+            :key="a.id"
+            class="alloc-row"
+            tabindex="0"
+            :aria-label="`Ver detalhes da reserva em ${machineName(a)}`"
+            @click="openDetail(a)"
+            @keydown.enter="openDetail(a)"
+            @keydown.space.prevent="openDetail(a)"
+          >
             <td class="alloc-machine">{{ machineName(a) }}</td>
             <td class="text-secondary alloc-datetime">{{ fmt(a.startTime) }}</td>
             <td class="text-secondary alloc-datetime">{{ fmt(a.endTime) }}</td>
@@ -200,7 +237,7 @@ async function handleDelete(a: Allocation) {
                 {{ allocationStatusLabel(a.status) }}
               </span>
             </td>
-            <td class="alloc-actions">
+            <td class="alloc-actions" @click.stop>
               <div v-if="hasActions(a)" class="actions-row">
                 <button
                   v-if="showExtendButton(a)"
@@ -260,6 +297,19 @@ async function handleDelete(a: Allocation) {
         </tbody>
       </table>
     </div>
+
+    <MyAllocationDetailPanel
+      v-if="detailTarget"
+      :allocation="detailTarget"
+      :updating="updating === detailTarget.id"
+      :deleting="deleting === detailTarget.id"
+      @close="closeDetail"
+      @connect="openConnect(detailTarget)"
+      @extend="openExtend(detailTarget)"
+      @statistics="openStatistics(detailTarget)"
+      @cancel="handleCancel(detailTarget)"
+      @delete="handleDelete(detailTarget)"
+    />
 
     <ProfileAllocationConnectModal
       v-if="connectTarget"
@@ -335,6 +385,22 @@ async function handleDelete(a: Allocation) {
   width: 100%;
 }
 
+.alloc-table thead th,
+.alloc-table tbody td {
+  text-align: center;
+}
+
+.alloc-row {
+  cursor: pointer;
+  transition: background 0.15s ease;
+}
+
+.alloc-row:hover,
+.alloc-row:focus-visible {
+  background: var(--bg-hover);
+  outline: none;
+}
+
 .alloc-machine {
   font-weight: 500;
 }
@@ -346,19 +412,22 @@ async function handleDelete(a: Allocation) {
 
 .col-actions {
   width: 1%;
+  min-width: 15rem;
   white-space: nowrap;
 }
 
 .alloc-actions {
   vertical-align: middle;
+  text-align: center;
 }
 
 .actions-row {
-  display: flex;
+  display: inline-flex;
   flex-wrap: nowrap;
   gap: 0.35rem;
-  justify-content: flex-end;
+  justify-content: center;
   align-items: center;
+  max-width: 100%;
 }
 
 .btn-action {

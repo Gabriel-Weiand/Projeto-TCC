@@ -60,6 +60,22 @@ const machineLabel = computed(
   () => machine.value?.name ?? `Máquina #${props.allocation.machineId}`,
 );
 
+const machineDescription = computed(() => {
+  const t = machine.value?.description?.trim();
+  if (!t) return null;
+  return t.replace(/\s*\(semanas\)\s*$/i, "").trim() || t;
+});
+
+/** Dia civil de fim da reserva (TZ do lab) — scroll inicial do Gantt. */
+const calendarScrollIso = computed(() => {
+  if (!lab.timezone) return null;
+  try {
+    return utcIsoToWallClockFields(props.allocation.endTime, lab.timezone).date;
+  } catch {
+    return null;
+  }
+});
+
 onMounted(async () => {
   try {
     if (!lab.loaded) await lab.fetchConfig();
@@ -151,44 +167,48 @@ async function handleExtend() {
 
 <template>
   <Teleport to="body">
-    <div class="extend-overlay">
+    <div class="extend-overlay" @click.self="emit('close')">
       <div class="extend-shell fade-in">
         <div class="extend-layout">
-          <section class="layout-calendar">
-            <CalendarGanttScroll
-              :machines="calendarMachines"
-              :allocations="ganttAllocations"
-              :current-user-id="auth.user?.id ?? null"
-              :loading="ganttLoading || lab.loading"
-              compact
-              single-machine-focus
-              :highlight-allocation-id="allocation.id"
-            />
-          </section>
+          <div class="layout-main">
+            <header class="extend-head">
+              <h2 class="extend-head-title">Estender alocação</h2>
+              <p class="extend-head-machine">{{ machineLabel }}</p>
+              <p v-if="machineDescription" class="extend-head-desc text-secondary">
+                {{ machineDescription }}
+              </p>
+              <p class="extend-head-hint text-muted">
+                Só a finalização pode ser alterada.
+              </p>
+            </header>
+
+            <section class="layout-calendar">
+              <CalendarGanttScroll
+                :machines="calendarMachines"
+                :allocations="ganttAllocations"
+                :current-user-id="auth.user?.id ?? null"
+                :loading="ganttLoading || lab.loading"
+                compact
+                single-machine-focus
+                :highlight-allocation-id="allocation.id"
+                :initial-scroll-iso="calendarScrollIso"
+              />
+            </section>
+          </div>
 
           <aside class="layout-panel">
             <div class="panel-card">
-              <div class="panel-header">
-                <div class="panel-header-text">
-                  <h2 class="panel-title">Estender alocação</h2>
-                  <p class="panel-sub text-muted">
-                    {{ machineLabel }} — só a finalização pode ser alterada!
-                  </p>
-                </div>
-                <button
-                  type="button"
-                  class="btn-close"
-                  aria-label="Fechar"
-                  @click="emit('close')"
-                >
-                  ✕
-                </button>
-              </div>
-
               <form class="panel-body" @submit.prevent="handleExtend">
-                <div class="field">
-                  <label class="field-label">Máquina</label>
-                  <input type="text" :value="machineLabel" disabled />
+                <div class="panel-machine-row">
+                  <span class="field-label field-label--section">Máquina</span>
+                  <button
+                    type="button"
+                    class="btn-close"
+                    aria-label="Fechar"
+                    @click="emit('close')"
+                  >
+                    ✕
+                  </button>
                 </div>
 
                 <div class="field-group">
@@ -288,16 +308,51 @@ async function handleExtend() {
 
 .extend-layout {
   display: flex;
-  gap: 1.25rem;
-  align-items: center;
+  gap: 1rem;
+  align-items: flex-end;
 }
 
-.layout-calendar {
+.layout-main {
   flex: 1;
   min-width: 0;
   display: flex;
-  align-items: center;
-  justify-content: center;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+
+.extend-head {
+  padding: 0.15rem 0.25rem 0;
+}
+
+.extend-head-title {
+  margin: 0;
+  font-size: 1.15rem;
+  font-weight: 600;
+  line-height: 1.25;
+}
+
+.extend-head-machine {
+  margin: 0.35rem 0 0;
+  font-size: 0.95rem;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.extend-head-desc {
+  margin: 0.25rem 0 0;
+  font-size: 0.82rem;
+  line-height: 1.4;
+}
+
+.extend-head-hint {
+  margin: 0.35rem 0 0;
+  font-size: 0.78rem;
+  line-height: 1.35;
+}
+
+.layout-calendar {
+  min-width: 0;
+  width: 100%;
 }
 
 .layout-calendar :deep(.gantt-wrap) {
@@ -307,6 +362,7 @@ async function handleExtend() {
 .layout-panel {
   width: 320px;
   flex-shrink: 0;
+  align-self: flex-end;
 }
 
 .panel-card {
@@ -316,44 +372,32 @@ async function handleExtend() {
   box-shadow: var(--shadow-card);
 }
 
-.panel-header {
+.panel-machine-row {
   display: flex;
-  align-items: flex-start;
+  align-items: center;
   justify-content: space-between;
-  gap: 0.75rem;
-  padding: 0.85rem 1rem;
-  border-bottom: 1px solid var(--border-subtle);
+  gap: 0.5rem;
+  margin-bottom: -0.15rem;
 }
 
-.panel-header-text {
-  min-width: 0;
-}
-
-.panel-title {
+.panel-machine-row .field-label {
   margin: 0;
-  font-size: 1.05rem;
-  font-weight: 600;
-  line-height: 1.25;
-}
-
-.panel-sub {
-  margin: 0.3rem 0 0;
-  font-size: 0.78rem;
-  line-height: 1.35;
 }
 
 .panel-body {
-  padding: 0.9rem 1rem 1rem;
+  padding: 0.75rem 0.9rem 0.85rem;
   display: flex;
   flex-direction: column;
-  gap: 0.75rem;
+  gap: 0.65rem;
 }
 
 .panel-actions {
   display: flex;
   justify-content: space-between;
   gap: 0.5rem;
-  margin-top: 0.15rem;
+  margin-top: 0.35rem;
+  padding-top: 0.35rem;
+  border-top: 1px solid var(--border-subtle);
 }
 
 .field {
@@ -417,6 +461,10 @@ input[type="text"] {
 
   .layout-panel {
     width: 100%;
+  }
+
+  .extend-head {
+    padding-bottom: 0.25rem;
   }
 }
 </style>

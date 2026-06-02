@@ -17,7 +17,12 @@ import {
   isNowBeforeUtc,
   isNowInUtcRange,
 } from "@/utils/datetime";
-import { ALLOCATION_REASON_MAX_LENGTH } from "@/utils/allocationLabels";
+import {
+  ALLOCATION_REASON_MAX_LENGTH,
+  PERIOD_INVALID_RANGE_MESSAGE,
+} from "@/utils/allocationLabels";
+import { isMachineAvailableForPeriod } from "@/utils/allocationAvailability";
+import ReservationFormFields from "@/components/ReservationFormFields.vue";
 
 const props = defineProps<{ id: string | number }>();
 const machinesStore = useMachinesStore();
@@ -200,6 +205,55 @@ const form = ref({
 const formSaving = ref(false);
 const formError = ref("");
 
+const periodFilled = computed(
+  () =>
+    !!form.value.startDate &&
+    !!form.value.startTime &&
+    !!form.value.endDate &&
+    !!form.value.endTime,
+);
+
+const formRangeIso = computed((): { start: string; end: string } | null => {
+  if (!periodFilled.value) return null;
+  try {
+    const start = wallClockToUtcIso(
+      form.value.startDate,
+      form.value.startTime,
+      lab.timezone,
+    );
+    const end = wallClockToUtcIso(
+      form.value.endDate,
+      form.value.endTime,
+      lab.timezone,
+    );
+    if (end <= start) return null;
+    return { start, end };
+  } catch {
+    return null;
+  }
+});
+
+const periodInvalid = computed(
+  () => periodFilled.value && !formRangeIso.value,
+);
+
+const periodAvailable = computed(() => {
+  if (!machine.value || !formRangeIso.value) return null;
+  return isMachineAvailableForPeriod(
+    machine.value,
+    scheduleAllocations.value,
+    formRangeIso.value.start,
+    formRangeIso.value.end,
+  );
+});
+
+const canCreateReservation = computed(() => {
+  if (formSaving.value || !periodFilled.value || !formRangeIso.value) {
+    return false;
+  }
+  return periodAvailable.value === true;
+});
+
 function openForm() {
   form.value = {
     startDate: "",
@@ -222,37 +276,20 @@ function openConnect() {
 async function handleCreate() {
   if (!machine.value) return;
   formError.value = "";
-  if (
-    !form.value.startDate ||
-    !form.value.startTime ||
-    !form.value.endDate ||
-    !form.value.endTime
-  ) {
-    formError.value = "Preencha todos os campos obrigatórios.";
-    return;
-  }
-  let startTime: string;
-  let endTime: string;
-  try {
-    startTime = wallClockToUtcIso(
-      form.value.startDate,
-      form.value.startTime,
-      lab.timezone,
-    );
-    endTime = wallClockToUtcIso(
-      form.value.endDate,
-      form.value.endTime,
-      lab.timezone,
-    );
-  } catch {
-    formError.value = "Data ou horário inválido.";
+
+  if (!canCreateReservation.value) {
+    if (!periodFilled.value) {
+      formError.value = "Preencha todos os campos obrigatórios.";
+    } else if (!formRangeIso.value) {
+      formError.value = PERIOD_INVALID_RANGE_MESSAGE;
+    } else {
+      formError.value = "Máquina indisponível no período selecionado.";
+    }
     return;
   }
 
-  if (endTime <= startTime) {
-    formError.value = "Data/horário de finalização deve ser após o início.";
-    return;
-  }
+  const startTime = formRangeIso.value!.start;
+  const endTime = formRangeIso.value!.end;
 
   formSaving.value = true;
   try {
@@ -470,65 +507,29 @@ function statusLabel(s: string) {
             <h2 class="modal-title">Reservar {{ machine.name }}</h2>
             <button type="button" class="btn-close" @click="showForm = false">✕</button>
           </div>
-          <form class="modal-body" @submit.prevent="handleCreate">
-            <div class="field-group">
-              <label class="field-label" style="font-weight: 600">Início</label>
-              <div class="field-row">
-                <div class="field">
-                  <label class="field-label" style="font-size: 0.75rem">Data</label>
-                  <input v-model="form.startDate" type="date" />
-                </div>
-                <div class="field">
-                  <label class="field-label" style="font-size: 0.75rem">Horário</label>
-                  <input v-model="form.startTime" type="time" />
-                </div>
-              </div>
-            </div>
-            <div class="field-group">
-              <label class="field-label" style="font-weight: 600">Finalização</label>
-              <div class="field-row">
-                <div class="field">
-                  <label class="field-label" style="font-size: 0.75rem">Data</label>
-                  <input v-model="form.endDate" type="date" />
-                </div>
-                <div class="field">
-                  <label class="field-label" style="font-size: 0.75rem">Horário</label>
-                  <input v-model="form.endTime" type="time" />
-                </div>
-              </div>
-            </div>
-            <label v-if="!auth.isAdmin" class="sudo-toggle">
-              <input v-model="form.isSudo" type="checkbox" />
-              <span>
-                Solicitar privilégios <strong>sudo</strong> na máquina
-                <span class="text-muted">(requer aprovação do admin)</span>
-              </span>
-            </label>
+          <form class="modal-body reservation-modal-form" @submit.prevent="handleCreate">
+            <ReservationFormFields
+              v-model:start-date="form.startDate"
+              v-model:start-time="form.startTime"
+              v-model:end-date="form.endDate"
+              v-model:end-time="form.endTime"
+              v-model:reason="form.reason"
+              v-model:is-sudo="form.isSudo"
+              :show-sudo="!auth.isAdmin"
+              :period-ready="!!formRangeIso"
+              :period-invalid="periodInvalid"
+            />
 
-            <div class="field">
-              <label class="field-label"
-                >Motivo
-                <span class="text-muted"
-                  >(opcional, máx. {{ ALLOCATION_REASON_MAX_LENGTH }})</span
-                ></label
-              >
-              <textarea
-                v-model="form.reason"
-                class="field-textarea"
-                rows="3"
-                :maxlength="ALLOCATION_REASON_MAX_LENGTH"
-                placeholder="Ex: Treinamento de modelo ML"
-              ></textarea>
-              <span class="field-hint text-muted"
-                >{{ form.reason.length }}/{{ ALLOCATION_REASON_MAX_LENGTH }}</span
-              >
-            </div>
             <p v-if="formError" class="error-text">{{ formError }}</p>
             <div class="modal-actions">
               <button type="button" class="btn btn-ghost" @click="showForm = false">
                 Cancelar
               </button>
-              <button type="submit" class="btn btn-primary" :disabled="formSaving">
+              <button
+                type="submit"
+                class="btn btn-primary"
+                :disabled="!canCreateReservation"
+              >
                 {{ formSaving ? "Criando..." : "Criar Reserva" }}
               </button>
             </div>
@@ -694,19 +695,6 @@ function statusLabel(s: string) {
   font-weight: 600;
 }
 
-.sudo-toggle {
-  display: flex;
-  align-items: flex-start;
-  gap: 0.5rem;
-  font-size: 0.88rem;
-  line-height: 1.4;
-  cursor: pointer;
-}
-
-.sudo-toggle input {
-  margin-top: 0.2rem;
-}
-
 .modal-body {
   padding: 1.25rem;
   display: flex;
@@ -714,11 +702,27 @@ function statusLabel(s: string) {
   gap: 0.75rem;
 }
 
+.reservation-modal-form {
+  gap: 0.85rem;
+}
+
 .modal-actions {
   display: flex;
-  justify-content: flex-end;
-  gap: 0.75rem;
+  justify-content: space-between;
+  align-items: center;
+  gap: 0.65rem;
   margin-top: 0.25rem;
+}
+
+.modal-actions .btn {
+  padding: 0.5rem 1rem;
+  font-size: 0.9rem;
+  min-height: 2.35rem;
+}
+
+.error-text {
+  margin: 0;
+  font-size: 0.88rem;
 }
 
 .detail-list {
