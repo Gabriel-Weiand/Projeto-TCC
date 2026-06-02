@@ -43,7 +43,7 @@ Componentes: `src/stores/notifications.ts`, `src/components/NotificationsPanel.v
 
 **Conectar SSH:** `ProfileAllocationConnectModal.vue` (perfil → Minhas alocações e detalhe da máquina) exibe nome, grupo, descrição, IP, login SSH, janela da reserva e aviso de que o IP costuma exigir rede local do campus. Comando via `utils/ssh.ts`: `-p` só quando `machine.sshPort` ≠ 22 (null no banco = 22). Admin configura IP/porta em `AdminMachinesView.vue`; detalhe mostra porta em `AdminMachineDetailView.vue`.
 
-**Reserva sudo:** toggle nos formulários de alocação (`HomeView`, `NewAllocationModal`, `MachineDetailView`) para usuários não-admin → API `pending` + notificação admin.
+**Reserva sudo:** toggle no formulário de reserva (`HomeView` / `ReservationFormFields`) para usuários não-admin → API `pending` + notificação admin.
 
 ## Estado local
 

@@ -64,17 +64,6 @@ export const useAllocationsStore = defineStore("allocations", () => {
     return data;
   }
 
-  async function fetchUserAllocations(
-    userId: number,
-    params?: Record<string, unknown>,
-  ) {
-    const { data } = await api.get<PaginatedResponse<Allocation>>(
-      `/api/v1/users/${userId}/allocations`,
-      { params },
-    );
-    return data;
-  }
-
   async function fetchMyAllocations(params?: Record<string, unknown>) {
     loading.value = true;
     try {
@@ -108,7 +97,6 @@ export const useAllocationsStore = defineStore("allocations", () => {
     updateAllocation,
     cancelAllocation,
     extendAllocation,
-    fetchUserAllocations,
     fetchMyAllocations,
     fetchAllocationSummary,
     softDeleteAllocation,

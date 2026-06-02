@@ -1,7 +1,8 @@
 <script setup lang="ts">
 import CalendarGanttScroll from "@/components/CalendarGanttScroll.vue";
 import ReservationFormFields from "@/components/ReservationFormFields.vue";
-import { ref, computed, onMounted } from "vue";
+import { ref, computed, onMounted, watch } from "vue";
+import { useRoute, useRouter } from "vue-router";
 import { useAllocationsStore } from "@/stores/allocations";
 import { useMachinesStore } from "@/stores/machines";
 import { useAuthStore } from "@/stores/auth";
@@ -11,15 +12,22 @@ import type { Allocation, Machine } from "@/types";
 import { wallClockToUtcIso } from "@/utils/datetime";
 import {
   ALLOCATION_REASON_MAX_LENGTH,
+  PERIOD_END_TOO_FAR_MESSAGE,
   PERIOD_INVALID_RANGE_MESSAGE,
 } from "@/utils/allocationLabels";
 import { isMachineAvailableForPeriod } from "@/utils/allocationAvailability";
+import {
+  isAllocationEndBeyondLabLimit,
+  isPeriodRangeOrderInvalid,
+} from "@/utils/allocationPeriodValidation";
 
 const allocationsStore = useAllocationsStore();
 const machinesStore = useMachinesStore();
 const auth = useAuthStore();
 const lab = useLabConfigStore();
 const notifications = useNotificationsStore();
+const route = useRoute();
+const router = useRouter();
 
 const showForm = ref(false);
 const panelAlign = ref({ top: 0, height: 0 });
@@ -54,8 +62,42 @@ const periodFilled = computed(
     !!form.value.endTime,
 );
 
+const periodFields = computed(() => ({
+  startDate: form.value.startDate,
+  startTime: form.value.startTime,
+  endDate: form.value.endDate,
+  endTime: form.value.endTime,
+}));
+
+const periodRangeInvalid = computed(
+  () =>
+    periodFilled.value &&
+    isPeriodRangeOrderInvalid(periodFields.value, lab.timezone),
+);
+
+const periodEndTooFar = computed(() => {
+  if (!periodFilled.value || periodRangeInvalid.value) return false;
+  try {
+    return isAllocationEndBeyondLabLimit(
+      form.value.endDate,
+      form.value.endTime,
+      lab.timezone,
+      lab.config.allocation.maxFutureDays,
+      lab.todayIso,
+    );
+  } catch {
+    return false;
+  }
+});
+
+const periodErrorMessage = computed((): string | null => {
+  if (periodRangeInvalid.value) return PERIOD_INVALID_RANGE_MESSAGE;
+  if (periodEndTooFar.value) return PERIOD_END_TOO_FAR_MESSAGE;
+  return null;
+});
+
 const formRangeIso = computed((): { start: string; end: string } | null => {
-  if (!periodFilled.value) return null;
+  if (!periodFilled.value || periodErrorMessage.value) return null;
   try {
     const start = wallClockToUtcIso(
       form.value.startDate,
@@ -73,10 +115,6 @@ const formRangeIso = computed((): { start: string; end: string } | null => {
     return null;
   }
 });
-
-const periodInvalid = computed(
-  () => periodFilled.value && !formRangeIso.value,
-);
 
 const periodAvailable = computed(() => {
   if (!selectedMachine.value || !formRangeIso.value) return null;
@@ -115,26 +153,16 @@ async function loadGanttAllocations() {
   }
 }
 
-onMounted(async () => {
-  await machinesStore.fetchMachines();
-  await loadGanttAllocations();
+const focusMachineId = computed((): number | null => {
+  const raw = route.query.machine ?? route.query.machineId;
+  if (raw == null || raw === "") return null;
+  const id = Number(raw);
+  return Number.isFinite(id) ? id : null;
 });
 
-const form = ref({
-  machineId: "" as string | number,
-  startDate: "",
-  startTime: "",
-  endDate: "",
-  endTime: "",
-  reason: "",
-  isSudo: false,
-});
-const formSaving = ref(false);
-const formError = ref("");
-
-function openForm() {
-  form.value = {
-    machineId: "",
+function emptyReservationForm(machineId: string | number = "") {
+  return {
+    machineId,
     startDate: "",
     startTime: "",
     endDate: "",
@@ -142,9 +170,51 @@ function openForm() {
     reason: "",
     isSudo: false,
   };
+}
+
+function openForm(machineId?: number) {
+  form.value = emptyReservationForm(machineId ?? "");
   formError.value = "";
   showForm.value = true;
 }
+
+async function applyReservationFromRoute() {
+  const wantsReserve =
+    route.query.reserve === "1" || route.query.reserve === "true";
+  if (!wantsReserve || focusMachineId.value == null) return;
+
+  if (!machinesStore.machines.length) {
+    await machinesStore.fetchMachines();
+  }
+  const exists = machinesStore.machines.some(
+    (m) => m.id === focusMachineId.value,
+  );
+  if (!exists) return;
+
+  openForm(focusMachineId.value);
+  await loadGanttAllocations();
+
+  const nextQuery = { ...route.query };
+  delete nextQuery.reserve;
+  await router.replace({ name: "home", query: nextQuery });
+}
+
+onMounted(async () => {
+  await machinesStore.fetchMachines();
+  await loadGanttAllocations();
+  await applyReservationFromRoute();
+});
+
+watch(
+  () => [route.query.machine, route.query.machineId, route.query.reserve] as const,
+  () => {
+    void applyReservationFromRoute();
+  },
+);
+
+const form = ref(emptyReservationForm());
+const formSaving = ref(false);
+const formError = ref("");
 
 async function handleCreate() {
   formError.value = "";
@@ -152,6 +222,8 @@ async function handleCreate() {
   if (!canCreateReservation.value) {
     if (!form.value.machineId || !periodFilled.value) {
       formError.value = "Preencha todos os campos obrigatórios.";
+    } else if (periodErrorMessage.value) {
+      formError.value = periodErrorMessage.value;
     } else if (!formRangeIso.value) {
       formError.value = PERIOD_INVALID_RANGE_MESSAGE;
     } else {
@@ -178,8 +250,15 @@ async function handleCreate() {
     const status = (err as { response?: { status?: number } })?.response?.status;
     if (status === 409)
       formError.value = "Conflito de horário com outra reserva.";
-    else if (status === 422)
-      formError.value = "Dados inválidos. Verifique os campos.";
+    else if (status === 422) {
+      const code = (err as { response?: { data?: { code?: string } } })?.response
+        ?.data?.code;
+      const msg = (err as { response?: { data?: { message?: string } } })?.response
+        ?.data?.message;
+      if (code === "ALLOCATION_TOO_FAR") formError.value = PERIOD_END_TOO_FAR_MESSAGE;
+      else if (code === "ALLOCATION_TOO_SHORT" && msg) formError.value = msg;
+      else formError.value = "Dados inválidos. Verifique os campos.";
+    }
     else formError.value = "Erro ao criar reserva.";
   } finally {
     formSaving.value = false;
@@ -191,7 +270,7 @@ async function handleCreate() {
   <div class="fade-in">
     <div class="page-header">
       <h1 class="page-title">Reservas</h1>
-      <button v-if="!showForm" class="btn btn-primary" @click="openForm">
+      <button v-if="!showForm" class="btn btn-primary" @click="openForm()">
         + Nova Reserva
       </button>
     </div>
@@ -203,6 +282,7 @@ async function handleCreate() {
           :allocations="ganttAllocations"
           :current-user-id="auth.user?.id ?? null"
           :loading="ganttLoading || lab.loading"
+          :scroll-to-machine-id="focusMachineId"
           @panel-align="(m) => (panelAlign = m)"
         />
       </section>
@@ -234,7 +314,7 @@ async function handleCreate() {
               :machines="machinesStore.machines"
               :status-labels="MACHINE_STATUS_LABELS"
               :period-ready="!!formRangeIso"
-              :period-invalid="periodInvalid"
+              :period-error-message="periodErrorMessage"
               :period-available="
                 formRangeIso && selectedMachine ? periodAvailable : null
               "

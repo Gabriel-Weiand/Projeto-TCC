@@ -70,8 +70,13 @@ export function wallClockToUtcIso(
   time: string,
   timeZone: string = DEFAULT_LAB_TZ,
 ): string {
-  const [y, m, d] = date.split("-").map(Number);
-  const [hh, mm] = time.split(":").map(Number);
+  const [yRaw, mRaw, dRaw] = date.split("-").map(Number);
+  const [hhRaw, mmRaw] = time.split(":").map(Number);
+  const y = yRaw ?? NaN;
+  const m = mRaw ?? NaN;
+  const d = dRaw ?? NaN;
+  const hh = hhRaw ?? NaN;
+  const mm = mmRaw ?? NaN;
   if (
     [y, m, d, hh, mm].some((n) => Number.isNaN(n)) ||
     m < 1 ||

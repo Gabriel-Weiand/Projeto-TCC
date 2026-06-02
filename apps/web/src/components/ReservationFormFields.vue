@@ -1,28 +1,33 @@
 <script setup lang="ts">
+import { computed } from "vue";
 import type { Machine } from "@/types";
 import ReservationMachinePicker from "@/components/ReservationMachinePicker.vue";
 import SudoAllocationToggle from "@/components/SudoAllocationToggle.vue";
 import { ALLOCATION_REASON_MAX_LENGTH } from "@/utils/allocationLabels";
 
-const {
-  showMachinePicker = false,
-  showSudo = false,
-  reasonMaxLength = ALLOCATION_REASON_MAX_LENGTH,
-  machines = [],
-  statusLabels,
-  periodReady = false,
-  periodInvalid = false,
-  periodAvailable = null,
-} = defineProps<{
-  showMachinePicker?: boolean;
-  showSudo?: boolean;
-  reasonMaxLength?: number;
-  machines?: Machine[];
-  statusLabels?: Record<Machine["status"], string>;
-  periodReady?: boolean;
-  periodInvalid?: boolean;
-  periodAvailable?: boolean | null;
-}>();
+const props = withDefaults(
+  defineProps<{
+    showMachinePicker?: boolean;
+    showSudo?: boolean;
+    reasonMaxLength?: number;
+    machines?: Machine[];
+    statusLabels?: Record<Machine["status"], string>;
+    periodReady?: boolean;
+    periodErrorMessage?: string | null;
+    periodAvailable?: boolean | null;
+  }>(),
+  {
+    showMachinePicker: false,
+    showSudo: false,
+    reasonMaxLength: ALLOCATION_REASON_MAX_LENGTH,
+    machines: () => [],
+    periodReady: false,
+    periodErrorMessage: null,
+    periodAvailable: null,
+  },
+);
+
+const periodHasError = computed(() => !!props.periodErrorMessage);
 
 const machineId = defineModel<string | number>("machineId", { default: "" });
 const startDate = defineModel<string>("startDate", { default: "" });
@@ -36,18 +41,18 @@ const isSudo = defineModel<boolean>("isSudo", { default: false });
 <template>
   <div class="reservation-fields">
     <ReservationMachinePicker
-      v-if="showMachinePicker && statusLabels"
+      v-if="props.showMachinePicker && props.statusLabels"
       v-model="machineId"
-      :machines="machines"
-      :status-labels="statusLabels"
-      :period-ready="periodReady"
-      :period-invalid="periodInvalid"
-      :period-available="periodAvailable"
+      :machines="props.machines"
+      :status-labels="props.statusLabels"
+      :period-ready="props.periodReady"
+      :period-error-message="props.periodErrorMessage"
+      :period-available="props.periodAvailable"
     />
 
     <section class="reservation-section">
       <h3 class="reservation-section-title">Período</h3>
-      <div class="period-grid" :class="{ 'period-grid--error': periodInvalid }">
+      <div class="period-grid" :class="{ 'period-grid--error': periodHasError }">
         <div class="period-labels-col">
           <span class="period-tag">Início</span>
           <span class="period-connector" aria-hidden="true">↓</span>
@@ -59,14 +64,14 @@ const isSudo = defineModel<boolean>("isSudo", { default: false });
               v-model="startDate"
               type="date"
               class="period-input period-input--date"
-              :class="{ 'period-input--error': periodInvalid }"
+              :class="{ 'period-input--error': periodHasError }"
               aria-label="Data de início"
             />
             <input
               v-model="startTime"
               type="time"
               class="period-input period-input--time"
-              :class="{ 'period-input--error': periodInvalid }"
+              :class="{ 'period-input--error': periodHasError }"
               aria-label="Horário de início"
             />
           </div>
@@ -75,14 +80,14 @@ const isSudo = defineModel<boolean>("isSudo", { default: false });
               v-model="endDate"
               type="date"
               class="period-input period-input--date"
-              :class="{ 'period-input--error': periodInvalid }"
+              :class="{ 'period-input--error': periodHasError }"
               aria-label="Data de finalização"
             />
             <input
               v-model="endTime"
               type="time"
               class="period-input period-input--time"
-              :class="{ 'period-input--error': periodInvalid }"
+              :class="{ 'period-input--error': periodHasError }"
               aria-label="Horário de finalização"
             />
           </div>
@@ -90,7 +95,7 @@ const isSudo = defineModel<boolean>("isSudo", { default: false });
       </div>
     </section>
 
-    <section v-if="showSudo" class="reservation-section">
+    <section v-if="props.showSudo" class="reservation-section">
       <h3 class="reservation-section-title">Privilégios na máquina</h3>
       <SudoAllocationToggle v-model="isSudo" hide-label />
     </section>
@@ -105,11 +110,11 @@ const isSudo = defineModel<boolean>("isSudo", { default: false });
           v-model="reason"
           class="reason-input"
           rows="4"
-          :maxlength="reasonMaxLength"
+          :maxlength="props.reasonMaxLength"
           placeholder="Ex: Treinamento de modelo ML"
         ></textarea>
         <span class="reason-count text-muted" aria-live="polite">
-          {{ reason.length }}/{{ reasonMaxLength }}
+          {{ reason.length }}/{{ props.reasonMaxLength }}
         </span>
       </div>
     </section>

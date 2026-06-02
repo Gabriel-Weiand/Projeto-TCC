@@ -11,6 +11,10 @@ export const ALLOCATION_REASON_MAX_LENGTH = 200;
 export const PERIOD_INVALID_RANGE_MESSAGE =
   "Horário inadequado para o período selecionado.";
 
+/** Data/hora de término além do limite futuro do laboratório. */
+export const PERIOD_END_TOO_FAR_MESSAGE =
+  "Datas inválidas para o período selecionado.";
+
 export function allocationStatusBadge(status: string): string {
   const map: Record<string, string> = {
     pending: "badge-warning",

@@ -1,9 +1,7 @@
 <script setup lang="ts">
 import { ref, computed, onMounted, onUnmounted } from "vue";
 import { useMachinesStore } from "@/stores/machines";
-import { useAllocationsStore } from "@/stores/allocations";
 import { useAuthStore } from "@/stores/auth";
-import { useNotificationsStore } from "@/stores/notifications";
 import { useTelemetryPlayback } from "@/composables/useTelemetryPlayback";
 import MachineTelemetryPanel from "@/components/MachineTelemetryPanel.vue";
 import MachineLiveSections from "@/components/MachineLiveSections.vue";
@@ -11,32 +9,17 @@ import CalendarGanttScroll from "@/components/CalendarGanttScroll.vue";
 import ProfileAllocationConnectModal from "@/components/ProfileAllocationConnectModal.vue";
 import type { Machine, Allocation } from "@/types";
 import { useRouter } from "vue-router";
-import { useLabConfigStore } from "@/stores/labConfig";
-import {
-  wallClockToUtcIso,
-  isNowBeforeUtc,
-  isNowInUtcRange,
-} from "@/utils/datetime";
-import {
-  ALLOCATION_REASON_MAX_LENGTH,
-  PERIOD_INVALID_RANGE_MESSAGE,
-} from "@/utils/allocationLabels";
-import { isMachineAvailableForPeriod } from "@/utils/allocationAvailability";
-import ReservationFormFields from "@/components/ReservationFormFields.vue";
+import { isNowBeforeUtc, isNowInUtcRange } from "@/utils/datetime";
 
 const props = defineProps<{ id: string | number }>();
 const machinesStore = useMachinesStore();
-const allocationsStore = useAllocationsStore();
 const auth = useAuthStore();
-const notifications = useNotificationsStore();
-const lab = useLabConfigStore();
 const router = useRouter();
 
 const machineId = computed(() => Number(props.id));
 const machine = ref<Machine | null>(null);
 const scheduleAllocations = ref<Allocation[]>([]);
 const loading = ref(true);
-const showForm = ref(false);
 const connectTarget = ref<Allocation | null>(null);
 const debugRefreshing = ref(false);
 const debugStreamPreview = ref<unknown>(null);
@@ -59,7 +42,7 @@ onMounted(async () => {
     ]);
     machine.value = m;
     scheduleAllocations.value = sched.data || [];
-    startPlayback();
+    if (isAdmin.value) startPlayback();
 
     allocRefresh = setInterval(async () => {
       try {
@@ -87,6 +70,12 @@ onUnmounted(() => {
 
 const liveData = computed(
   () => telemetry.value || machine.value?.latestTelemetry || null,
+);
+
+const showLiveSections = computed(
+  () =>
+    isAdmin.value ||
+    (machine.value?.disks != null && machine.value.disks.length > 0),
 );
 
 const ganttMachines = computed(() => (machine.value ? [machine.value] : []));
@@ -193,128 +182,17 @@ async function refreshFromApi() {
   }
 }
 
-/* ---- Reserva ---- */
-const form = ref({
-  startDate: "",
-  startTime: "",
-  endDate: "",
-  endTime: "",
-  reason: "",
-  isSudo: false,
-});
-const formSaving = ref(false);
-const formError = ref("");
-
-const periodFilled = computed(
-  () =>
-    !!form.value.startDate &&
-    !!form.value.startTime &&
-    !!form.value.endDate &&
-    !!form.value.endTime,
-);
-
-const formRangeIso = computed((): { start: string; end: string } | null => {
-  if (!periodFilled.value) return null;
-  try {
-    const start = wallClockToUtcIso(
-      form.value.startDate,
-      form.value.startTime,
-      lab.timezone,
-    );
-    const end = wallClockToUtcIso(
-      form.value.endDate,
-      form.value.endTime,
-      lab.timezone,
-    );
-    if (end <= start) return null;
-    return { start, end };
-  } catch {
-    return null;
-  }
-});
-
-const periodInvalid = computed(
-  () => periodFilled.value && !formRangeIso.value,
-);
-
-const periodAvailable = computed(() => {
-  if (!machine.value || !formRangeIso.value) return null;
-  return isMachineAvailableForPeriod(
-    machine.value,
-    scheduleAllocations.value,
-    formRangeIso.value.start,
-    formRangeIso.value.end,
-  );
-});
-
-const canCreateReservation = computed(() => {
-  if (formSaving.value || !periodFilled.value || !formRangeIso.value) {
-    return false;
-  }
-  return periodAvailable.value === true;
-});
-
-function openForm() {
-  form.value = {
-    startDate: "",
-    startTime: "",
-    endDate: "",
-    endTime: "",
-    reason: "",
-    isSudo: false,
-  };
-  formError.value = "";
-  showForm.value = true;
+function goToReserve() {
+  if (!machine.value || machine.value.status === "maintenance") return;
+  router.push({
+    name: "home",
+    query: { machine: String(machine.value.id), reserve: "1" },
+  });
 }
 
 function openConnect() {
   if (connectAllocation.value) {
     connectTarget.value = connectAllocation.value;
-  }
-}
-
-async function handleCreate() {
-  if (!machine.value) return;
-  formError.value = "";
-
-  if (!canCreateReservation.value) {
-    if (!periodFilled.value) {
-      formError.value = "Preencha todos os campos obrigatórios.";
-    } else if (!formRangeIso.value) {
-      formError.value = PERIOD_INVALID_RANGE_MESSAGE;
-    } else {
-      formError.value = "Máquina indisponível no período selecionado.";
-    }
-    return;
-  }
-
-  const startTime = formRangeIso.value!.start;
-  const endTime = formRangeIso.value!.end;
-
-  formSaving.value = true;
-  try {
-    await allocationsStore.createAllocation({
-      machineId: machine.value.id,
-      startTime,
-      endTime,
-      reason:
-        form.value.reason.trim().slice(0, ALLOCATION_REASON_MAX_LENGTH) ||
-        undefined,
-      isSudo: auth.isAdmin ? undefined : form.value.isSudo,
-    });
-    showForm.value = false;
-    const [sched] = await Promise.all([
-      machinesStore.fetchMachineAllocations(machineId.value, { limit: 200 }),
-      notifications.fetchNotifications(),
-    ]);
-    scheduleAllocations.value = sched.data || [];
-  } catch (err: unknown) {
-    const status = (err as { response?: { status?: number } })?.response?.status;
-    if (status === 409) formError.value = "Conflito de horário com outra reserva.";
-    else if (status === 422) formError.value = "Dados inválidos. Verifique os campos.";
-    else formError.value = "Erro ao criar reserva.";
-  } finally {
-    formSaving.value = false;
   }
 }
 
@@ -341,7 +219,6 @@ function statusLabel(s: string) {
   };
   return map[s] || s;
 }
-
 </script>
 
 <template>
@@ -390,7 +267,7 @@ function statusLabel(s: string) {
           <button
             v-if="machine.status !== 'maintenance'"
             class="btn btn-primary btn-sm"
-            @click="openForm"
+            @click="goToReserve"
           >
             + Reservar
           </button>
@@ -431,7 +308,12 @@ function statusLabel(s: string) {
         </div>
       </div>
 
-      <MachineLiveSections :machine="machine" :live-data="liveData" />
+      <MachineLiveSections
+        v-if="showLiveSections"
+        :machine="machine"
+        :live-data="liveData"
+        :show-telemetry="isAdmin"
+      />
 
       <template v-if="isAdmin">
         <h2 class="section-title section-spaced">Usuários na máquina</h2>
@@ -484,59 +366,20 @@ function statusLabel(s: string) {
           </div>
           <pre class="api-debug-pre">{{ JSON.stringify(apiDebugJson, null, 2) }}</pre>
         </details>
+
+        <section class="row-block gantt-block">
+          <h2 class="row-title">Agenda</h2>
+          <CalendarGanttScroll
+            compact
+            single-machine-focus
+            :machines="ganttMachines"
+            :allocations="scheduleAllocations"
+            :current-user-id="auth.user?.id ?? null"
+            :loading="false"
+          />
+        </section>
       </template>
-
-      <!-- Gantt -->
-      <section class="row-block gantt-block">
-        <h2 class="row-title">Agenda</h2>
-        <CalendarGanttScroll
-          compact
-          :machines="ganttMachines"
-          :allocations="scheduleAllocations"
-          :current-user-id="auth.user?.id ?? null"
-          :loading="false"
-        />
-      </section>
     </template>
-
-    <!-- Modal: reserva -->
-    <Teleport to="body">
-      <div v-if="showForm && machine" class="modal-overlay" @click.self="showForm = false">
-        <div class="modal-glass fade-in">
-          <div class="modal-header">
-            <h2 class="modal-title">Reservar {{ machine.name }}</h2>
-            <button type="button" class="btn-close" @click="showForm = false">✕</button>
-          </div>
-          <form class="modal-body reservation-modal-form" @submit.prevent="handleCreate">
-            <ReservationFormFields
-              v-model:start-date="form.startDate"
-              v-model:start-time="form.startTime"
-              v-model:end-date="form.endDate"
-              v-model:end-time="form.endTime"
-              v-model:reason="form.reason"
-              v-model:is-sudo="form.isSudo"
-              :show-sudo="!auth.isAdmin"
-              :period-ready="!!formRangeIso"
-              :period-invalid="periodInvalid"
-            />
-
-            <p v-if="formError" class="error-text">{{ formError }}</p>
-            <div class="modal-actions">
-              <button type="button" class="btn btn-ghost" @click="showForm = false">
-                Cancelar
-              </button>
-              <button
-                type="submit"
-                class="btn btn-primary"
-                :disabled="!canCreateReservation"
-              >
-                {{ formSaving ? "Criando..." : "Criar Reserva" }}
-              </button>
-            </div>
-          </form>
-        </div>
-      </div>
-    </Teleport>
 
     <ProfileAllocationConnectModal
       v-if="connectTarget"
@@ -658,78 +501,4 @@ function statusLabel(s: string) {
 .gantt-block {
   padding-bottom: 0.5rem;
 }
-
-.modal-overlay {
-  position: fixed;
-  inset: 0;
-  background: rgba(0, 0, 0, 0.6);
-  backdrop-filter: blur(4px);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  z-index: 100;
-  padding: 1rem;
-}
-
-.modal-glass {
-  background: var(--bg-card-solid);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-xl);
-  box-shadow: var(--shadow-elevated);
-  width: 100%;
-  max-width: 460px;
-  max-height: 90vh;
-  overflow-y: auto;
-}
-
-.modal-header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding: 1rem 1.25rem;
-  border-bottom: 1px solid var(--border-subtle);
-}
-
-.modal-title {
-  font-size: 1.05rem;
-  font-weight: 600;
-}
-
-.modal-body {
-  padding: 1.25rem;
-  display: flex;
-  flex-direction: column;
-  gap: 0.75rem;
-}
-
-.reservation-modal-form {
-  gap: 0.85rem;
-}
-
-.modal-actions {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  gap: 0.65rem;
-  margin-top: 0.25rem;
-}
-
-.modal-actions .btn {
-  padding: 0.5rem 1rem;
-  font-size: 0.9rem;
-  min-height: 2.35rem;
-}
-
-.error-text {
-  margin: 0;
-  font-size: 0.88rem;
-}
-
-.detail-list {
-  display: grid;
-  grid-template-columns: auto 1fr;
-  gap: 0.4rem 1rem;
-  font-size: 0.88rem;
-}
-
 </style>

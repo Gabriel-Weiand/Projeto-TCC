@@ -2,7 +2,6 @@
 import { ref, computed, onMounted, onBeforeUnmount } from "vue";
 import type { Machine } from "@/types";
 import { isMachineStatusBlocked } from "@/utils/allocationAvailability";
-import { PERIOD_INVALID_RANGE_MESSAGE } from "@/utils/allocationLabels";
 
 const props = defineProps<{
   machines: Machine[];
@@ -10,8 +9,8 @@ const props = defineProps<{
   statusLabels: Record<Machine["status"], string>;
   /** Período com início e fim preenchidos e válidos (fim > início). */
   periodReady: boolean;
-  /** Campos de período preenchidos, mas fim não é após o início (ou data inválida). */
-  periodInvalid?: boolean;
+  /** Legenda de erro do período (ordem ou limite de datas); exibe contorno vermelho. */
+  periodErrorMessage?: string | null;
   /** Disponibilidade no período; só relevante com `periodReady` e máquina selecionada. */
   periodAvailable: boolean | null;
 }>();
@@ -31,16 +30,11 @@ function isSelectedMachine(machine: Machine) {
   return selectedMachine.value?.id === machine.id;
 }
 
-/** Período preenchido com término antes do início (ou data inválida). */
-function usePeriodErrorFor(machine: Machine) {
-  return props.periodInvalid && isSelectedMachine(machine);
-}
-
 /** Cores de alocação só no gatilho quando o período está completo e válido. */
 function usePeriodToneFor(machine: Machine) {
   return (
     props.periodReady &&
-    !props.periodInvalid &&
+    !props.periodErrorMessage &&
     isSelectedMachine(machine) &&
     props.periodAvailable !== null &&
     !isMachineStatusBlocked(machine.status)
@@ -55,7 +49,6 @@ function statusTone(machine: Machine) {
 }
 
 function toneClass(machine: Machine) {
-  if (usePeriodErrorFor(machine)) return "tone-period-error";
   if (usePeriodToneFor(machine)) {
     return props.periodAvailable ? "tone-period-ok" : "tone-period-busy";
   }
@@ -63,7 +56,7 @@ function toneClass(machine: Machine) {
 }
 
 const triggerCaption = computed(() => {
-  if (props.periodInvalid) return PERIOD_INVALID_RANGE_MESSAGE;
+  if (props.periodErrorMessage) return props.periodErrorMessage;
   const m = selectedMachine.value;
   if (!m) return "Escolha uma máquina para reservar";
   if (usePeriodToneFor(m)) {
@@ -75,7 +68,7 @@ const triggerCaption = computed(() => {
 });
 
 const triggerTone = computed(() => {
-  if (props.periodInvalid) return "tone-period-error";
+  if (props.periodErrorMessage) return "tone-period-error";
   if (!selectedMachine.value) return "tone-placeholder";
   return toneClass(selectedMachine.value);
 });

@@ -6,10 +6,15 @@ import {
   sortDisksBySize,
 } from "@/utils/machineDisks";
 
-defineProps<{
-  machine: Machine;
-  liveData: RealtimeTelemetry | null;
-}>();
+withDefaults(
+  defineProps<{
+    machine: Machine;
+    liveData: RealtimeTelemetry | null;
+    /** Bloco CPU/GPU/RAM/rede em tempo real (somente admin na página da máquina). */
+    showTelemetry?: boolean;
+  }>(),
+  { showTelemetry: true },
+);
 
 function calcUsagePct(
   used: number | null | undefined,
@@ -75,9 +80,10 @@ function diskUsedPct(total: number | null, free: number | null): number {
 </script>
 
 <template>
-  <h2 class="section-title">Telemetria em Tempo Real</h2>
+  <template v-if="showTelemetry">
+    <h2 class="section-title">Telemetria em Tempo Real</h2>
 
-  <div v-if="liveData" class="telemetry-grid">
+    <div v-if="liveData" class="telemetry-grid">
     <div class="tele-card">
       <span class="tele-label">CPU</span>
       <div class="tele-value" :style="{ color: usageColor(liveData.cpuUsage) }">
@@ -213,9 +219,10 @@ function diskUsedPct(total: number | null, free: number | null): number {
       </div>
     </div>
   </div>
-  <div v-else class="empty-state" style="padding: 1.5rem 0">
-    Sem dados de telemetria disponíveis.
-  </div>
+    <div v-else class="empty-state" style="padding: 1.5rem 0">
+      Sem dados de telemetria disponíveis.
+    </div>
+  </template>
 
   <template v-if="machine.disks && machine.disks.length > 0">
     <h2 class="section-title section-spaced">Partições de Disco</h2>

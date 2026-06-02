@@ -142,3 +142,15 @@ export function assertAllocationEndWithinLimit(endTimeUtc: DateTime): string | n
   }
   return null
 }
+
+/** Duração mínima da reserva (config LAB_ALLOCATION_MIN_DURATION_MINUTES). */
+export function assertAllocationMinDuration(
+  startTimeUtc: DateTime,
+  endTimeUtc: DateTime
+): string | null {
+  const minutes = endTimeUtc.diff(startTimeUtc, 'minutes').minutes
+  if (minutes < labConfig.allocation.minDurationMinutes) {
+    return `A reserva deve ter pelo menos ${labConfig.allocation.minDurationMinutes} minutos de duração.`
+  }
+  return null
+}

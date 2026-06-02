@@ -10,7 +10,11 @@ import {
   listAllocationsValidator,
 } from '#validators/allocation'
 import { extendAllocationValidator } from '#validators/allocation'
-import { assertAllocationEndWithinLimit, canSeeAllocationOwnerNames } from '#services/lab_config'
+import {
+  assertAllocationEndWithinLimit,
+  assertAllocationMinDuration,
+  canSeeAllocationOwnerNames,
+} from '#services/lab_config'
 import {
   notifyAdminsPendingSudoAllocation,
   notifyAllocationStatusChange,
@@ -110,6 +114,14 @@ export default class AllocationsController {
       return response.badRequest({
         code: 'ALLOCATION_TOO_FAR',
         message: futureLimitMsg,
+      })
+    }
+
+    const minDurationMsg = assertAllocationMinDuration(data.startTime, data.endTime)
+    if (minDurationMsg) {
+      return response.badRequest({
+        code: 'ALLOCATION_TOO_SHORT',
+        message: minDurationMsg,
       })
     }
 

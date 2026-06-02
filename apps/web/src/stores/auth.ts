@@ -47,9 +47,18 @@ export const useAuthStore = defineStore("auth", () => {
     try {
       const { data } = await api.get<User>("/api/v1/me");
       persistUser(data);
+      return data;
     } catch {
       await logout();
+      return null;
     }
+  }
+
+  /** Restaura token/usuário do navegador e atualiza o perfil com o servidor (boot). */
+  async function bootstrapSession() {
+    loadFromStorage();
+    if (!token.value) return;
+    await fetchMe();
   }
 
   function persistUser(data: User) {
@@ -84,6 +93,7 @@ export const useAuthStore = defineStore("auth", () => {
     login,
     logout,
     fetchMe,
+    bootstrapSession,
     updateProfile,
     updateSshKey,
     loadFromStorage,

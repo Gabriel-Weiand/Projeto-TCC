@@ -243,7 +243,7 @@ async function handleDelete(a: Allocation) {
                   v-if="showExtendButton(a)"
                   type="button"
                   class="btn btn-ghost btn-sm btn-action"
-                  @click="extendTarget = a"
+                  @click="openExtend(a)"
                 >
                   Estender
                 </button>
@@ -269,7 +269,7 @@ async function handleDelete(a: Allocation) {
                         ? 'Fora do período da reserva'
                         : 'Conectar via SSH'
                   "
-                  @click="connectTarget = a"
+                  @click="openConnect(a)"
                 >
                   Conectar
                 </button>
@@ -277,7 +277,7 @@ async function handleDelete(a: Allocation) {
                   v-if="showStatistics(a)"
                   type="button"
                   class="btn btn-ghost btn-sm btn-action"
-                  @click="usageStatsTarget = a"
+                  @click="openStatistics(a)"
                 >
                   Estatísticas
                 </button>

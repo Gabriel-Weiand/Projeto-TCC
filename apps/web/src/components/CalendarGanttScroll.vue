@@ -28,6 +28,8 @@ const props = withDefaults(
     singleMachineFocus?: boolean;
     /** YYYY-MM-DD (TZ do lab): centraliza o scroll inicial neste dia em vez de hoje */
     initialScrollIso?: string | null;
+    /** Rolagem vertical da lista de máquinas para exibir esta máquina na viewport. */
+    scrollToMachineId?: number | null;
   }>(),
   {
     machines: () => [],
@@ -38,6 +40,7 @@ const props = withDefaults(
     highlightAllocationId: null,
     singleMachineFocus: false,
     initialScrollIso: null,
+    scrollToMachineId: null,
   },
 );
 
@@ -116,6 +119,39 @@ function scrollMachines(delta: number) {
     Math.min(maxOffset.value, machineOffset.value + delta),
   );
 }
+
+/** Posiciona a janela vertical para a máquina ficar visível (lista completa, 8 por página). */
+function scrollToMachine(machineId: number) {
+  const list = props.machines ?? [];
+  if (!list.length) return;
+  const idx = list.findIndex((m) => m.id === machineId);
+  if (idx < 0) return;
+  if (list.length <= PAGE_SIZE) {
+    machineOffset.value = 0;
+    return;
+  }
+  const ideal = idx - Math.floor(PAGE_SIZE / 2);
+  machineOffset.value = Math.max(0, Math.min(maxOffset.value, ideal));
+}
+
+function applyScrollToMachineIfNeeded() {
+  const id = props.scrollToMachineId;
+  if (id == null || props.loading || lab.loading) return;
+  scrollToMachine(id);
+}
+
+watch(
+  () =>
+    [
+      props.scrollToMachineId,
+      props.machines?.map((m) => m.id).join(","),
+      props.loading,
+      lab.loading,
+    ] as const,
+  () => {
+    applyScrollToMachineIfNeeded();
+  },
+);
 
 // ---- Row height helpers (extend first/last rows to host scroll buttons) ----
 function rowH(idx: number): number {
@@ -523,7 +559,10 @@ async function ensureScrollToToday() {
   if (props.loading || lab.loading) return;
   await nextTick();
   bindScrollElement();
-  requestAnimationFrame(() => applyInitialScroll());
+  requestAnimationFrame(() => {
+    applyInitialScroll();
+    applyScrollToMachineIfNeeded();
+  });
 }
 
 watch(
