@@ -62,6 +62,12 @@ const custom = reactive({
 
 const activePresetInfo = computed(() => PRESET_INFO.value[preset.value]);
 
+function presetMetaLine(key: string): string | null {
+  if (key !== "fast" && key !== "eco") return null;
+  const p = labConfig.telemetryPresets[key];
+  return `${p.intervalSeconds}s · lote ${p.batchSize}`;
+}
+
 function loadFromMachine(m: Machine) {
   preset.value = (m.telemetryPreset as TelemetryPreset) || "eco";
   const c = m.customAgentConfig || {};
@@ -143,8 +149,8 @@ async function handleSave() {
         >
           <span class="preset-name">{{ info.label }}</span>
           <span class="preset-blurb">{{ info.blurb }}</span>
-          <span v-if="key !== 'custom'" class="preset-meta">
-            {{ info.intervalSeconds }}s · lote {{ info.batchSize }}
+          <span v-if="presetMetaLine(key)" class="preset-meta">
+            {{ presetMetaLine(key) }}
           </span>
         </button>
       </div>
@@ -216,8 +222,8 @@ async function handleSave() {
             >
               <span class="preset-name">{{ info.label }}</span>
               <span class="preset-blurb">{{ info.blurb }}</span>
-              <span v-if="key !== 'custom'" class="preset-meta">
-                {{ info.intervalSeconds }}s · lote {{ info.batchSize }}
+              <span v-if="presetMetaLine(key)" class="preset-meta">
+                {{ presetMetaLine(key) }}
               </span>
             </button>
           </div>

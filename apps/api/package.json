@@ -4,10 +4,14 @@
   "private": true,
   "type": "module",
   "license": "UNLICENSED",
+  "engines": {
+    "node": ">=20 <23"
+  },
   "scripts": {
     "start": "node bin/server.js",
     "build": "node ace build",
     "dev": "node ace serve --hmr",
+    "postinstall": "npm rebuild better-sqlite3",
     "test": "node ace test",
     "lint": "eslint .",
     "format": "prettier --write .",

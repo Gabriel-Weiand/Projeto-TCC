@@ -4,7 +4,7 @@ import { useRouter } from "vue-router";
 import { useMachinesStore } from "@/stores/machines";
 import { useAllocationsStore } from "@/stores/allocations";
 import { useUsersStore } from "@/stores/users";
-import type { Machine } from "@/types";
+import type { Machine, RealtimeTelemetry } from "@/types";
 
 const router = useRouter();
 
@@ -82,6 +82,21 @@ function statusLabel(s: string) {
   };
   return map[s] || s;
 }
+
+function ramUsagePct(t: RealtimeTelemetry): number {
+  const total = t.ramTotalGb;
+  const used = t.ramUsedGb;
+  if (total == null || used == null || total <= 0) return 0;
+  return (used / total) * 100;
+}
+
+function primarySessionLabel(m: Machine): string | null {
+  const users = m.latestTelemetry?.activeUsers ?? m.activeUsers;
+  if (!users?.length) return null;
+  const first = users[0] as { username?: string; name?: string } | string;
+  if (typeof first === "string") return first;
+  return first.username ?? first.name ?? null;
+}
 </script>
 
 <template>
@@ -152,10 +167,10 @@ function statusLabel(s: string) {
                 <div class="progress-bar" style="flex: 1">
                   <div
                     class="progress-fill"
-                    :style="{ width: m.latestTelemetry.ramUsage + '%' }"
+                    :style="{ width: ramUsagePct(m.latestTelemetry) + '%' }"
                   ></div>
                 </div>
-                <span>{{ m.latestTelemetry.ramUsage.toFixed(0) }}%</span>
+                <span>{{ ramUsagePct(m.latestTelemetry).toFixed(0) }}%</span>
               </div>
               <div class="ms-tele-row">
                 <span>GPU</span>
@@ -171,11 +186,11 @@ function statusLabel(s: string) {
           </template>
 
           <div
-            v-if="m.loggedUser"
+            v-if="primarySessionLabel(m)"
             class="ms-user text-muted"
             style="font-size: 0.78rem; margin-top: auto"
           >
-            Logado: {{ m.loggedUser }}
+            Logado: {{ primarySessionLabel(m) }}
           </div>
         </div>
       </div>

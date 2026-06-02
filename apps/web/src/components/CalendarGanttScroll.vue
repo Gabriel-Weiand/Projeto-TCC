@@ -1,6 +1,5 @@
 <script setup lang="ts">
 import { ref, computed, onMounted, onBeforeUnmount, nextTick, watch } from "vue";
-import { useMachinesStore } from "@/stores/machines";
 import { useLabConfigStore } from "@/stores/labConfig";
 import {
   buildTimelineDays,
@@ -62,7 +61,6 @@ watch(() => props.loading, async (isLoading) => {
   }
 }, { immediate: true });
 
-const machinesStore = useMachinesStore();
 const lab = useLabConfigStore();
 
 const futureDays = ref(lab.defaultFutureDays);
@@ -120,7 +118,6 @@ function labelRowStyle(idx: number) {
     paddingBottom: (needsScroll && idx === last ? BTN_H : 0) + "px",
   };
 }
-const ganttLeftEl = ref<HTMLElement | null>(null);
 function onLeftWheel(e: WheelEvent) {
   e.preventDefault();
   e.stopPropagation();
@@ -428,6 +425,11 @@ function applyInitialScroll() {
   scrollLeft.value = scrollEl.value.scrollLeft;
 }
 
+function onWindowResize() {
+  updateAlignOffset();
+  applyInitialScroll();
+}
+
 let scrollListenersBound = false;
 
 function bindScrollElement() {
@@ -463,17 +465,15 @@ watch(
 onMounted(async () => {
   await nextTick();
   updateAlignOffset();
-  window.addEventListener("resize", () => {
-    updateAlignOffset();
-    applyInitialScroll();
-  });
+  window.addEventListener("resize", onWindowResize);
   document.addEventListener("mousemove", onMouseMove);
   document.addEventListener("mouseup", stopDrag);
   void ensureScrollToToday();
 });
 
 onBeforeUnmount(() => {
-  window.removeEventListener("resize", updateAlignOffset);
+  resizeObserver?.disconnect();
+  window.removeEventListener("resize", onWindowResize);
   scrollEl.value?.removeEventListener("wheel", onWheel);
   scrollEl.value?.removeEventListener("scroll", onScroll);
   document.removeEventListener("mousemove", onMouseMove);
@@ -534,7 +534,7 @@ onBeforeUnmount(() => {
       <!-- Gantt layout: fixed left + scrollable right -->
       <div class="gantt-outer" ref="ganttOuterRef">
         <!-- ---- Left: machine labels (fixed) ---- -->
-        <div class="gantt-left" ref="ganttLeftEl" @wheel="onLeftWheel">
+        <div class="gantt-left" @wheel="onLeftWheel">
           <!-- Spacer matching both header rows -->
           <div class="left-header" :style="{ height: TOTAL_HEADER_H + 'px' }">
             <span class="left-header-label">
@@ -699,8 +699,8 @@ onBeforeUnmount(() => {
       <!-- Bottom hint -->
       <p class="hint-text">
         💡 Passe o mouse sobre as barras para detalhes · Arraste ou role com o
-        mouse para navegar · Janela: {{ PAST_DAYS }} dias passados +
-        {{ FUTURE_DAYS }} dias futuros
+        mouse para navegar · Janela: {{ pastDays }} dias passados +
+        {{ futureDays }} dias futuros
       </p>
     </template>
   </div>

@@ -5,6 +5,8 @@ export interface User {
   fullName: string;
   email: string;
   role: "user" | "admin";
+  systemUsername?: string | null;
+  sshPublicKey?: string | null;
   createdAt: string;
   updatedAt: string | null;
 }

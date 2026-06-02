@@ -12,8 +12,6 @@ const machinesStore = useMachinesStore();
 const auth = useAuthStore();
 const lab = useLabConfigStore();
 
-const isAdmin = computed(() => auth.user?.role === "admin");
-
 const loading = ref(true);
 const showForm = ref(false);
 
@@ -547,12 +545,6 @@ async function openStats(a: Allocation) {
                 <span class="stat-mini-label">RAM Máx</span>
                 <span class="stat-mini-val"
                   >{{ statsData.maxRamUsage.toFixed(1) }}%</span
-                >
-              </div>
-              <div v-if="statsData.avgDiskUsage != null" class="stat-mini">
-                <span class="stat-mini-label">Disco Média</span>
-                <span class="stat-mini-val"
-                  >{{ statsData.avgDiskUsage.toFixed(1) }}%</span
                 >
               </div>
             </div>

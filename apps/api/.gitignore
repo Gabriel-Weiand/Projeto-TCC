@@ -10,6 +10,9 @@ tmp
 .env.development.local
 .env.test
 
+# Overrides locais dos presets fast/eco (admin persiste via API)
+storage/lab/telemetry_presets.json
+
 # Database files (SQLite)
 *.sqlite3
 *.sqlite

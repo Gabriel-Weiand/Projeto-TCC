@@ -13,7 +13,10 @@ test.group('Lab telemetry presets', (group) => {
     assert.equal(response.body().telemetry.defaultOfflinePreset, 'eco')
     assert.exists(response.body().telemetry.presets.fast)
     assert.exists(response.body().telemetry.presets.eco)
-    assert.equal(response.body().telemetry.presets.fast.intervalSeconds, 30)
+    assert.equal(
+      response.body().telemetry.presets.fast.intervalSeconds,
+      getLabTelemetryPresets().fast.intervalSeconds
+    )
   })
 
   test('admin pode ler e atualizar presets globais', async ({ client, assert }) => {

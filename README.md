@@ -537,8 +537,10 @@ Projeto-TCC/
 
 ### Pré-requisitos
 
-- Node.js 20+
-- npm ou pnpm
+- Node.js 22 (recomendado; veja `.nvmrc` na raiz — `nvm use`)
+- npm
+
+Use **o mesmo Node** no terminal, no IDE e nos testes. O `better-sqlite3` é módulo nativo: se você trocar de versão do Node (ex.: Node do sistema vs Node do Cursor), a API pode falhar até recompilar. O `postinstall` em `apps/api` faz `npm rebuild better-sqlite3` automaticamente após cada `npm install` nessa pasta.
 
 ### Instalação
 
@@ -546,12 +548,11 @@ Projeto-TCC/
 # Clone o repositório
 git clone https://github.com/seu-usuario/Projeto-TCC.git
 cd Projeto-TCC
+nvm use   # opcional, se usar nvm
 
-# Instale as dependências
-npm install
-
-# Entre na pasta da API
+# API — dependências e rebuild do SQLite (postinstall)
 cd apps/api
+npm install
 
 # Configure o ambiente
 cp .env.example .env
@@ -568,12 +569,22 @@ node ace db:seed
 node ace serve --watch
 ```
 
+### Front (Vue)
+
+```bash
+cd apps/web
+npm install
+npm run dev
+```
+
 ### Testes
 
 ```bash
 cd apps/api
 node ace test
 ```
+
+Se aparecer erro de ABI do `better-sqlite3`, confira `node -v` (deve ser 20–22) e rode de novo `npm install` em `apps/api`.
 
 ---
 

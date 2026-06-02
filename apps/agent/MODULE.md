@@ -183,7 +183,7 @@ Um processo só entra no array `processes` se satisfizer **ao menos um** dos cri
 ┌─────────────────────────────────────────────────────────────────────────────────┐
 │                           1. BOOT DA MÁQUINA                                    │
 │  - Lê .env (SERVER_URL, MACHINE_TOKEN)                                          │
-│  - GET /api/config → telemetria inicial eco (ou presets do lab se API online) │
+│  - GET /api/config → telemetria inicial eco (ou presets do lab se API online)   │
 │  - PUT /api/v1/agent/sync-specs (Registra Hardware no Backend)                  │
 └──────────────────────────────────────┬──────────────────────────────────────────┘
                                        │

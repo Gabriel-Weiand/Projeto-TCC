@@ -5,18 +5,24 @@ function parseIsoDate(iso: string): { y: number; m: number; d: number } {
   return { y: Number(match[1]), m: Number(match[2]), d: Number(match[3]) }
 }
 
-/** Soma dias a uma data ISO (YYYY-MM-DD) no calendário civil. */
-export function addDaysToIsoDate(isoDate: string, delta: number): string {
-  const { y, m, d } = parseIsoDate(isoDate)
-  const dt = new Date(Date.UTC(y, m - 1, d + delta))
-  return dt.toISOString().slice(0, 10)
+/** Meia-noite local no calendário civil YYYY-MM-DD (sem parse de string ISO). */
+function localDateFromIso(iso: string): Date {
+  const { y, m, d } = parseIsoDate(iso)
+  return new Date(y, m - 1, d)
 }
 
 export function dateKey(d: Date): string {
   const y = d.getFullYear()
-  const m = String(d.getMonth() + 1).padStart(2, "0")
-  const day = String(d.getDate()).padStart(2, "0")
+  const m = String(d.getMonth() + 1).padStart(2, '0')
+  const day = String(d.getDate()).padStart(2, '0')
   return `${y}-${m}-${day}`
+}
+
+/** Soma dias a uma data ISO (YYYY-MM-DD) no calendário civil local. */
+export function addDaysToIsoDate(isoDate: string, delta: number): string {
+  const dt = localDateFromIso(isoDate)
+  dt.setDate(dt.getDate() + delta)
+  return dateKey(dt)
 }
 
 /** Linha do tempo: de (hoje - pastDays) até (hoje + futureDays), inclusive. */
@@ -25,18 +31,19 @@ export function buildTimelineDays(
   pastDays: number,
   futureDays: number,
 ): Date[] {
+  const anchor = localDateFromIso(todayIso)
   const days: Date[] = []
   for (let i = -pastDays; i <= futureDays; i++) {
-    const key = addDaysToIsoDate(todayIso, i)
-    const { y, m, d } = parseIsoDate(key)
-    days.push(new Date(y, m - 1, d))
+    const dt = new Date(anchor)
+    dt.setDate(anchor.getDate() + i)
+    days.push(dt)
   }
   return days
 }
 
 export function futureRangeLabel(days: number): string {
-  if (days >= 365) return "1 ano"
-  if (days >= 180) return "6 meses"
-  if (days >= 90) return "3 meses"
+  if (days >= 365) return '1 ano'
+  if (days >= 180) return '6 meses'
+  if (days >= 90) return '3 meses'
   return `${days} dias`
 }
