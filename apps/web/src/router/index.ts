@@ -21,6 +21,11 @@ const router = createRouter({
           component: () => import("@/views/HomeView.vue"),
         },
         {
+          path: "my-allocations",
+          name: "my-allocations",
+          component: () => import("@/views/MyAllocationsView.vue"),
+        },
+        {
           path: "machines",
           name: "machines",
           component: () => import("@/views/MachinesView.vue"),

@@ -50,6 +50,19 @@ export const useAllocationsStore = defineStore("allocations", () => {
     return updateAllocation(id, { status: "cancelled" });
   }
 
+  async function extendAllocation(
+    id: number,
+    payload: { additionalMinutes: number } | { endTime: string },
+  ) {
+    const { data } = await api.post<Allocation>(
+      `/api/v1/allocations/${id}/extend`,
+      payload,
+    );
+    const idx = allocations.value.findIndex((a) => a.id === id);
+    if (idx !== -1) allocations.value[idx] = data;
+    return data;
+  }
+
   async function fetchUserAllocations(
     userId: number,
     params?: Record<string, unknown>,
@@ -59,6 +72,19 @@ export const useAllocationsStore = defineStore("allocations", () => {
       { params },
     );
     return data;
+  }
+
+  async function fetchMyAllocations(params?: Record<string, unknown>) {
+    loading.value = true;
+    try {
+      const { data } = await api.get<PaginatedResponse<Allocation>>(
+        "/api/v1/allocations/my",
+        { params: { limit: 100, ...params } },
+      );
+      return data.data;
+    } finally {
+      loading.value = false;
+    }
   }
 
   async function fetchAllocationSummary(id: number) {
@@ -80,7 +106,9 @@ export const useAllocationsStore = defineStore("allocations", () => {
     createAllocation,
     updateAllocation,
     cancelAllocation,
+    extendAllocation,
     fetchUserAllocations,
+    fetchMyAllocations,
     fetchAllocationSummary,
     softDeleteAllocation,
   };

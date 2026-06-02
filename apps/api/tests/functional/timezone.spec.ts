@@ -192,6 +192,47 @@ test.group('Timezone — Alocações em UTC', (group) => {
     assert.equal(startDt.toUTC().minute, 30)
   })
 
+  test('14:30 no fuso do lab (via ISO Z) persiste e relê sem deslocar +3h', async ({
+    client,
+    assert,
+  }) => {
+    const user = await User.create({
+      fullName: 'Roundtrip TZ',
+      email: 'roundtrip@teste.com',
+      password: 'senha123',
+      role: 'user',
+    })
+
+    const machine = await Machine.create({
+      name: 'PC-RT',
+      description: 'Roundtrip',
+      cpuModel: 'Intel i5',
+      totalRamGb: 8,
+      status: 'available',
+    })
+
+    const startTime = '2026-06-02T07:00:00.000Z'
+    const endTime = '2026-06-02T10:00:00.000Z'
+
+    const created = await client.post('/api/v1/allocations').loginAs(user).json({
+      machineId: machine.id,
+      startTime,
+      endTime,
+    })
+    created.assertStatus(201)
+
+    const row = await Allocation.findOrFail(created.body().id)
+    assert.equal(row.startTime.toUTC().toISO(), startTime)
+    assert.equal(row.endTime.toUTC().toISO(), endTime)
+
+    const listed = await client.get('/api/v1/allocations/my').loginAs(user)
+    listed.assertStatus(200)
+    const item = listed.body().data.find((a: { id: number }) => a.id === row.id)
+    assert.exists(item)
+    const listedStart = DateTime.fromISO(item.startTime).toUTC().toISO()
+    assert.equal(listedStart, startTime)
+  })
+
   test('front corrigido envia UTC (.toISOString) e servidor armazena correto', async ({
     client,
     assert,

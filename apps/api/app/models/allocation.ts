@@ -1,5 +1,6 @@
 import { DateTime } from 'luxon'
 import { BaseModel, column, belongsTo, hasOne, hasMany } from '@adonisjs/lucid/orm'
+import { dateTimeFromSqlUtc, dateTimeToSqlUtc } from '#utils/datetime'
 import type { BelongsTo, HasOne, HasMany } from '@adonisjs/lucid/types/relations'
 import User from '#models/user'
 import Machine from '#models/machine'
@@ -16,10 +17,18 @@ export default class Allocation extends BaseModel {
   @column()
   declare machineId: number
 
-  @column.dateTime()
+  @column.dateTime({
+    prepare: (value: DateTime) => dateTimeToSqlUtc(value),
+    consume: (value: string) => dateTimeFromSqlUtc(value),
+    serialize: (value: DateTime) => value.toUTC().toISO(),
+  })
   declare startTime: DateTime
 
-  @column.dateTime()
+  @column.dateTime({
+    prepare: (value: DateTime) => dateTimeToSqlUtc(value),
+    consume: (value: string) => dateTimeFromSqlUtc(value),
+    serialize: (value: DateTime) => value.toUTC().toISO(),
+  })
   declare endTime: DateTime
 
   @column()

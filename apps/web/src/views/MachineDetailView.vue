@@ -9,11 +9,15 @@ import MachineLiveSections from "@/components/MachineLiveSections.vue";
 import CalendarGanttScroll from "@/components/CalendarGanttScroll.vue";
 import type { Machine, Allocation } from "@/types";
 import { useRouter } from "vue-router";
+import { useLabConfigStore } from "@/stores/labConfig";
+import { wallClockToUtcIso } from "@/utils/datetime";
+import { ALLOCATION_REASON_MAX_LENGTH } from "@/utils/allocationLabels";
 
 const props = defineProps<{ id: string | number }>();
 const machinesStore = useMachinesStore();
 const allocationsStore = useAllocationsStore();
 const auth = useAuthStore();
+const lab = useLabConfigStore();
 const router = useRouter();
 
 const machineId = computed(() => Number(props.id));
@@ -167,10 +171,6 @@ function openForm() {
   showForm.value = true;
 }
 
-function toLocalIso(date: string, time: string): string {
-  return new Date(`${date}T${time}:00`).toISOString();
-}
-
 async function handleCreate() {
   if (!machine.value) return;
   formError.value = "";
@@ -182,13 +182,29 @@ async function handleCreate() {
     formError.value = "Horário de início deve ser antes do fim.";
     return;
   }
+  let startTime: string;
+  let endTime: string;
+  try {
+    startTime = wallClockToUtcIso(
+      form.value.date,
+      form.value.startTime,
+      lab.timezone,
+    );
+    endTime = wallClockToUtcIso(form.value.date, form.value.endTime, lab.timezone);
+  } catch {
+    formError.value = "Data ou horário inválido.";
+    return;
+  }
+
   formSaving.value = true;
   try {
     await allocationsStore.createAllocation({
       machineId: machine.value.id,
-      startTime: toLocalIso(form.value.date, form.value.startTime),
-      endTime: toLocalIso(form.value.date, form.value.endTime),
-      reason: form.value.reason || undefined,
+      startTime,
+      endTime,
+      reason:
+        form.value.reason.trim().slice(0, ALLOCATION_REASON_MAX_LENGTH) ||
+        undefined,
     });
     showForm.value = false;
     const sched = await machinesStore.fetchMachineAllocations(machineId.value, {
@@ -395,13 +411,21 @@ function statusLabel(s: string) {
             </div>
             <div class="field">
               <label class="field-label"
-                >Motivo <span class="text-muted">(opcional)</span></label
+                >Motivo
+                <span class="text-muted"
+                  >(opcional, máx. {{ ALLOCATION_REASON_MAX_LENGTH }})</span
+                ></label
               >
               <textarea
                 v-model="form.reason"
-                rows="2"
+                class="field-textarea"
+                rows="3"
+                :maxlength="ALLOCATION_REASON_MAX_LENGTH"
                 placeholder="Ex: Treinamento de modelo ML"
               ></textarea>
+              <span class="field-hint text-muted"
+                >{{ form.reason.length }}/{{ ALLOCATION_REASON_MAX_LENGTH }}</span
+              >
             </div>
             <p v-if="formError" class="error-text">{{ formError }}</p>
             <div class="modal-actions">

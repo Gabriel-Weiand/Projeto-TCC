@@ -6,6 +6,11 @@ import {
   dateKey,
   futureRangeLabel,
 } from "@/utils/calendarDays";
+import {
+  formatLabAllocationRange,
+  normalizeApiUtcIso,
+  utcIsoToWallClockFields,
+} from "@/utils/datetime";
 import type { Allocation, Machine } from "@/types";
 
 const props = withDefaults(
@@ -16,6 +21,10 @@ const props = withDefaults(
     loading?: boolean;
     /** Modo compacto: uma máquina, toolbar reduzida, linhas mais baixas */
     compact?: boolean;
+    /** Destaca a alocação em extensão no Gantt */
+    highlightAllocationId?: number | null;
+    /** Uma máquina: linha alta, sem scroll vertical de máquinas, setas no eixo da linha */
+    singleMachineFocus?: boolean;
   }>(),
   {
     machines: () => [],
@@ -23,6 +32,8 @@ const props = withDefaults(
     currentUserId: null,
     loading: false,
     compact: false,
+    highlightAllocationId: null,
+    singleMachineFocus: false,
   },
 );
 
@@ -129,8 +140,16 @@ function onLeftWheel(e: WheelEvent) {
 const CELL_W = computed(() => (props.compact ? 40 : 46));
 const MONTH_HEADER_H = computed(() => (props.compact ? 24 : 30));
 const DAY_HEADER_H = computed(() => (props.compact ? 36 : 46));
-const ROW_H = computed(() => (props.compact ? 48 : 66));
-const BAR_H = computed(() => (props.compact ? 26 : 38));
+const ROW_H = computed(() => {
+  if (props.singleMachineFocus) return 92;
+  if (props.compact) return 48;
+  return 66;
+});
+const BAR_H = computed(() => {
+  if (props.singleMachineFocus) return 44;
+  if (props.compact) return 26;
+  return 38;
+});
 const BTN_H = 20;
 const TOTAL_HEADER_H = computed(
   () => MONTH_HEADER_H.value + DAY_HEADER_H.value,
@@ -266,21 +285,26 @@ function barsForMachine(machineId: number) {
         new Date(a.endTime) >= timelineStart,
     )
     .map((a) => {
-      const s = new Date(a.startTime);
-      const e = new Date(a.endTime);
+      const s = new Date(normalizeApiUtcIso(a.startTime));
+      const e = new Date(normalizeApiUtcIso(a.endTime));
       const cs = s < timelineStart ? timelineStart : s;
       const ce = e > timelineEnd ? timelineEnd : e;
 
-      const leftDays = (cs.getTime() - timelineStartMs) / MS_PER_DAY;
-      const widthDays = Math.max(
-        0.85,
-        (ce.getTime() - cs.getTime()) / MS_PER_DAY,
-      );
+      const startOffset = (cs.getTime() - timelineStartMs) / MS_PER_DAY;
+      const endOffset = (ce.getTime() - timelineStartMs) / MS_PER_DAY;
+      const spanDays = Math.max(0, endOffset - startOffset);
+      const sameLabDay =
+        utcIsoToWallClockFields(a.startTime, lab.timezone).date ===
+        utcIsoToWallClockFields(a.endTime, lab.timezone).date;
+      const widthDays =
+        sameLabDay && spanDays < 1 / 48
+          ? Math.max(spanDays, 0.35)
+          : Math.max(spanDays, 0.12);
 
       const color = machineColor(machineId);
       return {
         allocation: a,
-        leftPx: leftDays * CELL_W.value,
+        leftPx: startOffset * CELL_W.value,
         widthPx: widthDays * CELL_W.value,
         color,
         isPending: a.status === "pending",
@@ -288,29 +312,30 @@ function barsForMachine(machineId: number) {
         isOwn:
           a.isOwn === true ||
           (props.currentUserId !== null && a.userId === props.currentUserId),
+        isExtending: a.id === props.highlightAllocationId,
         tooltip: buildTooltip(a),
       };
     })
     .sort((a, b) => a.leftPx - b.leftPx);
 }
 
+function allocationOwnerLabel(a: Allocation): string {
+  if (a.user?.fullName) return a.user.fullName;
+  const own =
+    a.isOwn === true ||
+    (props.currentUserId !== null && a.userId === props.currentUserId);
+  if (own) return "Sua reserva";
+  return "Reserva";
+}
+
 function buildTooltip(a: Allocation) {
-  const s = new Date(a.startTime);
-  const e = new Date(a.endTime);
-  const fmt = (d: Date) =>
-    d.toLocaleDateString("pt-BR", {
-      day: "2-digit",
-      month: "2-digit",
-      year: "2-digit",
-    });
-  const fmtT = (d: Date) =>
-    d.toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" });
-  const multi = s.toDateString() !== e.toDateString();
-  const days = Math.ceil((e.getTime() - s.getTime()) / MS_PER_DAY);
-  const range = multi
-    ? `${fmt(s)} → ${fmt(e)} (${days}d)`
-    : `${fmt(s)} ${fmtT(s)} – ${fmtT(e)}`;
-  const user = a.user?.fullName ?? "Usuário";
+  const tz = lab.timezone;
+  const range = formatLabAllocationRange(
+    normalizeApiUtcIso(a.startTime),
+    normalizeApiUtcIso(a.endTime),
+    tz,
+  );
+  const user = allocationOwnerLabel(a);
   const st: Record<string, string> = {
     approved: "Aprovada",
     pending: "Pendente",
@@ -417,6 +442,14 @@ function scrollToToday() {
   });
 }
 
+const ganttWrapStyle = computed(() => {
+  if (!props.singleMachineFocus) return undefined;
+  return {
+    "--gantt-header-h": `${TOTAL_HEADER_H.value}px`,
+    "--gantt-track-h": `${ROW_H.value}px`,
+  } as Record<string, string>;
+});
+
 function applyInitialScroll() {
   if (!scrollEl.value) return;
   const w = scrollEl.value.clientWidth;
@@ -482,7 +515,14 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-  <div class="gantt-wrap" :class="{ 'gantt-wrap--compact': compact }">
+  <div
+    class="gantt-wrap"
+    :class="{
+      'gantt-wrap--compact': compact,
+      'gantt-wrap--single-focus': singleMachineFocus,
+    }"
+    :style="ganttWrapStyle"
+  >
     <div v-if="loading" class="empty-state">Carregando calendário...</div>
 
     <template v-else>
@@ -494,26 +534,7 @@ onBeforeUnmount(() => {
         </div>
 
         <div class="toolbar-controls">
-          <div v-if="!compact" class="legend">
-            <span class="leg-item">
-              <span class="leg-bar own-leg"></span>Sua alocação
-            </span>
-            <span class="leg-item">
-              <span class="leg-bar approved"></span>Aprovada
-            </span>
-            <span class="leg-item">
-              <span class="leg-bar pending"></span>Pendente
-            </span>
-            <span class="leg-item">
-              <span class="leg-bar finished"></span>Finalizada
-            </span>
-            <span class="leg-sep"></span>
-            <span class="leg-item drag-hint">
-              <span class="drag-icon">⇄</span> Arraste ou role com o mouse
-            </span>
-          </div>
           <div v-if="!compact" class="range-picker">
-            <span class="range-picker-label">Horizonte</span>
             <button
               v-for="opt in lab.futureOptions"
               :key="opt"
@@ -533,6 +554,7 @@ onBeforeUnmount(() => {
 
       <!-- Gantt layout: fixed left + scrollable right -->
       <div class="gantt-outer" ref="ganttOuterRef">
+        <div class="gantt-body">
         <!-- ---- Left: machine labels (fixed) ---- -->
         <div class="gantt-left" @wheel="onLeftWheel">
           <!-- Spacer matching both header rows -->
@@ -550,6 +572,7 @@ onBeforeUnmount(() => {
 
           <!-- Scroll UP button (absolute, overlays first row) -->
           <button
+            v-if="!isSingleMachine"
             class="machine-scroll-btn machine-scroll-btn--up"
             :style="{ top: TOTAL_HEADER_H + 'px' }"
             :disabled="machineOffset === 0"
@@ -576,6 +599,7 @@ onBeforeUnmount(() => {
 
           <!-- Scroll DOWN button (absolute, overlays last row) -->
           <button
+            v-if="!isSingleMachine"
             class="machine-scroll-btn machine-scroll-btn--down"
             :disabled="machineOffset >= maxOffset"
             @click="scrollMachines(1)"
@@ -675,6 +699,7 @@ onBeforeUnmount(() => {
                     pending: bar.isPending,
                     finished: bar.isFinished,
                     own: bar.isOwn,
+                    extending: bar.isExtending,
                   }"
                   :style="{
                     left: bar.leftPx + 'px',
@@ -686,7 +711,7 @@ onBeforeUnmount(() => {
                   :title="bar.tooltip"
                 >
                   <span class="bar-label">
-                    {{ bar.allocation.user?.fullName ?? "Reserva"
+                    {{ allocationOwnerLabel(bar.allocation)
                     }}{{ bar.isOwn ? " ✦" : "" }}
                   </span>
                 </div>
@@ -694,14 +719,37 @@ onBeforeUnmount(() => {
             </div>
           </div>
         </div>
-      </div>
+        </div>
 
-      <!-- Bottom hint -->
-      <p class="hint-text">
-        💡 Passe o mouse sobre as barras para detalhes · Arraste ou role com o
-        mouse para navegar · Janela: {{ pastDays }} dias passados +
-        {{ futureDays }} dias futuros
-      </p>
+        <div v-if="!compact" class="gantt-table-footer">
+          <div class="hint-info" aria-label="Informações sobre o calendário">
+            <span class="hint-info-icon" aria-hidden="true">i</span>
+            <div class="hint-info-panel" role="tooltip">
+              Passe o mouse sobre as barras para detalhes · Arraste ou role com o
+              mouse para navegar · Janela: {{ pastDays }} dias passados +
+              {{ futureDays }} dias futuros
+            </div>
+          </div>
+          <div class="legend">
+            <span class="leg-item">
+              <span class="leg-bar own-leg"></span>Sua alocação
+            </span>
+            <span class="leg-item">
+              <span class="leg-bar approved"></span>Aprovada
+            </span>
+            <span class="leg-item">
+              <span class="leg-bar pending"></span>Pendente
+            </span>
+            <span class="leg-item">
+              <span class="leg-bar finished"></span>Finalizada
+            </span>
+            <span class="leg-sep"></span>
+            <span class="leg-item drag-hint">
+              <span class="drag-icon">⇄</span> Arraste ou role com o mouse
+            </span>
+          </div>
+        </div>
+      </div>
     </template>
   </div>
 </template>
@@ -732,12 +780,6 @@ onBeforeUnmount(() => {
   align-items: center;
   gap: 0.35rem;
   flex-wrap: wrap;
-}
-
-.range-picker-label {
-  font-size: 0.72rem;
-  color: var(--text-muted);
-  margin-right: 0.15rem;
 }
 
 .range-btn.active {
@@ -836,11 +878,29 @@ onBeforeUnmount(() => {
 /* ---- Main gantt layout ---- */
 .gantt-outer {
   display: flex;
+  flex-direction: column;
   border: 1px solid var(--border);
   border-radius: var(--radius-lg);
   background: var(--bg-card);
   box-shadow: var(--shadow-card);
   overflow: hidden;
+}
+
+.gantt-body {
+  display: flex;
+  min-width: 0;
+}
+
+.gantt-table-footer {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 1rem;
+  padding: 0.5rem 0.85rem;
+  border-top: 1px solid var(--border);
+  background: rgba(255, 255, 255, 0.015);
+  position: relative;
+  z-index: 3;
 }
 
 /* ---- Left: machine label panel ---- */
@@ -909,7 +969,6 @@ onBeforeUnmount(() => {
 .machine-scroll-btn--down {
   bottom: 0;
   border-top: 1px solid var(--border);
-  border-bottom-left-radius: var(--radius-lg);
 }
 .machine-scroll-btn:hover:not(:disabled) {
   background: rgba(124, 108, 240, 0.22);
@@ -1191,6 +1250,12 @@ onBeforeUnmount(() => {
 .gantt-bar.own .bar-label {
   font-weight: 700;
 }
+.gantt-bar.extending {
+  box-shadow:
+    0 0 0 2px rgba(251, 191, 36, 0.9),
+    0 0 16px rgba(251, 191, 36, 0.45);
+  z-index: 4;
+}
 .bar-label {
   font-size: 0.67rem;
   font-weight: 600;
@@ -1209,10 +1274,94 @@ onBeforeUnmount(() => {
   font-size: 0.82rem;
 }
 
-/* ---- Hint ---- */
-.hint-text {
-  margin-top: 0.75rem;
+.gantt-wrap--single-focus .machine-label-row {
+  padding: 0 1.1rem;
+}
+
+.gantt-wrap--single-focus .machine-name {
+  font-size: 0.95rem;
+}
+
+.gantt-wrap--single-focus .scroll-arrow {
+  top: calc(var(--gantt-header-h) + var(--gantt-track-h) / 2);
+  height: 64px;
+}
+
+.gantt-wrap--single-focus .gantt-bar .bar-label {
+  font-size: 0.75rem;
+}
+
+/* ---- Hint (info icon) ---- */
+.hint-info {
+  position: relative;
+}
+
+.hint-info-icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 1.35rem;
+  height: 1.35rem;
+  border: 1px solid var(--border);
+  border-radius: 50%;
+  background: var(--bg-card);
+  color: var(--text-muted);
+  font-size: 0.72rem;
+  font-weight: 700;
+  font-style: italic;
+  font-family: Georgia, "Times New Roman", serif;
+  line-height: 1;
+  transition:
+    color 0.15s,
+    border-color 0.15s,
+    background 0.15s;
+}
+
+.hint-info:hover .hint-info-icon {
+  color: var(--text-primary);
+  border-color: rgba(102, 126, 234, 0.45);
+  background: rgba(102, 126, 234, 0.08);
+}
+
+.hint-info-panel {
+  position: absolute;
+  left: 0;
+  bottom: calc(100% + 0.25rem);
+  z-index: 10;
+  min-width: 16rem;
+  max-width: min(28rem, 90vw);
+  padding: 0.55rem 0.75rem;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--bg-card-solid);
+  box-shadow: var(--shadow-card);
   font-size: 0.78rem;
   color: var(--text-muted);
+  line-height: 1.45;
+  opacity: 0;
+  visibility: hidden;
+  pointer-events: none;
+  transform: translateY(4px);
+  transition:
+    opacity 0.15s,
+    visibility 0.15s,
+    transform 0.15s;
+}
+
+/* Ponte invisível entre o ícone e o painel para manter o hover */
+.hint-info-panel::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 100%;
+  height: 0.5rem;
+}
+
+.hint-info:hover .hint-info-panel {
+  opacity: 1;
+  visibility: visible;
+  pointer-events: auto;
+  transform: translateY(0);
 }
 </style>

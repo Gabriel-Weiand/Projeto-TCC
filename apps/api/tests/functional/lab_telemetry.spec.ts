@@ -17,6 +17,8 @@ test.group('Lab telemetry presets', (group) => {
       response.body().telemetry.presets.fast.intervalSeconds,
       getLabTelemetryPresets().fast.intervalSeconds
     )
+    assert.property(response.body().allocation, 'publicNames')
+    assert.isFalse(response.body().allocation.publicNames)
   })
 
   test('admin pode ler e atualizar presets globais', async ({ client, assert }) => {

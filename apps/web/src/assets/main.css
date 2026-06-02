@@ -94,6 +94,17 @@ input:focus, select:focus, textarea:focus {
 }
 select { cursor: pointer; }
 
+textarea.field-textarea {
+  resize: none;
+  min-height: 4.25rem;
+  line-height: 1.45;
+}
+
+.field-hint {
+  font-size: 0.75rem;
+  margin-top: 0.2rem;
+}
+
 /* ---- Buttons ---- */
 button {
   font-family: var(--font);

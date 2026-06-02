@@ -27,6 +27,8 @@ export interface LabPublicConfig {
     minDurationMinutes: number;
     scheduleStartHour: number;
     scheduleEndHour: number;
+    /** true = calendário mostra nome de quem reservou; false = só admin */
+    publicNames: boolean;
   };
   auth: {
     tokenExpiresIn: string;
@@ -55,6 +57,7 @@ const DEFAULT_CONFIG: LabPublicConfig = {
     minDurationMinutes: 15,
     scheduleStartHour: 0,
     scheduleEndHour: 24,
+    publicNames: false,
   },
   auth: {
     tokenExpiresIn: "6 hours",
@@ -79,6 +82,9 @@ export const useLabConfigStore = defineStore("labConfig", () => {
     () => config.value.calendar.defaultFutureDays,
   );
   const timezone = computed(() => config.value.timezone);
+  const publicAllocationNames = computed(
+    () => config.value.allocation.publicNames,
+  );
   const telemetryPresets = computed(
     () => config.value.telemetry?.presets ?? DEFAULT_LAB_TELEMETRY_PRESETS,
   );
@@ -154,6 +160,7 @@ export const useLabConfigStore = defineStore("labConfig", () => {
     futureOptions,
     defaultFutureDays,
     timezone,
+    publicAllocationNames,
     telemetryPresets,
     fetchConfig,
     refreshToday,

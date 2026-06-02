@@ -80,10 +80,7 @@ export default class UsersController {
     user.sshPublicKey = sshPublicKey
     await user.save()
 
-    return response.ok({
-      message: 'Chave SSH atualizada com sucesso.',
-      sshPublicKey: user.sshPublicKey,
-    })
+    return response.ok(user)
   }
 
   /**

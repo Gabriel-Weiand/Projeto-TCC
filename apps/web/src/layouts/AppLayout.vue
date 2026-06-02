@@ -33,6 +33,11 @@ function isActive(name: string | string[]): boolean {
             >Reservas</RouterLink
           >
           <RouterLink
+            to="/my-allocations"
+            :class="{ active: isActive('my-allocations') }"
+            >Minhas alocações</RouterLink
+          >
+          <RouterLink
             to="/machines"
             :class="{ active: isActive(['machines', 'machine-detail']) }"
             >Máquinas</RouterLink

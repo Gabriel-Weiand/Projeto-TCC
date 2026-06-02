@@ -1,9 +1,11 @@
 <script setup lang="ts">
 import { ref, reactive, onMounted, computed } from "vue";
 import { useUsersStore } from "@/stores/users";
+import { useAuthStore } from "@/stores/auth";
 import type { User } from "@/types";
 
 const store = useUsersStore();
+const auth = useAuthStore();
 const loading = ref(true);
 const search = ref("");
 
@@ -73,6 +75,9 @@ async function handleSave() {
       };
       if (form.password) payload.password = form.password;
       await store.updateUser(editing.value.id, payload);
+      if (auth.user?.id === editing.value.id) {
+        await auth.fetchMe();
+      }
     } else {
       await store.createUser({
         fullName: form.fullName,

@@ -3,24 +3,46 @@ import { ref, onMounted, computed } from "vue";
 import { useAllocationsStore } from "@/stores/allocations";
 import { useMachinesStore } from "@/stores/machines";
 import type { Allocation } from "@/types";
+import { useLabConfigStore } from "@/stores/labConfig";
+import { formatLabDate, formatLabTime } from "@/utils/datetime";
 
 const store = useAllocationsStore();
 const machinesStore = useMachinesStore();
+const lab = useLabConfigStore();
 
 const loading = ref(true);
 const statusFilter = ref("all");
+const listMode = ref<"active" | "hidden">("active");
 const search = ref("");
 
-onMounted(async () => {
+async function loadAllocations() {
+  loading.value = true;
   try {
-    await Promise.all([
-      store.fetchAllocations(),
-      machinesStore.fetchMachines(),
-    ]);
+    await store.fetchAllocations(
+      listMode.value === "hidden"
+        ? { userHidden: true, limit: 100 }
+        : { limit: 100 },
+    );
   } finally {
     loading.value = false;
   }
+}
+
+onMounted(async () => {
+  try {
+    await machinesStore.fetchMachines();
+    await loadAllocations();
+  } catch {
+    loading.value = false;
+  }
 });
+
+async function setListMode(mode: "active" | "hidden") {
+  if (listMode.value === mode) return;
+  listMode.value = mode;
+  statusFilter.value = "all";
+  await loadAllocations();
+}
 
 const filtered = computed(() => {
   let list = store.allocations;
@@ -46,17 +68,10 @@ function machineName(a: Allocation) {
 }
 
 function fmtDate(iso: string) {
-  return new Date(iso).toLocaleDateString("pt-BR", {
-    day: "2-digit",
-    month: "2-digit",
-    year: "numeric",
-  });
+  return formatLabDate(iso, lab.timezone);
 }
 function fmtTime(iso: string) {
-  return new Date(iso).toLocaleTimeString("pt-BR", {
-    hour: "2-digit",
-    minute: "2-digit",
-  });
+  return formatLabTime(iso, lab.timezone);
 }
 
 function statusBadge(s: string) {
@@ -99,7 +114,7 @@ async function setStatus(a: Allocation, status: string) {
   }
 }
 
-const tabs = [
+const statusTabs = [
   { key: "all", label: "Todas" },
   { key: "pending", label: "Pendentes" },
   { key: "approved", label: "Aprovadas" },
@@ -121,17 +136,38 @@ const tabs = [
       />
     </div>
 
-    <!-- Filter tabs -->
-    <div class="filter-tabs">
+    <div class="list-mode-tabs">
       <button
-        v-for="t in tabs"
+        type="button"
+        :class="['tab-btn', { active: listMode === 'active' }]"
+        @click="setListMode('active')"
+      >
+        Alocações
+      </button>
+      <button
+        type="button"
+        :class="['tab-btn', { active: listMode === 'hidden' }]"
+        @click="setListMode('hidden')"
+      >
+        Ocultas pelo usuário
+      </button>
+    </div>
+
+    <div v-if="listMode === 'active'" class="filter-tabs">
+      <button
+        v-for="t in statusTabs"
         :key="t.key"
+        type="button"
         :class="['tab-btn', { active: statusFilter === t.key }]"
         @click="statusFilter = t.key"
       >
         {{ t.label }}
       </button>
     </div>
+    <p v-else class="hidden-hint text-muted">
+      Alocações removidas do histórico do usuário (soft delete). Não aparecem na
+      lista operacional acima.
+    </p>
 
     <div v-if="loading" class="empty-state">Carregando...</div>
     <div v-else-if="filtered.length === 0" class="empty-state">
@@ -163,6 +199,11 @@ const tabs = [
               <span :class="['badge', statusBadge(a.status)]">{{
                 statusLabel(a.status)
               }}</span>
+              <span
+                v-if="a.userHidden"
+                class="badge badge-muted hidden-badge"
+                >Oculta</span
+              >
             </td>
             <td
               class="text-muted"
@@ -176,7 +217,17 @@ const tabs = [
               {{ a.reason || "—" }}
             </td>
             <td>
-              <div style="display: flex; gap: 0.3rem; flex-wrap: wrap">
+              <div
+                v-if="listMode === 'hidden'"
+                class="text-muted"
+                style="font-size: 0.8rem; padding: 0.35rem"
+              >
+                Somente leitura
+              </div>
+              <div
+                v-else
+                style="display: flex; gap: 0.3rem; flex-wrap: wrap"
+              >
                 <template v-if="a.status === 'pending'">
                   <button
                     class="btn btn-success btn-sm"
@@ -217,6 +268,23 @@ const tabs = [
 </template>
 
 <style scoped>
+.list-mode-tabs {
+  display: flex;
+  gap: 0.35rem;
+  margin-bottom: 1rem;
+  flex-wrap: wrap;
+}
+
+.hidden-hint {
+  font-size: 0.85rem;
+  margin: 0 0 1.25rem;
+}
+
+.hidden-badge {
+  margin-left: 0.35rem;
+  font-size: 0.72rem;
+}
+
 .filter-tabs {
   display: flex;
   gap: 0.25rem;

@@ -346,7 +346,13 @@ test.group('Machines', (group) => {
     client,
     assert,
   }) => {
-    const user = await User.create({
+    const owner = await User.create({
+      fullName: 'Dono',
+      email: 'dono.hist@teste.com',
+      password: '123',
+      role: 'user',
+    })
+    const viewer = await User.create({
       fullName: 'Aluno',
       email: 'aluno.hist@teste.com',
       password: '123',
@@ -357,12 +363,70 @@ test.group('Machines', (group) => {
       description: 'Lab',
       status: 'available',
     })
+    await Allocation.create({
+      userId: owner.id,
+      machineId: machine.id,
+      startTime: DateTime.utc().minus({ hours: 1 }),
+      endTime: DateTime.utc().plus({ hours: 1 }),
+      status: 'approved',
+    })
 
-    const response = await client.get(`/api/v1/machines/${machine.id}/allocations`).loginAs(user)
+    const prev = process.env.LAB_ALLOCATION_PUBLIC_NAMES
+    delete process.env.LAB_ALLOCATION_PUBLIC_NAMES
+
+    const response = await client
+      .get(`/api/v1/machines/${machine.id}/allocations`)
+      .loginAs(viewer)
+
+    if (prev !== undefined) process.env.LAB_ALLOCATION_PUBLIC_NAMES = prev
 
     response.assertStatus(200)
-    // Verifica se os dados vieram anonimizados (sem o objeto 'user')
     assert.notExists(response.body().data[0]?.user)
+    assert.isFalse(response.body().data[0]?.isOwn)
+  })
+
+  test('com LAB_ALLOCATION_PUBLIC_NAMES=true expõe nome do responsável', async ({
+    client,
+    assert,
+  }) => {
+    const owner = await User.create({
+      fullName: 'Maria Silva',
+      email: 'maria.pub@teste.com',
+      password: '123',
+      role: 'user',
+    })
+    const viewer = await User.create({
+      fullName: 'Aluno',
+      email: 'aluno.pub@teste.com',
+      password: '123',
+      role: 'user',
+    })
+    const machine = await Machine.create({
+      name: 'PC-PUB',
+      description: 'Lab',
+      status: 'available',
+    })
+    await Allocation.create({
+      userId: owner.id,
+      machineId: machine.id,
+      startTime: DateTime.utc().minus({ hours: 1 }),
+      endTime: DateTime.utc().plus({ hours: 1 }),
+      status: 'approved',
+    })
+
+    const prev = process.env.LAB_ALLOCATION_PUBLIC_NAMES
+    process.env.LAB_ALLOCATION_PUBLIC_NAMES = 'true'
+
+    const response = await client
+      .get(`/api/v1/machines/${machine.id}/allocations`)
+      .loginAs(viewer)
+
+    if (prev !== undefined) process.env.LAB_ALLOCATION_PUBLIC_NAMES = prev
+    else delete process.env.LAB_ALLOCATION_PUBLIC_NAMES
+
+    response.assertStatus(200)
+    assert.equal(response.body().data[0]?.user?.fullName, 'Maria Silva')
+    assert.isFalse(response.body().data[0]?.isOwn)
   })
   test('admin deve conseguir solicitar relatório de processos on-demand', async ({
     client,

@@ -1,5 +1,6 @@
 import vine from '@vinejs/vine'
 import { DateTime } from 'luxon'
+import { parseUtcFromIso } from '#utils/datetime'
 
 /**
  * Transforma Date para DateTime do Luxon.
@@ -14,9 +15,9 @@ export const createAllocationValidator = vine.compile(
   vine.object({
     userId: vine.number().positive().optional(),
     machineId: vine.number().positive(),
-    startTime: vine.date({ formats: ['iso8601'] }).transform((v) => DateTime.fromJSDate(v)),
-    endTime: vine.date({ formats: ['iso8601'] }).transform((v) => DateTime.fromJSDate(v)),
-    reason: vine.string().trim().maxLength(255).optional(),
+    startTime: vine.string().transform((v) => parseUtcFromIso(v)),
+    endTime: vine.string().transform((v) => parseUtcFromIso(v)),
+    reason: vine.string().trim().maxLength(200).optional(),
     status: vine
       .enum(['pending', 'approved', 'denied', 'cancelled', 'finished'] as const)
       .optional(),
@@ -28,9 +29,9 @@ export const createAllocationValidator = vine.compile(
 
 export const extendAllocationValidator = vine.compile(
   vine.object({
-    // Quantidade de minutos que o usuário está pedindo a mais
-    additionalMinutes: vine.number().min(15).max(120),
-    reason: vine.string().trim().maxLength(255).optional(),
+    additionalMinutes: vine.number().min(15).max(120).optional(),
+    endTime: vine.string().trim().optional(),
+    reason: vine.string().trim().maxLength(200).optional(),
   })
 )
 
@@ -40,15 +41,9 @@ export const extendAllocationValidator = vine.compile(
  */
 export const updateAllocationValidator = vine.compile(
   vine.object({
-    startTime: vine
-      .date({ formats: ['iso8601'] })
-      .transform((value) => DateTime.fromJSDate(value))
-      .optional(),
-    endTime: vine
-      .date({ formats: ['iso8601'] })
-      .transform((value) => DateTime.fromJSDate(value))
-      .optional(),
-    reason: vine.string().trim().maxLength(255).nullable().optional(),
+    startTime: vine.string().transform((value) => parseUtcFromIso(value)).optional(),
+    endTime: vine.string().transform((value) => parseUtcFromIso(value)).optional(),
+    reason: vine.string().trim().maxLength(200).nullable().optional(),
     status: vine
       .enum(['pending', 'approved', 'denied', 'cancelled', 'finished'] as const)
       .optional(),
@@ -66,6 +61,8 @@ export const listAllocationsValidator = vine.compile(
     status: vine
       .enum(['pending', 'approved', 'denied', 'cancelled', 'finished'] as const)
       .optional(),
+    /** Admin: true = só ocultas pelo usuário; omitido/false = lista operacional (sem ocultas) */
+    userHidden: vine.boolean().optional(),
 
     // Paginação
     page: vine.number().positive().optional(),

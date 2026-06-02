@@ -46,30 +46,33 @@ export const useAuthStore = defineStore("auth", () => {
   async function fetchMe() {
     try {
       const { data } = await api.get<User>("/api/v1/me");
-      user.value = data;
-      localStorage.setItem("user", JSON.stringify(data));
+      persistUser(data);
     } catch {
       await logout();
     }
   }
 
-  async function updateProfile(
-    id: number,
-    payload: { fullName?: string; email?: string; password?: string },
-  ) {
-    const { data } = await api.put<User>(`/api/v1/users/${id}`, payload);
+  function persistUser(data: User) {
     user.value = data;
     localStorage.setItem("user", JSON.stringify(data));
+  }
+
+  /** Atualiza o perfil do usuário autenticado (rota /me — preserva role). */
+  async function updateProfile(payload: {
+    fullName?: string;
+    email?: string;
+    password?: string;
+  }) {
+    const { data } = await api.put<User>("/api/v1/users/me", payload);
+    persistUser(data);
     return data;
   }
 
-  // NOVO: Função dedicada para atualizar a chave SSH
   async function updateSshKey(sshPublicKey: string) {
     const { data } = await api.put<User>("/api/v1/users/me/ssh-key", {
       sshPublicKey,
     });
-    user.value = data;
-    localStorage.setItem("user", JSON.stringify(data));
+    persistUser(data);
     return data;
   }
 

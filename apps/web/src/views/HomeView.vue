@@ -1,18 +1,19 @@
 <script setup lang="ts">
 import CalendarGanttScroll from "@/components/CalendarGanttScroll.vue";
-import { ref, computed, onMounted } from "vue";
+import { ref, onMounted } from "vue";
 import { useAllocationsStore } from "@/stores/allocations";
 import { useMachinesStore } from "@/stores/machines";
 import { useAuthStore } from "@/stores/auth";
 import { useLabConfigStore } from "@/stores/labConfig";
-import type { Allocation, AllocationMetric } from "@/types";
+import type { Allocation } from "@/types";
+import { wallClockToUtcIso } from "@/utils/datetime";
+import { ALLOCATION_REASON_MAX_LENGTH } from "@/utils/allocationLabels";
 
 const allocationsStore = useAllocationsStore();
 const machinesStore = useMachinesStore();
 const auth = useAuthStore();
 const lab = useLabConfigStore();
 
-const loading = ref(true);
 const showForm = ref(false);
 
 /* ---- Calendar allocations for Gantt ---- */
@@ -38,17 +39,8 @@ async function loadGanttAllocations() {
 }
 
 onMounted(async () => {
-  try {
-    await Promise.all([
-      allocationsStore.fetchAllocations(
-        auth.user ? { userId: auth.user.id } : undefined,
-      ),
-      machinesStore.fetchMachines(),
-    ]);
-    await loadGanttAllocations();
-  } finally {
-    loading.value = false;
-  }
+  await machinesStore.fetchMachines();
+  await loadGanttAllocations();
 });
 
 /* ---- Inline form (Multi-day allocations) ---- */
@@ -77,12 +69,6 @@ function openForm() {
   showForm.value = true;
 }
 
-// NOVO: Função para converter data + hora em ISO 8601
-function toLocalIso(date: string, time: string): string {
-  return new Date(`${date}T${time}:00`).toISOString();
-}
-
-// NOVO: Validação de datas e horários para multi-dia
 async function handleCreate() {
   formError.value = "";
 
@@ -98,16 +84,25 @@ async function handleCreate() {
     return;
   }
 
-  // Converter para Date para comparação
-  const startDateTime = new Date(
-    `${form.value.startDate}T${form.value.startTime}:00`,
-  );
-  const endDateTime = new Date(
-    `${form.value.endDate}T${form.value.endTime}:00`,
-  );
+  let startTime: string;
+  let endTime: string;
+  try {
+    startTime = wallClockToUtcIso(
+      form.value.startDate,
+      form.value.startTime,
+      lab.timezone,
+    );
+    endTime = wallClockToUtcIso(
+      form.value.endDate,
+      form.value.endTime,
+      lab.timezone,
+    );
+  } catch {
+    formError.value = "Data ou horário inválido.";
+    return;
+  }
 
-  // Validar se data/hora de fim é após início
-  if (endDateTime <= startDateTime) {
+  if (endTime <= startTime) {
     formError.value = "Data/horário de finalização deve ser após o início.";
     return;
   }
@@ -116,17 +111,12 @@ async function handleCreate() {
   try {
     await allocationsStore.createAllocation({
       machineId: Number(form.value.machineId),
-      startTime: toLocalIso(form.value.startDate, form.value.startTime),
-      endTime: toLocalIso(form.value.endDate, form.value.endTime),
-      reason: form.value.reason || undefined,
+      startTime,
+      endTime,
+      reason: form.value.reason.trim().slice(0, ALLOCATION_REASON_MAX_LENGTH) || undefined,
     });
     showForm.value = false;
-    await Promise.all([
-      allocationsStore.fetchAllocations(
-        auth.user ? { userId: auth.user.id } : undefined,
-      ),
-      loadGanttAllocations(),
-    ]);
+    await loadGanttAllocations();
   } catch (err: any) {
     const status = err.response?.status;
     if (status === 409)
@@ -136,115 +126,6 @@ async function handleCreate() {
     else formError.value = "Erro ao criar reserva.";
   } finally {
     formSaving.value = false;
-  }
-}
-
-/* ---- My allocations list ---- */
-const statusFilter = ref("all");
-
-const filtered = computed(() => {
-  if (statusFilter.value === "all") return allocationsStore.allocations;
-  return allocationsStore.allocations.filter(
-    (a) => a.status === statusFilter.value,
-  );
-});
-
-function machineName(a: Allocation): string {
-  if (a.machine) return a.machine.name;
-  const m = machinesStore.machines.find((m) => m.id === a.machineId);
-  return m ? m.name : `Máquina #${a.machineId}`;
-}
-
-function fmtDate(iso: string) {
-  return new Date(iso).toLocaleDateString("pt-BR", {
-    day: "2-digit",
-    month: "2-digit",
-    year: "numeric",
-  });
-}
-function fmtTime(iso: string) {
-  return new Date(iso).toLocaleTimeString("pt-BR", {
-    hour: "2-digit",
-    minute: "2-digit",
-  });
-}
-function fmtRange(start: string, end: string) {
-  return `${fmtDate(start)} ${fmtTime(start)} — ${fmtTime(end)}`;
-}
-
-function statusBadge(s: string) {
-  const map: Record<string, string> = {
-    pending: "badge-warning",
-    approved: "badge-success",
-    denied: "badge-danger",
-    cancelled: "badge-muted",
-    finished: "badge-info",
-  };
-  return map[s] || "badge-muted";
-}
-function statusLabel(s: string) {
-  const map: Record<string, string> = {
-    pending: "Pendente",
-    approved: "Aprovada",
-    denied: "Negada",
-    cancelled: "Cancelada",
-    finished: "Finalizada",
-  };
-  return map[s] || s;
-}
-
-const cancelling = ref<number | null>(null);
-async function handleCancel(id: number) {
-  if (!confirm("Cancelar esta reserva?")) return;
-  cancelling.value = id;
-  try {
-    await allocationsStore.cancelAllocation(id);
-  } finally {
-    cancelling.value = null;
-  }
-}
-
-const deleting = ref<number | null>(null);
-async function handleDelete(id: number) {
-  if (!confirm("Remover esta reserva do seu histórico?")) return;
-  deleting.value = id;
-  try {
-    await allocationsStore.softDeleteAllocation(id);
-  } finally {
-    deleting.value = null;
-  }
-}
-
-function canCancel(a: Allocation) {
-  return ["pending", "approved"].includes(a.status);
-}
-function canDelete(a: Allocation) {
-  return ["cancelled", "denied", "finished"].includes(a.status);
-}
-
-/* ---- Stats modal ---- */
-const statsModal = ref(false);
-const statsAllocation = ref<Allocation | null>(null);
-const statsData = ref<AllocationMetric | null>(null);
-const statsLoading = ref(false);
-const statsError = ref("");
-
-async function openStats(a: Allocation) {
-  if (a.status !== "finished") return;
-  statsAllocation.value = a;
-  statsData.value = null;
-  statsError.value = "";
-  statsModal.value = true;
-  statsLoading.value = true;
-  try {
-    statsData.value = await allocationsStore.fetchAllocationSummary(a.id);
-  } catch (err: any) {
-    const code = err.response?.data?.code;
-    if (code === "NO_SUMMARY")
-      statsError.value = "Esta alocação ainda não foi resumida.";
-    else statsError.value = "Erro ao carregar estatísticas.";
-  } finally {
-    statsLoading.value = false;
   }
 }
 </script>
@@ -352,13 +233,21 @@ async function openStats(a: Allocation) {
 
             <div class="field">
               <label class="field-label"
-                >Motivo <span class="text-muted">(opcional)</span></label
+                >Motivo
+                <span class="text-muted"
+                  >(opcional, máx. {{ ALLOCATION_REASON_MAX_LENGTH }})</span
+                ></label
               >
               <textarea
                 v-model="form.reason"
-                rows="2"
+                class="field-textarea"
+                rows="3"
+                :maxlength="ALLOCATION_REASON_MAX_LENGTH"
                 placeholder="Ex: Treinamento de modelo ML"
               ></textarea>
+              <span class="field-hint text-muted"
+                >{{ form.reason.length }}/{{ ALLOCATION_REASON_MAX_LENGTH }}</span
+              >
             </div>
             <p v-if="formError" class="error-text">{{ formError }}</p>
             <div class="panel-actions">
@@ -381,188 +270,10 @@ async function openStats(a: Allocation) {
         </div>
       </aside>
     </div>
-
-    <!-- ======== My Allocations List ======== -->
-    <section style="margin-top: 2rem">
-      <h2 class="section-title">Minhas Reservas</h2>
-      <div class="filter-tabs">
-        <button
-          v-for="opt in [
-            { key: 'all', label: 'Todas' },
-            { key: 'pending', label: 'Pendentes' },
-            { key: 'approved', label: 'Aprovadas' },
-            { key: 'finished', label: 'Finalizadas' },
-          ]"
-          :key="opt.key"
-          :class="['tab-btn', { active: statusFilter === opt.key }]"
-          @click="statusFilter = opt.key"
-        >
-          {{ opt.label }}
-        </button>
-      </div>
-
-      <div v-if="loading" class="empty-state">Carregando...</div>
-      <div v-else-if="filtered.length === 0" class="empty-state">
-        Nenhuma reserva
-        {{ statusFilter !== "all" ? "com esse filtro" : "encontrada" }}.
-      </div>
-
-      <div v-else class="alloc-grid">
-        <div
-          v-for="a in filtered"
-          :key="a.id"
-          class="card alloc-card"
-          :class="{ clickable: a.status === 'finished' }"
-          @click="a.status === 'finished' ? openStats(a) : undefined"
-        >
-          <div class="alloc-top">
-            <span class="alloc-machine">{{ machineName(a) }}</span>
-            <span :class="['badge', statusBadge(a.status)]">{{
-              statusLabel(a.status)
-            }}</span>
-          </div>
-          <div class="alloc-time">{{ fmtRange(a.startTime, a.endTime) }}</div>
-          <div v-if="a.reason" class="alloc-reason">{{ a.reason }}</div>
-          <div class="alloc-bottom">
-            <span class="text-muted" style="font-size: 0.78rem">
-              Criada em {{ fmtDate(a.createdAt) }}
-            </span>
-            <div style="display: flex; gap: 0.35rem; align-items: center">
-              <span
-                v-if="a.status === 'finished'"
-                class="text-info"
-                style="font-size: 0.78rem; cursor: pointer"
-                >Ver estatísticas →</span
-              >
-              <button
-                v-if="canCancel(a)"
-                class="btn btn-danger btn-sm"
-                :disabled="cancelling === a.id"
-                @click.stop="handleCancel(a.id)"
-              >
-                {{ cancelling === a.id ? "..." : "Cancelar" }}
-              </button>
-              <button
-                v-if="canDelete(a)"
-                class="btn btn-ghost btn-sm"
-                :disabled="deleting === a.id"
-                @click.stop="handleDelete(a.id)"
-              >
-                {{ deleting === a.id ? "..." : "Remover" }}
-              </button>
-            </div>
-          </div>
-        </div>
-      </div>
-    </section>
-
-    <!-- ======== Stats Modal ======== -->
-    <Teleport to="body">
-      <div
-        v-if="statsModal"
-        class="modal-overlay"
-        @click.self="statsModal = false"
-      >
-        <div class="modal-glass fade-in" style="max-width: 520px">
-          <div class="modal-header">
-            <h2 class="modal-title">Estatísticas de Uso</h2>
-            <button class="btn-close" @click="statsModal = false">✕</button>
-          </div>
-          <div class="modal-body">
-            <div v-if="statsAllocation" style="margin-bottom: 0.75rem">
-              <span style="font-weight: 600">{{
-                machineName(statsAllocation)
-              }}</span>
-              <span
-                class="text-secondary"
-                style="margin-left: 0.5rem; font-size: 0.85rem"
-              >
-                {{
-                  fmtRange(statsAllocation.startTime, statsAllocation.endTime)
-                }}
-              </span>
-            </div>
-            <div v-if="statsLoading" class="empty-state" style="padding: 2rem">
-              Carregando...
-            </div>
-            <div
-              v-else-if="statsError"
-              class="empty-state"
-              style="padding: 2rem"
-            >
-              {{ statsError }}
-            </div>
-            <div v-else-if="statsData" class="stats-grid">
-              <div class="stat-mini">
-                <span class="stat-mini-label">Duração</span>
-                <span class="stat-mini-val"
-                  >{{ statsData.sessionDurationMinutes }} min</span
-                >
-              </div>
-              <div class="stat-mini">
-                <span class="stat-mini-label">CPU Média</span>
-                <span class="stat-mini-val"
-                  >{{ statsData.avgCpuUsage.toFixed(1) }}%</span
-                >
-              </div>
-              <div class="stat-mini">
-                <span class="stat-mini-label">CPU Máx</span>
-                <span class="stat-mini-val"
-                  >{{ statsData.maxCpuUsage.toFixed(1) }}%</span
-                >
-              </div>
-              <div class="stat-mini">
-                <span class="stat-mini-label">CPU Temp Máx</span>
-                <span class="stat-mini-val"
-                  >{{ statsData.maxCpuTemp.toFixed(0) }}°C</span
-                >
-              </div>
-              <div class="stat-mini">
-                <span class="stat-mini-label">GPU Média</span>
-                <span class="stat-mini-val"
-                  >{{ statsData.avgGpuUsage.toFixed(1) }}%</span
-                >
-              </div>
-              <div class="stat-mini">
-                <span class="stat-mini-label">GPU Máx</span>
-                <span class="stat-mini-val"
-                  >{{ statsData.maxGpuUsage.toFixed(1) }}%</span
-                >
-              </div>
-              <div class="stat-mini">
-                <span class="stat-mini-label">GPU Temp Máx</span>
-                <span class="stat-mini-val"
-                  >{{ statsData.maxGpuTemp.toFixed(0) }}°C</span
-                >
-              </div>
-              <div class="stat-mini">
-                <span class="stat-mini-label">RAM Média</span>
-                <span class="stat-mini-val"
-                  >{{ statsData.avgRamUsage.toFixed(1) }}%</span
-                >
-              </div>
-              <div class="stat-mini">
-                <span class="stat-mini-label">RAM Máx</span>
-                <span class="stat-mini-val"
-                  >{{ statsData.maxRamUsage.toFixed(1) }}%</span
-                >
-              </div>
-            </div>
-          </div>
-        </div>
-      </div>
-    </Teleport>
   </div>
 </template>
 
 <style scoped>
-.section-title {
-  font-size: 1.1rem;
-  font-weight: 600;
-  color: var(--text-primary);
-  margin-bottom: 1rem;
-}
-
 /* ---- Side-by-side layout ---- */
 .layout-row {
   display: flex;
@@ -613,136 +324,6 @@ async function openStats(a: Allocation) {
   justify-content: flex-end;
   gap: 0.75rem;
   margin-top: 0.25rem;
-}
-
-/* ---- Filter tabs ---- */
-.filter-tabs {
-  display: flex;
-  gap: 0.25rem;
-  margin-bottom: 1.25rem;
-  flex-wrap: wrap;
-}
-.tab-btn {
-  padding: 0.4rem 0.9rem;
-  border-radius: 8px;
-  font-size: 0.85rem;
-  font-weight: 500;
-  color: var(--text-secondary);
-  background: transparent;
-  border: 1px solid transparent;
-  transition: all var(--transition);
-}
-.tab-btn:hover {
-  color: var(--text-primary);
-  background: var(--bg-hover);
-}
-.tab-btn.active {
-  color: var(--accent);
-  background: var(--accent-soft);
-  border-color: rgba(124, 108, 240, 0.15);
-}
-
-/* ---- Alloc grid ---- */
-.alloc-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(340px, 1fr));
-  gap: 1rem;
-}
-.alloc-card {
-  display: flex;
-  flex-direction: column;
-  gap: 0.6rem;
-}
-.alloc-card.clickable {
-  cursor: pointer;
-}
-.alloc-card.clickable:hover {
-  border-color: rgba(96, 165, 250, 0.25);
-}
-.alloc-top {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-}
-.alloc-machine {
-  font-weight: 600;
-  font-size: 1rem;
-}
-.alloc-time {
-  font-size: 0.88rem;
-  color: var(--text-secondary);
-}
-.alloc-reason {
-  font-size: 0.85rem;
-  color: var(--text-muted);
-  font-style: italic;
-}
-.alloc-bottom {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  margin-top: 0.25rem;
-}
-
-/* ---- Stats modal ---- */
-.modal-overlay {
-  position: fixed;
-  inset: 0;
-  background: rgba(0, 0, 0, 0.6);
-  backdrop-filter: blur(4px);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  z-index: 100;
-  padding: 1rem;
-}
-.modal-glass {
-  background: var(--bg-card-solid);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-xl);
-  box-shadow: var(--shadow-elevated);
-  width: 100%;
-}
-.modal-header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding: 1.25rem 1.5rem;
-  border-bottom: 1px solid var(--border-subtle);
-}
-.modal-title {
-  font-size: 1.1rem;
-  font-weight: 600;
-}
-.modal-body {
-  padding: 1.5rem;
-}
-
-.stats-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(130px, 1fr));
-  gap: 0.75rem;
-}
-.stat-mini {
-  background: var(--bg-input);
-  border: 1px solid var(--border-subtle);
-  border-radius: var(--radius);
-  padding: 0.65rem 0.75rem;
-  display: flex;
-  flex-direction: column;
-  gap: 0.2rem;
-}
-.stat-mini-label {
-  font-size: 0.68rem;
-  font-weight: 600;
-  text-transform: uppercase;
-  letter-spacing: 0.04em;
-  color: var(--text-muted);
-}
-.stat-mini-val {
-  font-size: 1.05rem;
-  font-weight: 700;
-  color: var(--text-primary);
 }
 
 @media (max-width: 900px) {

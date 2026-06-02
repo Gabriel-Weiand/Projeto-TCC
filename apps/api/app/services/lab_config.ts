@@ -13,6 +13,22 @@ function envString(key: string, fallback: string): string {
   return raw && raw.length > 0 ? raw : fallback
 }
 
+function envBool(key: string, fallback: boolean): boolean {
+  const raw = process.env[key]?.trim().toLowerCase()
+  if (!raw) return fallback
+  return ['1', 'true', 'yes', 'on'].includes(raw)
+}
+
+/** Nomes dos responsáveis visíveis no calendário para usuários não-admin. */
+export function isAllocationPublicNamesEnabled(): boolean {
+  return envBool('LAB_ALLOCATION_PUBLIC_NAMES', false)
+}
+
+/** Admin sempre vê; demais usuários conforme LAB_ALLOCATION_PUBLIC_NAMES. */
+export function canSeeAllocationOwnerNames(userRole: string): boolean {
+  return userRole === 'admin' || isAllocationPublicNamesEnabled()
+}
+
 function envIntList(key: string, fallback: number[]): number[] {
   const raw = process.env[key]
   if (!raw) return fallback
@@ -54,6 +70,8 @@ export const labConfig = {
     /** Horário local do parque (0–24) para reservas; 0 e 24 = sem restrição de faixa */
     scheduleStartHour: envInt('LAB_SCHEDULE_START_HOUR', 0),
     scheduleEndHour: envInt('LAB_SCHEDULE_END_HOUR', 24),
+    /** true = calendário/histórico da máquina exibe quem reservou; false = só admin */
+    publicNames: isAllocationPublicNamesEnabled(),
   },
 
   schedulers: {
@@ -82,7 +100,10 @@ export function labPublicConfig() {
       localDate: now.toISODate()!,
     },
     calendar: { ...labConfig.calendar },
-    allocation: { ...labConfig.allocation },
+    allocation: {
+      ...labConfig.allocation,
+      publicNames: isAllocationPublicNamesEnabled(),
+    },
     auth: {
       tokenExpiresIn: labConfig.auth.tokenExpiresIn,
     },

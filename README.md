@@ -557,7 +557,8 @@ npm install
 # Configure o ambiente
 cp .env.example .env
 # Ajuste TZ para o fuso do laboratório (ex.: America/Sao_Paulo).
-# Opcional: limites do calendário, validade do token (LAB_* no .env.example).
+# Opcional: limites do calendário, validade do token, nomes públicos no Gantt
+# (LAB_ALLOCATION_PUBLIC_NAMES=true — ver LAB_* em .env.example).
 
 # Execute as migrations
 node ace migration:run

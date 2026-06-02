@@ -882,7 +882,12 @@ Listar alocações de uma máquina.
 }
 ```
 
-**Response para Usuário Normal (200) - Anonimizado:**
+**Response para Usuário Normal (200):**
+
+Sem `userId`, `reason` nem métricas de terceiros. Inclui `isOwn` quando a reserva é do usuário autenticado.
+
+- `LAB_ALLOCATION_PUBLIC_NAMES=false` (padrão): sem objeto `user`.
+- `LAB_ALLOCATION_PUBLIC_NAMES=true`: `user: { id, fullName }` em cada item (motivo continua só para admin).
 
 ```json
 {
@@ -893,11 +898,14 @@ Listar alocações de uma máquina.
       "machineId": 1,
       "startTime": "2026-01-28T08:00:00.000Z",
       "endTime": "2026-01-28T12:00:00.000Z",
-      "status": "approved"
+      "status": "approved",
+      "isOwn": false
     }
   ]
 }
 ```
+
+A flag também aparece em `GET /api/config` → `allocation.publicNames`.
 
 ---
 

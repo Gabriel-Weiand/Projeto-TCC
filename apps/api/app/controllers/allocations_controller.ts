@@ -10,7 +10,8 @@ import {
   listAllocationsValidator,
 } from '#validators/allocation'
 import { extendAllocationValidator } from '#validators/allocation'
-import { assertAllocationEndWithinLimit } from '#services/lab_config'
+import { assertAllocationEndWithinLimit, canSeeAllocationOwnerNames } from '#services/lab_config'
+import { parseUtcFromIso } from '#utils/datetime'
 
 export default class AllocationsController {
   /**
@@ -51,6 +52,7 @@ export default class AllocationsController {
       userId,
       machineId,
       status,
+      userHidden,
       page = 1,
       limit = 20,
     } = await request.validateUsing(listAllocationsValidator)
@@ -60,9 +62,14 @@ export default class AllocationsController {
     // User normal só vê suas próprias alocações (excluindo as ocultas)
     if (user.role !== 'admin') {
       query = query.where('userId', user.id).where('userHidden', false)
-    } else if (userId) {
-      // Admin pode filtrar por userId
-      query = query.where('userId', userId)
+    } else {
+      if (userId) query = query.where('userId', userId)
+      // Lista operacional: sem ocultas; ?userHidden=true → apenas removidas pelo usuário
+      if (userHidden === true) {
+        query = query.where('userHidden', true)
+      } else {
+        query = query.where('userHidden', false)
+      }
     }
 
     if (machineId) query = query.where('machineId', machineId)
@@ -149,7 +156,13 @@ export default class AllocationsController {
   async extend({ auth, params, request, response }: HttpContext) {
     const user = auth.user!
     const allocation = await Allocation.findOrFail(params.id)
-    const { additionalMinutes } = await request.validateUsing(extendAllocationValidator)
+    const { additionalMinutes, endTime } = await request.validateUsing(extendAllocationValidator)
+
+    if (!additionalMinutes && !endTime) {
+      return response.badRequest({
+        message: 'Informe additionalMinutes ou endTime.',
+      })
+    }
 
     if (user.role !== 'admin' && allocation.userId !== user.id) {
       return response.forbidden({ message: 'Apenas o dono pode estender a alocação.' })
@@ -169,7 +182,25 @@ export default class AllocationsController {
       })
     }
 
-    const newEnd = end.plus({ minutes: additionalMinutes })
+    let newEnd: DateTime
+    if (endTime) {
+      try {
+        newEnd = parseUtcFromIso(endTime)
+      } catch {
+        return response.badRequest({
+          code: 'INVALID_END_TIME',
+          message: 'Horário de término inválido.',
+        })
+      }
+      if (newEnd <= end) {
+        return response.badRequest({
+          code: 'INVALID_RANGE',
+          message: 'A nova finalização deve ser posterior ao fim atual da reserva.',
+        })
+      }
+    } else {
+      newEnd = end.plus({ minutes: additionalMinutes! })
+    }
     const futureLimitMsg = assertAllocationEndWithinLimit(newEnd)
     if (futureLimitMsg) {
       return response.badRequest({
@@ -178,13 +209,26 @@ export default class AllocationsController {
       })
     }
 
+    const conflict = await Allocation.query()
+      .where('machineId', allocation.machineId)
+      .whereIn('status', ['approved', 'pending'])
+      .whereNot('id', allocation.id)
+      .where('startTime', '<', newEnd.toSQL()!)
+      .where('endTime', '>', allocation.startTime.toSQL()!)
+      .first()
+
+    if (conflict) {
+      return response.conflict({
+        code: 'ALLOCATION_CONFLICT',
+        message: 'A extensão conflita com outra reserva nesta máquina.',
+      })
+    }
+
     allocation.endTime = newEnd
     await allocation.save()
+    await allocation.load('machine')
 
-    return response.ok({
-      message: `Alocação estendida em ${additionalMinutes} minutos com sucesso.`,
-      newEndTime: allocation.endTime.toISO(),
-    })
+    return response.ok(allocation)
   }
 
   /**
@@ -245,7 +289,8 @@ export default class AllocationsController {
 
   /**
    * Soft-delete de uma alocação pelo usuário.
-   * Oculta a alocação do histórico do usuário, mas mantém o registro para o admin.
+   * Oculta a alocação do histórico do usuário e da lista operacional do admin;
+   * o registro permanece consultável em GET /allocations?userHidden=true (admin).
    * - Se a alocação está pendente/aprovada e ainda não começou → cancela + oculta
    * - Se a alocação já foi finalizada/cancelada/negada → apenas oculta
    * - Não permite ocultar alocação em andamento
@@ -311,44 +356,48 @@ export default class AllocationsController {
 
   /**
    * Histórico de alocações de uma máquina.
-   * - User normal: vê apenas horários (anonimizado)
-   * - Admin: vê tudo incluindo dados do usuário
+   * - Admin: vê tudo (usuário, motivo, métricas)
+   * - User: horários + isOwn; nomes se LAB_ALLOCATION_PUBLIC_NAMES=true
    *
    * GET /api/v1/machines/:id/allocations
    */
   async machineHistory({ auth, params, request, response }: HttpContext) {
     const user = auth.user!
     const { page = 1, limit = 20 } = request.qs()
+    const showOwnerNames = canSeeAllocationOwnerNames(user.role)
 
     const query = Allocation.query()
       .where('machineId', params.id)
       .preload('metric')
       .orderBy('startTime', 'desc')
 
-    // Admin vê dados do usuário, user normal não
-    if (user.role === 'admin') {
+    if (showOwnerNames) {
       query.preload('user')
     }
 
     const allocations = await query.paginate(page, limit)
 
-    // Para user normal, retorna apenas dados anonimizados
-    // isOwn indica se a alocação pertence ao próprio usuário autenticado
-    if (user.role !== 'admin') {
-      const anonymized = allocations.serialize()
-      anonymized.data = anonymized.data.map((allocation: Record<string, unknown>) => ({
+    if (user.role === 'admin') {
+      return response.ok(allocations)
+    }
+
+    const serialized = allocations.serialize()
+    serialized.data = serialized.data.map((allocation: Record<string, unknown>) => {
+      const row: Record<string, unknown> = {
         id: allocation.id,
         machineId: allocation.machineId,
         startTime: allocation.startTime,
         endTime: allocation.endTime,
         status: allocation.status,
         isOwn: allocation.userId === user.id,
-        // Sem userId de terceiros, user, reason, metric
-      }))
-      return response.ok(anonymized)
-    }
-
-    return response.ok(allocations)
+      }
+      if (showOwnerNames && allocation.user) {
+        const u = allocation.user as { id: number; fullName: string }
+        row.user = { id: u.id, fullName: u.fullName }
+      }
+      return row
+    })
+    return response.ok(serialized)
   }
 
   /**

@@ -201,6 +201,40 @@ test.group('Allocations', (group) => {
     assert.closeTo(diffMins, 30, 1)
   })
 
+  test('usuário deve estender informando novo endTime', async ({ client, assert }) => {
+    const user = await User.create({
+      fullName: 'Ext End',
+      email: 'extendend@teste.com',
+      password: '123',
+      role: 'user',
+    })
+    const machine = await Machine.create({
+      name: 'PC-EXT-END',
+      description: 'Lab',
+      status: 'available',
+    })
+
+    const endTime = DateTime.utc().plus({ minutes: 20 })
+    const allocation = await Allocation.create({
+      userId: user.id,
+      machineId: machine.id,
+      startTime: DateTime.utc().minus({ minutes: 10 }),
+      endTime,
+      status: 'approved',
+    })
+
+    const newEnd = endTime.plus({ hours: 2 }).toISO()
+
+    const response = await client
+      .post(`/api/v1/allocations/${allocation.id}/extend`)
+      .loginAs(user)
+      .json({ endTime: newEnd })
+
+    response.assertStatus(200)
+    await allocation.refresh()
+    assert.equal(allocation.endTime.toISO(), newEnd)
+  })
+
   test('deve negar extensão se a alocação já tiver passado do grace period', async ({ client }) => {
     const user = await User.create({
       fullName: 'Teste',
@@ -229,6 +263,42 @@ test.group('Allocations', (group) => {
     response.assertBodyContains({
       message: 'O tempo limite para extensão expirou (Grace Period encerrado).',
     })
+  })
+
+  test('deve negar extensão se conflitar com outra reserva', async ({ client }) => {
+    const user = await User.create({
+      fullName: 'Ext Conflict',
+      email: 'extconf@teste.com',
+      password: '123',
+      role: 'user',
+    })
+    const machine = await Machine.create({ name: 'PC-01', description: 'Lab', status: 'available' })
+
+    const endTime = DateTime.utc().plus({ minutes: 20 })
+
+    const mine = await Allocation.create({
+      userId: user.id,
+      machineId: machine.id,
+      startTime: DateTime.utc().minus({ minutes: 10 }),
+      endTime: endTime,
+      status: 'approved',
+    })
+
+    await Allocation.create({
+      userId: user.id,
+      machineId: machine.id,
+      startTime: endTime.plus({ minutes: 15 }),
+      endTime: endTime.plus({ hours: 1 }),
+      status: 'approved',
+    })
+
+    const response = await client
+      .post(`/api/v1/allocations/${mine.id}/extend`)
+      .loginAs(user)
+      .json({ additionalMinutes: 30 })
+
+    response.assertStatus(409)
+    response.assertBodyContains({ code: 'ALLOCATION_CONFLICT' })
   })
 
   // =========================================================================
@@ -311,7 +381,56 @@ test.group('Allocations', (group) => {
     assert.isTrue(allocation.userHidden) // Oculto com sucesso
   })
 
-  test('admin deve listar TODAS as alocações (Index)', async ({ client, assert }) => {
+  test('admin não vê alocações ocultas na lista operacional', async ({ client, assert }) => {
+    const admin = await User.create({
+      fullName: 'Admin',
+      email: 'adminhide@teste.com',
+      password: '123',
+      role: 'admin',
+    })
+    const user = await User.create({
+      fullName: 'User',
+      email: 'userhide@teste.com',
+      password: '123',
+      role: 'user',
+    })
+    const machine = await Machine.create({
+      name: 'PC-HIDE-ADM',
+      description: 'Lab',
+      status: 'available',
+    })
+    await Allocation.create({
+      userId: user.id,
+      machineId: machine.id,
+      startTime: DateTime.utc().minus({ hours: 2 }),
+      endTime: DateTime.utc().minus({ hours: 1 }),
+      status: 'finished',
+      userHidden: true,
+    })
+    await Allocation.create({
+      userId: user.id,
+      machineId: machine.id,
+      startTime: DateTime.utc().plus({ hours: 1 }),
+      endTime: DateTime.utc().plus({ hours: 2 }),
+      status: 'approved',
+      userHidden: false,
+    })
+
+    const active = await client.get('/api/v1/allocations').loginAs(admin)
+    active.assertStatus(200)
+    assert.equal(active.body().meta.total, 1)
+    assert.isFalse(active.body().data[0].userHidden)
+
+    const hidden = await client
+      .get('/api/v1/allocations')
+      .qs({ userHidden: true })
+      .loginAs(admin)
+    hidden.assertStatus(200)
+    assert.equal(hidden.body().meta.total, 1)
+    assert.isTrue(hidden.body().data[0].userHidden)
+  })
+
+  test('admin deve listar alocações ativas no index', async ({ client, assert }) => {
     const admin = await User.create({
       fullName: 'Admin',
       email: 'adminlist@teste.com',

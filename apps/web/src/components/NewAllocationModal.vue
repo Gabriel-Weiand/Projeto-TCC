@@ -1,12 +1,16 @@
 <script setup lang="ts">
 import { ref, reactive } from "vue";
 import { useAllocationsStore } from "@/stores/allocations";
+import { useLabConfigStore } from "@/stores/labConfig";
 import type { Machine } from "@/types";
+import { wallClockToUtcIso } from "@/utils/datetime";
+import { ALLOCATION_REASON_MAX_LENGTH } from "@/utils/allocationLabels";
 
 const props = defineProps<{ machines: Machine[] }>();
 const emit = defineEmits<{ close: []; created: [] }>();
 
 const allocations = useAllocationsStore();
+const lab = useLabConfigStore();
 
 const form = reactive({
   machineId: "" as string | number,
@@ -18,10 +22,6 @@ const form = reactive({
 
 const saving = ref(false);
 const error = ref("");
-
-function toLocalIso(date: string, time: string): string {
-  return new Date(`${date}T${time}:00`).toISOString();
-}
 
 async function handleCreate() {
   error.value = "";
@@ -36,16 +36,24 @@ async function handleCreate() {
     return;
   }
 
-  const startTime = toLocalIso(form.date, form.startTime);
-  const endTime = toLocalIso(form.date, form.endTime);
+  let startTime: string;
+  let endTime: string;
+  try {
+    startTime = wallClockToUtcIso(form.date, form.startTime, lab.timezone);
+    endTime = wallClockToUtcIso(form.date, form.endTime, lab.timezone);
+  } catch {
+    error.value = "Data ou horário inválido.";
+    return;
+  }
 
   saving.value = true;
   try {
     await allocations.createAllocation({
       machineId: Number(form.machineId),
-      startTime, // Convertido para UTC via toLocalIso
-      endTime, // Convertido para UTC via toLocalIso
-      reason: form.reason || undefined,
+      startTime,
+      endTime,
+      reason:
+        form.reason.trim().slice(0, ALLOCATION_REASON_MAX_LENGTH) || undefined,
     });
     emit("created");
   } catch (err: any) {
@@ -111,13 +119,21 @@ async function handleCreate() {
 
           <div class="field">
             <label class="field-label"
-              >Motivo <span class="text-muted">(opcional)</span></label
+              >Motivo
+              <span class="text-muted"
+                >(opcional, máx. {{ ALLOCATION_REASON_MAX_LENGTH }})</span
+              ></label
             >
             <textarea
               v-model="form.reason"
-              rows="2"
+              class="field-textarea"
+              rows="3"
+              :maxlength="ALLOCATION_REASON_MAX_LENGTH"
               placeholder="Ex: Treinamento de modelo ML"
             ></textarea>
+            <span class="field-hint text-muted"
+              >{{ form.reason.length }}/{{ ALLOCATION_REASON_MAX_LENGTH }}</span
+            >
           </div>
 
           <p v-if="error" class="error-text">{{ error }}</p>
