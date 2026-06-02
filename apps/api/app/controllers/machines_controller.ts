@@ -54,6 +54,39 @@ export default class MachinesController {
     }
   }
 
+  /** Partições vindas do agente (JSON) — id estável para keys no front. */
+  private mapMachineDisks(disks: unknown) {
+    if (!Array.isArray(disks)) return []
+    return disks.map((d: Record<string, unknown>, index: number) => ({
+      id: typeof d.id === 'number' ? d.id : index,
+      device: d.device,
+      mountpoint: d.mountpoint,
+      fstype: d.fstype ?? null,
+      totalGb: d.totalGb ?? null,
+      freeGb: d.freeGb ?? null,
+    }))
+  }
+
+  private serializeMachineForApi(machine: Machine, rawTelemetry: unknown) {
+    const serialized = machine.serialize() as Record<string, unknown>
+    const group = machine.group
+
+    return {
+      ...serialized,
+      totalDiskGb: machine.totalDiskGb,
+      machineGroupId: machine.machineGroupId,
+      group: group
+        ? {
+            id: group.id,
+            title: group.title,
+            description: group.description,
+          }
+        : null,
+      latestTelemetry: this.normalizeTelemetry(rawTelemetry),
+      disks: this.mapMachineDisks(machine.disks),
+    }
+  }
+
   /**
    * Lista todas as máquinas.
    *
@@ -61,26 +94,11 @@ export default class MachinesController {
    */
   async index({ auth, response }: HttpContext) {
     const user = auth.user!
-    const machines = await Machine.query().orderBy('name', 'asc')
+    const machines = await Machine.query().preload('group').orderBy('name', 'asc')
 
-    // Adiciona telemetria real-time de cada máquina
-    const machinesWithTelemetry = machines.map((machine) => {
-      const raw = telemetryBuffer.getLatest(machine.id)
-      const serialized = machine.serialize()
-
-      return {
-        ...serialized,
-        latestTelemetry: this.normalizeTelemetry(raw),
-        disks: (machine.disks || []).map((d) => ({
-          id: d.id,
-          device: d.device,
-          mountpoint: d.mountpoint,
-          fstype: d.fstype,
-          totalGb: d.totalGb,
-          freeGb: d.freeGb,
-        })),
-      }
-    })
+    const machinesWithTelemetry = machines.map((machine) =>
+      this.serializeMachineForApi(machine, telemetryBuffer.getLatest(machine.id))
+    )
 
     return response.ok(machinesWithTelemetry)
   }
@@ -115,24 +133,13 @@ export default class MachinesController {
   async show({ auth, params, response }: HttpContext) {
     const user = auth.user!
     const machine = await Machine.findOrFail(params.id)
+    await machine.load('group')
 
-    // Adiciona telemetria real-time (normalizada)
-    const raw = telemetryBuffer.getLatest(machine.id)
+    const serialized = this.serializeMachineForApi(
+      machine,
+      telemetryBuffer.getLatest(machine.id)
+    ) as Record<string, unknown>
 
-    const serialized: Record<string, unknown> = {
-      ...machine.serialize(),
-      latestTelemetry: this.normalizeTelemetry(raw),
-      disks: (machine.disks || []).map((d) => ({
-        id: d.id,
-        device: d.device,
-        mountpoint: d.mountpoint,
-        fstype: d.fstype,
-        totalGb: d.totalGb,
-        freeGb: d.freeGb,
-      })),
-    }
-
-    // Apenas admin pode ver o token
     if (user.role === 'admin') {
       serialized.token = machine.token
     }

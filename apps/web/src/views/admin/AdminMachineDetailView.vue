@@ -2,21 +2,24 @@
 import { ref, onMounted, onUnmounted, computed } from "vue";
 import { useRoute, useRouter } from "vue-router";
 import { useMachinesStore } from "@/stores/machines";
-import { useAllocationsStore } from "@/stores/allocations";
 import { useTelemetryPlayback } from "@/composables/useTelemetryPlayback";
+import MachineTelemetryPanel from "@/components/MachineTelemetryPanel.vue";
+import MachineLiveSections from "@/components/MachineLiveSections.vue";
+import CalendarGanttScroll from "@/components/CalendarGanttScroll.vue";
 import type { Machine, Allocation } from "@/types";
 
 const route = useRoute();
 const router = useRouter();
 const machinesStore = useMachinesStore();
-const allocationsStore = useAllocationsStore();
 
-const machineId = Number(route.params.id);
+const machineId = computed(() => Number(route.params.id));
 const machine = ref<Machine | null>(null);
 const allocations = ref<Allocation[]>([]);
 const loading = ref(true);
+const tokenModal = ref(false);
+const debugRefreshing = ref(false);
+const debugStreamPreview = ref<unknown>(null);
 
-// Telemetry playback (1/s)
 const {
   current: telemetry,
   start: startPlayback,
@@ -28,22 +31,23 @@ let refreshInterval: ReturnType<typeof setInterval> | null = null;
 onMounted(async () => {
   try {
     const [m, allocs] = await Promise.all([
-      machinesStore.fetchMachine(machineId),
-      machinesStore.fetchMachineAllocations(machineId, { limit: 20 }),
+      machinesStore.fetchMachine(machineId.value),
+      machinesStore.fetchMachineAllocations(machineId.value, { limit: 200 }),
     ]);
     machine.value = m;
     allocations.value = allocs.data || [];
-
     startPlayback();
 
     refreshInterval = setInterval(async () => {
       try {
-        const allocs = await machinesStore.fetchMachineAllocations(machineId, {
-          limit: 20,
-        });
+        const [m, allocs] = await Promise.all([
+          machinesStore.fetchMachine(machineId.value),
+          machinesStore.fetchMachineAllocations(machineId.value, { limit: 200 }),
+        ]);
+        machine.value = m;
         allocations.value = allocs.data || [];
       } catch {
-        // silently ignore
+        /* ignore */
       }
     }, 30_000);
   } finally {
@@ -53,53 +57,95 @@ onMounted(async () => {
 
 onUnmounted(() => {
   stopPlayback();
-  if (refreshInterval) {
-    clearInterval(refreshInterval);
-    refreshInterval = null;
+  if (refreshInterval) clearInterval(refreshInterval);
+});
+
+const liveData = computed(
+  () => telemetry.value || machine.value?.latestTelemetry || null,
+);
+
+const ganttMachines = computed(() => (machine.value ? [machine.value] : []));
+
+type ActiveUserRow = {
+  key: string;
+  username: string;
+  terminal: string;
+  host: string;
+  isSsh: boolean;
+  source: string;
+};
+
+const activeUserRows = computed((): ActiveUserRow[] => {
+  const rows: ActiveUserRow[] = [];
+  const seen = new Set<string>();
+
+  const tele = liveData.value?.activeUsers;
+  if (Array.isArray(tele)) {
+    for (const raw of tele) {
+      const u = raw as Record<string, unknown>;
+      const username = String(u.username ?? "—");
+      const terminal = String(u.terminal ?? "—");
+      const host = String(u.host ?? "—");
+      const key = `${username}|${terminal}|${host}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      rows.push({
+        key,
+        username,
+        terminal,
+        host,
+        isSsh: Boolean(u.isSsh),
+        source: "telemetria",
+      });
+    }
   }
+
+  const hb = machine.value?.currentSessions;
+  if (Array.isArray(hb)) {
+    for (const raw of hb) {
+      const username =
+        typeof raw === "string"
+          ? raw
+          : String((raw as { username?: string }).username ?? raw);
+      if (rows.some((r) => r.username === username)) continue;
+      rows.push({
+        key: `hb-${username}`,
+        username,
+        terminal: "—",
+        host: "(heartbeat)",
+        isSsh: false,
+        source: "heartbeat",
+      });
+    }
+  }
+  return rows;
 });
 
-const liveData = computed(() => {
-  return telemetry.value || machine.value?.latestTelemetry || null;
-});
+const apiDebugJson = computed(() => ({
+  systemUsername: machine.value?.systemUsername ?? null,
+  currentSessions: machine.value?.currentSessions ?? null,
+  activeUsersTelemetry: liveData.value?.activeUsers ?? null,
+  telemetryPreset: machine.value?.telemetryPreset ?? null,
+  telemetrySet: machine.value?.customAgentConfig?.telemetrySet ?? null,
+  diskIO: {
+    readMbps: liveData.value?.diskReadMbps ?? null,
+    writeMbps: liveData.value?.diskWriteMbps ?? null,
+  },
+  streamPreview: debugStreamPreview.value,
+}));
 
-// Calcula a porcentagem on-the-fly (lembrando que os valores vêm multiplicados por 10)
-function calcUsagePct(used: number | null | undefined, total: number | null | undefined): string {
-  if (used == null || total == null || total === 0) return "—";
-  return ((used / total) * 100).toFixed(1);
-}
-
-// Determina a cor com base no cálculo da porcentagem
-function calcUsageColor(used: number | null | undefined, total: number | null | undefined): string {
-  if (used == null || total == null || total === 0) return "var(--text-muted)";
-  const pct = (used / total) * 100;
-  if (pct < 50) return "var(--success)";
-  if (pct < 80) return "var(--warning)";
-  return "var(--danger)";
-}
-
-function usageColor(val: number | null | undefined): string {
-  if (val == null) return "var(--text-muted)";
-  if (val < 50) return "var(--success)";
-  if (val < 80) return "var(--warning)";
-  return "var(--danger)";
-}
-
-function tempColor(val: number | null | undefined): string {
-  if (val == null) return "var(--text-muted)";
-  if (val < 60) return "var(--success)";
-  if (val < 80) return "var(--warning)";
-  return "var(--danger)";
-}
-
-function fmtGb(val: number | null | undefined): string {
-  if (val == null) return "--";
-  return val.toFixed(1) + " GB";
-}
-
-function diskUsedPct(total: number | null, free: number | null): number {
-  if (!total || total <= 0 || free == null) return 0;
-  return Math.round(((total - free) / total) * 100);
+async function refreshFromApi() {
+  debugRefreshing.value = true;
+  try {
+    const [m, stream] = await Promise.all([
+      machinesStore.fetchMachine(machineId.value),
+      machinesStore.fetchTelemetryStream(machineId.value, 5),
+    ]);
+    machine.value = m;
+    debugStreamPreview.value = stream;
+  } finally {
+    debugRefreshing.value = false;
+  }
 }
 
 function statusBadge(s: string) {
@@ -122,344 +168,404 @@ function statusLabel(s: string) {
   return map[s] || s;
 }
 
-function allocStatusBadge(s: string) {
-  const map: Record<string, string> = {
-    pending: "badge-warning",
-    approved: "badge-success",
-    denied: "badge-danger",
-    cancelled: "badge-muted",
-    finished: "badge-info",
-  };
-  return map[s] || "badge-muted";
+function onTelemetrySaved(m: Machine) {
+  machine.value = m;
 }
 
-function allocStatusLabel(s: string) {
-  const map: Record<string, string> = {
-    pending: "Pendente",
-    approved: "Aprovada",
-    denied: "Negada",
-    cancelled: "Cancelada",
-    finished: "Finalizada",
-  };
-  return map[s] || s;
-}
-
-function fmtDate(iso: string) {
-  return new Date(iso).toLocaleDateString("pt-BR", {
-    day: "2-digit",
-    month: "2-digit",
-    year: "numeric",
-  });
-}
-
-function fmtTime(iso: string) {
-  return new Date(iso).toLocaleTimeString("pt-BR", {
-    hour: "2-digit",
-    minute: "2-digit",
-  });
-}
-
-async function handleStatusChange(alloc: Allocation, status: string) {
-  try {
-    const updated = await allocationsStore.updateAllocation(alloc.id, {
-      status,
-    });
-    const idx = allocations.value.findIndex((a) => a.id === alloc.id);
-    if (idx !== -1) allocations.value[idx] = updated;
-  } catch {
-    alert("Erro ao atualizar alocação.");
+function copyToken() {
+  if (machine.value?.token) {
+    navigator.clipboard.writeText(machine.value.token);
   }
 }
-
-function fmtPct(val: number | null | undefined): string {
-  if (val == null) return "—";
-  return val.toFixed(1);
-}
-
-function fmtTemp(val: number | null | undefined): string {
-  if (val == null) return "—";
-  return val.toFixed(1);
-}
-
-function fmtRamGb(val: number | null | undefined): string {
-  if (val == null) return "--";
-  return val.toFixed(1) + " GB";
-}
-
-// Computada para exibir usuários logados de forma reativa
-const activeUsersList = computed(() => {
-  const users = liveData.value?.activeUsers || machine.value?.activeUsers;
-  return users && users.length > 0 ? users.map((u: any) => u.username).join(', ') : "—";
-});
-
 </script>
 
 <template>
-  <div class="fade-in">
-    <div class="page-header">
-      <button class="btn btn-ghost btn-sm" @click="router.back()">
-        ← Voltar
-      </button>
-      <h1 class="page-title" v-if="machine">
-        {{ machine.name }}
-        <span
-          :class="['badge', statusBadge(machine.status)]"
-          style="font-size: 0.75rem; margin-left: 0.5rem"
-        >
-          {{ statusLabel(machine.status) }}
-        </span>
-      </h1>
-    </div>
+  <div class="fade-in admin-machine">
+    <button class="btn btn-ghost btn-sm" style="margin-bottom: 1rem" @click="router.back()">
+      ← Voltar
+    </button>
 
     <div v-if="loading" class="empty-state">Carregando...</div>
 
     <template v-else-if="machine">
-      <!-- ═══ TELEMETRIA LIVE ═══ -->
-      <h2 class="section-title">Telemetria em Tempo Real</h2>
-
-      <div v-if="liveData" class="telemetry-grid">
-        <div class="tele-card">
-          <span class="tele-label">CPU</span>
-          <div class="tele-value" :style="{ color: usageColor(liveData.cpuUsage) }">
-            {{ fmtPct(liveData.cpuUsage) }}%
-          </div>
-          <div class="progress-bar">
-            <div class="progress-fill" :style="{ width: ((liveData.cpuUsage ?? 0)) + '%', background: usageColor(liveData.cpuUsage) }"></div>
-          </div>
-          <div style="display: flex; justify-content: space-between;">
-            <span class="tele-sub" :style="{ color: tempColor(liveData.cpuTemp) }">
-              {{ fmtTemp(liveData.cpuTemp) }} °C
-            </span>
-            <span class="tele-sub" v-if="liveData.cpuFreqMhz" style="color: var(--text-muted)">
-              {{ liveData.cpuFreqMhz }} MHz
-            </span>
-          </div>
+      <div class="detail-header">
+        <div>
+          <h1 class="page-title" style="margin-bottom: 0.25rem">
+            {{ machine.name }}
+          </h1>
+          <p class="text-secondary" style="font-size: 0.9rem">
+            {{ machine.description || "Sem descrição" }}
+          </p>
         </div>
-
-        <div class="tele-card">
-          <span class="tele-label">GPU</span>
-          <div class="tele-value" :style="{ color: usageColor(liveData.gpuUsage) }">
-            {{ fmtPct(liveData.gpuUsage) }}%
-          </div>
-          <div class="progress-bar">
-            <div class="progress-fill" :style="{ width: ((liveData.gpuUsage ?? 0)) + '%', background: usageColor(liveData.gpuUsage) }"></div>
-          </div>
-          <span class="tele-sub" :style="{ color: tempColor(liveData.gpuTemp) }">
-            {{ fmtTemp(liveData.gpuTemp) }} °C
+        <div class="header-actions">
+          <span
+            :class="['badge', statusBadge(machine.status)]"
+            style="font-size: 0.85rem; padding: 0.35rem 0.9rem"
+          >
+            {{ statusLabel(machine.status) }}
           </span>
-        </div>
-
-        <div class="tele-card" v-if="liveData.ramTotalGb != null">
-          <span class="tele-label">RAM</span>
-          <div class="tele-value" :style="{ color: calcUsageColor(liveData.ramUsedGb, liveData.ramTotalGb) }">
-            {{ calcUsagePct(liveData.ramUsedGb, liveData.ramTotalGb) }}%
-          </div>
-          <div class="progress-bar">
-            <div class="progress-fill" :style="{ width: calcUsagePct(liveData.ramUsedGb, liveData.ramTotalGb) + '%', background: calcUsageColor(liveData.ramUsedGb, liveData.ramTotalGb) }"></div>
-          </div>
-          <span class="tele-sub">
-            {{ fmtRamGb(liveData.ramUsedGb) }} / {{ fmtRamGb(liveData.ramTotalGb) }}
-          </span>
-        </div>
-
-        <div class="tele-card" v-if="liveData.swapTotalGb != null">
-          <span class="tele-label">Swap</span>
-          <div class="tele-value" :style="{ color: calcUsageColor(liveData.swapUsedGb, liveData.swapTotalGb) }">
-            {{ calcUsagePct(liveData.swapUsedGb, liveData.swapTotalGb) }}%
-          </div>
-          <div class="progress-bar">
-            <div class="progress-fill" :style="{ width: calcUsagePct(liveData.swapUsedGb, liveData.swapTotalGb) + '%', background: calcUsageColor(liveData.swapUsedGb, liveData.swapTotalGb) }"></div>
-          </div>
-          <span class="tele-sub">
-            {{ fmtRamGb(liveData.swapUsedGb) }} / {{ fmtRamGb(liveData.swapTotalGb) }}
-          </span>
-        </div>
-
-        <div class="tele-card">
-          <span class="tele-label">Disco (I/O)</span>
-          <div class="tele-value" style="font-size: 1.1rem; line-height: 1.4; display: flex; flex-direction: column; justify-content: center;">
-            <span><span style="color: var(--success)">↓</span> {{ liveData.diskReadMbps ?? "—" }} <small>Mbps</small></span>
-            <span><span style="color: var(--info)">↑</span> {{ liveData.diskWriteMbps ?? "—" }} <small>Mbps</small></span>
-          </div>
-        </div>
-
-        <div class="tele-card">
-          <span class="tele-label">Rede</span>
-          <div class="tele-value" style="font-size: 1.1rem; line-height: 1.4; display: flex; flex-direction: column; justify-content: center;">
-            <span><span style="color: var(--success)">↓</span> {{ liveData.downloadMbps ?? "—" }} <small>Mbps</small></span>
-            <span><span style="color: var(--info)">↑</span> {{ liveData.uploadMbps ?? "—" }} <small>Mbps</small></span>
-          </div>
-        </div>
-
-        <div class="tele-card" v-if="liveData.moboTemperature != null">
-          <span class="tele-label">Placa-Mãe</span>
-          <div class="tele-value" :style="{ color: tempColor(liveData.moboTemperature) }">
-            {{ fmtTemp(liveData.moboTemperature) }} °C
-          </div>
+          <MachineTelemetryPanel
+            trigger="button"
+            :machine="machine"
+            @saved="onTelemetrySaved"
+          />
+          <button
+            v-if="machine.token"
+            type="button"
+            class="btn btn-ghost btn-sm"
+            @click="tokenModal = true"
+          >
+            Token
+          </button>
         </div>
       </div>
-      <div v-else class="empty-state" style="padding: 1.5rem 0">
-        Sem dados de telemetria disponíveis.
-      </div>
 
-      <!-- ═══ SPECS DE HARDWARE ═══ -->
-      <h2 class="section-title" style="margin-top: 2rem">Especificações</h2>
       <div class="specs-grid">
-        <div class="spec-item">
-          <span class="spec-label">CPU</span>
-          <span class="spec-value">{{ machine.cpuModel || "—" }}</span>
+        <div v-if="machine.cpuModel" class="stat-card">
+          <span class="stat-label">CPU</span>
+          <span class="stat-value" style="font-size: 1rem">{{ machine.cpuModel }}</span>
         </div>
-        <div class="spec-item">
-          <span class="spec-label">GPU</span>
-          <span class="spec-value">{{ machine.gpuModel || "—" }}</span>
+        <div v-if="machine.gpuModel" class="stat-card">
+          <span class="stat-label">GPU</span>
+          <span class="stat-value" style="font-size: 1rem">{{ machine.gpuModel }}</span>
         </div>
-        <div class="spec-item">
-          <span class="spec-label">RAM</span>
-          <span class="spec-value">{{
-            machine.totalRamGb ? machine.totalRamGb + " GB" : "—"
-          }}</span>
+        <div v-if="machine.totalRamGb" class="stat-card">
+          <span class="stat-label">RAM</span>
+          <span class="stat-value">{{ machine.totalRamGb }} GB</span>
         </div>
-        <div class="spec-item">
-          <span class="spec-label">Disco</span>
-          <span class="spec-value">{{
-            machine.totalDiskGb ? machine.totalDiskGb + " GB" : "—"
-          }}</span>
+        <div v-if="machine.totalDiskGb" class="stat-card">
+          <span class="stat-label">Disco Total</span>
+          <span class="stat-value">{{ machine.totalDiskGb }} GB</span>
         </div>
-        <div class="spec-item">
-          <span class="spec-label">IP</span>
-          <span class="spec-value" style="font-family: monospace">{{
-            machine.ipAddress || "—"
-          }}</span>
-        </div>
-        
-        <div class="spec-item" v-if="machine.activeUsers && machine.activeUsers.length > 0">
-          <span class="spec-label">Logado(s)</span>
-          <span class="spec-value">{{ machine.activeUsers.map(u => u.username).join(', ') }}</span>
-        </div>
-
-        <div class="spec-item" v-if="machine.lastSeenAt">
-          <span class="spec-label">Último report</span>
-          <span class="spec-value">{{
-            new Date(machine.lastSeenAt).toLocaleString("pt-BR")
-          }}</span>
+        <div v-if="machine.ipAddress" class="stat-card">
+          <span class="stat-label">IP</span>
+          <span class="stat-value" style="font-size: 1rem">{{ machine.ipAddress }}</span>
         </div>
       </div>
 
-      <!-- ═══ PARTIÇÕES DE DISCO ═══ -->
-      <template v-if="machine.disks && machine.disks.length > 0">
-        <h2 class="section-title" style="margin-top: 2rem">Partições de Disco</h2>
-        <div class="disk-table">
-          <div class="disk-header">
-            <span class="disk-col device-col">Dispositivo</span>
-            <span class="disk-col mount-col">Montagem</span>
-            <span class="disk-col fs-col">FS</span>
-            <span class="disk-col size-col">Total</span>
-            <span class="disk-col free-col">Livre</span>
-            <span class="disk-col bar-col">Uso</span>
-          </div>
-          <div v-for="d in machine.disks" :key="d.id" class="disk-row-detail">
-            <span class="disk-col device-col">
-              <code>{{ d.device }}</code>
-            </span>
-            <span class="disk-col mount-col">{{ d.mountpoint }}</span>
-            <span class="disk-col fs-col">
-              <span class="badge badge-info" style="font-size: 0.65rem">{{ d.fstype || "--" }}</span>
-            </span>
-            <span class="disk-col size-col">{{ fmtGb(d.totalGb) }}</span>
-            <span class="disk-col free-col" :class="{
-              'text-success': (d.freeGb ?? 0) > 50,
-              'text-warning': (d.freeGb ?? 0) > 10 && (d.freeGb ?? 0) <= 50,
-              'text-danger': (d.freeGb ?? 0) <= 10 && d.freeGb != null,
-            }">
-              {{ fmtGb(d.freeGb) }}
-            </span>
-            <span class="disk-col bar-col">
-              <div class="disk-bar-track">
-                <div
-                  class="disk-bar-fill"
-                  :style="{
-                    width: diskUsedPct(d.totalGb, d.freeGb) + '%',
-                    background:
-                      diskUsedPct(d.totalGb, d.freeGb) > 90
-                        ? 'var(--danger)'
-                        : diskUsedPct(d.totalGb, d.freeGb) > 70
-                          ? 'var(--warning)'
-                          : 'var(--success)',
-                  }"
-                ></div>
-              </div>
-              <span class="disk-pct-label">{{ diskUsedPct(d.totalGb, d.freeGb) }}%</span>
-            </span>
-          </div>
-        </div>
-      </template>
+      <MachineLiveSections :machine="machine" :live-data="liveData" />
 
-      <!-- ═══ AGENDAMENTOS ═══ -->
-      <h2 class="section-title" style="margin-top: 2rem">Agendamentos</h2>
+      <h2 class="section-title section-spaced">Usuários na máquina</h2>
+      <p class="section-hint">
+        Sessões reportadas pelo agente (<code>activeUsers</code> na telemetria e
+        <code>connectedUsers</code> no heartbeat a cada 30s).
+      </p>
 
-      <div
-        v-if="allocations.length === 0"
-        class="empty-state"
-        style="padding: 1.5rem 0"
-      >
-        Nenhum agendamento encontrado.
-      </div>
-
-      <div v-else class="table-wrap">
+      <div v-if="activeUserRows.length" class="table-wrap users-table-wrap">
         <table>
           <thead>
             <tr>
               <th>Usuário</th>
-              <th>Data</th>
-              <th>Horário</th>
-              <th>Status</th>
-              <th style="width: 160px">Ações</th>
+              <th>Terminal</th>
+              <th>Origem</th>
+              <th>SSH</th>
+              <th>Fonte</th>
             </tr>
           </thead>
           <tbody>
-            <tr v-for="a in allocations" :key="a.id">
-              <td>{{ a.user?.fullName || "—" }}</td>
-              <td>{{ fmtDate(a.startTime) }}</td>
-              <td>{{ fmtTime(a.startTime) }} – {{ fmtTime(a.endTime) }}</td>
+            <tr v-for="row in activeUserRows" :key="row.key">
+              <td>{{ row.username }}</td>
+              <td><code>{{ row.terminal }}</code></td>
+              <td>{{ row.host }}</td>
               <td>
-                <span :class="['badge', allocStatusBadge(a.status)]">
-                  {{ allocStatusLabel(a.status) }}
-                </span>
+                <span v-if="row.isSsh" class="badge badge-info">SSH</span>
+                <span v-else class="text-muted">local</span>
               </td>
-              <td>
-                <div style="display: flex; gap: 0.3rem; flex-wrap: wrap">
-                  <button
-                    v-if="a.status === 'pending'"
-                    class="btn btn-ghost btn-sm text-accent"
-                    @click="handleStatusChange(a, 'approved')"
-                  >
-                    Aprovar
-                  </button>
-                  <button
-                    v-if="a.status === 'pending'"
-                    class="btn btn-danger btn-sm"
-                    @click="handleStatusChange(a, 'denied')"
-                  >
-                    Negar
-                  </button>
-                  <button
-                    v-if="a.status === 'approved'"
-                    class="btn btn-ghost btn-sm"
-                    @click="handleStatusChange(a, 'cancelled')"
-                  >
-                    Cancelar
-                  </button>
-                </div>
-              </td>
+              <td class="text-muted">{{ row.source }}</td>
             </tr>
           </tbody>
         </table>
       </div>
+      <div v-else class="empty-state" style="padding: 1rem 0">
+        Nenhuma sessão ativa na API.
+      </div>
+
+      <details class="api-debug">
+        <summary>Debug — dados brutos da API</summary>
+        <div class="api-debug-actions">
+          <button
+            type="button"
+            class="btn btn-ghost btn-sm"
+            :disabled="debugRefreshing"
+            @click="refreshFromApi"
+          >
+            {{ debugRefreshing ? "Consultando…" : "Atualizar da API" }}
+          </button>
+        </div>
+        <pre class="api-debug-pre">{{ JSON.stringify(apiDebugJson, null, 2) }}</pre>
+      </details>
+
+      <!-- Gantt -->
+      <section class="row-block gantt-block">
+        <h2 class="row-title">Agenda</h2>
+        <CalendarGanttScroll
+          compact
+          :machines="ganttMachines"
+          :allocations="allocations"
+          :loading="false"
+        />
+      </section>
     </template>
+
+    <!-- Modal: token -->
+    <Teleport to="body">
+      <div v-if="tokenModal && machine?.token" class="modal-overlay" @click.self="tokenModal = false">
+        <div class="modal-glass fade-in">
+          <div class="modal-header">
+            <h2 class="modal-title">Token do agente</h2>
+            <button type="button" class="btn-close" @click="tokenModal = false">✕</button>
+          </div>
+          <div class="modal-body">
+            <p class="text-secondary" style="font-size: 0.88rem">
+              Use em <code>MACHINE_TOKEN</code> no <code>.env</code> do agente.
+            </p>
+            <div class="token-box">{{ machine.token }}</div>
+            <button type="button" class="btn btn-primary btn-sm" @click="copyToken">
+              Copiar token
+            </button>
+          </div>
+        </div>
+      </div>
+    </Teleport>
   </div>
 </template>
 
 <style scoped>
+.admin-machine {
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+}
+
+.detail-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  margin-bottom: 1.5rem;
+  flex-wrap: wrap;
+  gap: 1rem;
+}
+
+.header-actions {
+  display: flex;
+  gap: 0.75rem;
+  align-items: center;
+  flex-wrap: wrap;
+}
+
+.specs-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+  gap: 0.75rem;
+  margin-bottom: 2rem;
+}
+
+.row-block {
+  background: var(--bg-card);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius);
+  padding: 0.75rem 0.85rem;
+}
+
+.row-title {
+  font-size: 0.78rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--text-muted);
+  margin: 0 0 0.55rem;
+}
+
+.row-empty,
+.row-empty-inline {
+  font-size: 0.82rem;
+  color: var(--text-muted);
+}
+
+.row-empty {
+  padding: 0.5rem 0;
+}
+
+.telemetry-row {
+  display: flex;
+  gap: 0.55rem;
+  overflow-x: auto;
+  padding-bottom: 0.15rem;
+}
+
+.tele-card {
+  flex: 1;
+  min-width: 110px;
+  max-width: 160px;
+  background: var(--bg-card-solid);
+  border: 1px solid var(--border-subtle);
+  border-radius: 8px;
+  padding: 0.55rem 0.65rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+}
+
+.tele-label {
+  font-size: 0.68rem;
+  font-weight: 600;
+  color: var(--text-muted);
+  text-transform: uppercase;
+}
+
+.tele-value {
+  font-size: 1.15rem;
+  font-weight: 700;
+  line-height: 1.1;
+}
+
+.tele-sub {
+  font-size: 0.75rem;
+}
+
+.tele-io {
+  font-size: 0.78rem;
+  line-height: 1.35;
+  color: var(--text-secondary);
+}
+
+.disk-table.compact {
+  border: none;
+  background: transparent;
+  margin: 0;
+}
+
+.disk-table.compact .disk-header,
+.disk-table.compact .disk-row-detail {
+  padding: 0.35rem 0;
+}
+
+.disk-table.compact .disk-header {
+  background: transparent;
+  font-size: 0.65rem;
+}
+
+.disk-table.compact .disk-row-detail {
+  font-size: 0.78rem;
+}
+
+.disk-table {
+  overflow: hidden;
+}
+
+.disk-header {
+  display: flex;
+  border-bottom: 1px solid var(--border-subtle);
+  font-weight: 600;
+  text-transform: uppercase;
+  color: var(--text-muted);
+}
+
+.disk-row-detail {
+  display: flex;
+  align-items: center;
+  border-bottom: 1px solid var(--border-subtle);
+}
+
+.disk-row-detail:last-child {
+  border-bottom: none;
+}
+
+.disk-col {
+  flex-shrink: 0;
+}
+
+.device-col {
+  width: 100px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.device-col code {
+  font-size: 0.7rem;
+}
+
+.mount-col {
+  width: 90px;
+  font-weight: 500;
+}
+
+.size-col,
+.free-col {
+  width: 70px;
+  text-align: right;
+}
+
+.bar-col {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  min-width: 80px;
+}
+
+.disk-bar-track {
+  flex: 1;
+  height: 5px;
+  background: var(--bg-input);
+  border-radius: 3px;
+  overflow: hidden;
+}
+
+.disk-bar-fill {
+  height: 100%;
+  border-radius: 3px;
+}
+
+.disk-pct-label {
+  font-size: 0.68rem;
+  color: var(--text-muted);
+  min-width: 28px;
+  text-align: right;
+}
+
+.users-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.75rem;
+}
+
+.user-box {
+  flex: 1;
+  min-width: 200px;
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+}
+
+.user-box-label {
+  font-size: 0.72rem;
+  font-weight: 600;
+  color: var(--text-muted);
+}
+
+.user-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+}
+
+.user-tag {
+  font-size: 0.78rem;
+  padding: 0.2rem 0.55rem;
+  border-radius: 999px;
+  background: rgba(124, 108, 240, 0.15);
+  color: var(--accent);
+  border: 1px solid rgba(124, 108, 240, 0.25);
+}
+
+.user-tag.muted {
+  background: var(--bg-card-solid);
+  color: var(--text-secondary);
+  border-color: var(--border-subtle);
+}
+
 .section-title {
   font-size: 1.1rem;
   font-weight: 600;
@@ -467,170 +573,131 @@ const activeUsersList = computed(() => {
   margin-bottom: 1rem;
 }
 
-.telemetry-grid {
-  display: grid;
-  /* Força exatamente 6 colunas na primeira linha com tamanhos perfeitamente iguais */
-  grid-template-columns: repeat(6, minmax(0, 1fr));
+.section-spaced {
+  margin-top: 2rem;
+}
+
+.section-hint {
+  font-size: 0.82rem;
+  color: var(--text-muted);
+  margin: -0.5rem 0 1rem;
+  line-height: 1.45;
+}
+
+.users-table-wrap {
+  margin-bottom: 1rem;
+}
+
+.api-debug {
+  margin-top: 1rem;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius);
+  padding: 0.65rem 0.85rem;
+  background: var(--bg-card-solid);
+}
+
+.api-debug summary {
+  cursor: pointer;
+  font-size: 0.82rem;
+  font-weight: 600;
+  color: var(--text-muted);
+}
+
+.api-debug-actions {
+  margin: 0.75rem 0 0.5rem;
+}
+
+.api-debug-pre {
+  font-size: 0.72rem;
+  max-height: 280px;
+  overflow: auto;
+  background: var(--bg-input);
+  padding: 0.75rem;
+  border-radius: 8px;
+  color: var(--text-secondary);
+}
+
+.gantt-block {
+  padding-bottom: 0.5rem;
+}
+
+.gantt-block :deep(.gantt-wrap--compact .toolbar) {
+  padding: 0.35rem 0.5rem;
+}
+
+.modal-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.6);
+  backdrop-filter: blur(4px);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 100;
+  padding: 1rem;
+}
+
+.modal-glass {
+  background: var(--bg-card-solid);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-xl);
+  box-shadow: var(--shadow-elevated);
+  width: 100%;
+  max-width: 480px;
+  max-height: 90vh;
+  overflow-y: auto;
+}
+
+.modal-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 1rem 1.25rem;
+  border-bottom: 1px solid var(--border-subtle);
+}
+
+.modal-title {
+  font-size: 1.05rem;
+  font-weight: 600;
+}
+
+.modal-body {
+  padding: 1.25rem;
+  display: flex;
+  flex-direction: column;
   gap: 0.75rem;
 }
 
-/* Proteção para telas menores (notebooks/tablets) não esmagarem os cards */
-@media (max-width: 1200px) {
-  .telemetry-grid {
-    grid-template-columns: repeat(3, 1fr);
-  }
-}
-
-.tele-card {
-  background: var(--bg-card-solid);
-  border: 1px solid var(--border-subtle);
-  border-radius: var(--radius);
-  padding: 1rem;
-  display: flex;
-  flex-direction: column;
-  gap: 0.35rem;
-}
-
-.tele-label {
-  font-size: 0.78rem;
-  font-weight: 600;
-  color: var(--text-muted);
-  text-transform: uppercase;
-  letter-spacing: 0.04em;
-}
-
-.tele-value {
-  font-size: 1.5rem;
-  font-weight: 700;
-  line-height: 1.1;
-  transition: color 0.4s ease;
-}
-.tele-value small {
-  font-size: 0.65em;
-  font-weight: 400;
-  opacity: 0.7;
-}
-
-.progress-fill {
-  transition:
-    width 0.5s ease,
-    background 0.4s ease;
-}
-
-.tele-sub {
-  font-size: 0.82rem;
-  margin-top: 0.15rem;
-}
-
-.specs-grid {
+.detail-list {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
-  gap: 0.5rem 1.5rem;
-}
-
-.spec-item {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  padding: 0.5rem 0;
-  border-bottom: 1px solid var(--border-subtle);
-}
-
-.spec-label {
-  font-size: 0.82rem;
-  font-weight: 600;
-  color: var(--text-muted);
-}
-
-.spec-value {
+  grid-template-columns: auto 1fr;
+  gap: 0.4rem 1rem;
   font-size: 0.88rem;
+}
+
+.detail-list dt {
+  color: var(--text-muted);
+  font-weight: 600;
+}
+
+.detail-list dd {
+  margin: 0;
   color: var(--text-secondary);
 }
 
-/* ---- Disk Partition Table ---- */
-.disk-table {
-  border: 1px solid var(--border-subtle);
-  border-radius: var(--radius);
-  overflow: hidden;
-  margin-bottom: 1rem;
-  background: var(--bg-card);
-}
-.disk-header {
-  display: flex;
-  padding: 0.5rem 0.75rem;
-  background: var(--bg-card-solid);
-  border-bottom: 1px solid var(--border-subtle);
+.fingerprint {
   font-size: 0.72rem;
-  font-weight: 600;
-  text-transform: uppercase;
-  letter-spacing: 0.04em;
-  color: var(--text-muted);
+  word-break: break-all;
 }
-.disk-row-detail {
-  display: flex;
-  padding: 0.55rem 0.75rem;
-  border-bottom: 1px solid var(--border-subtle);
-  align-items: center;
-  font-size: 0.82rem;
-}
-.disk-row-detail:last-child {
-  border-bottom: none;
-}
-.disk-col {
-  flex-shrink: 0;
-}
-.device-col {
-  width: 140px;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-.device-col code {
-  font-size: 0.72rem;
-  color: var(--text-secondary);
-}
-.mount-col {
-  width: 120px;
-  font-weight: 500;
-  color: var(--text-primary);
-}
-.fs-col {
-  width: 70px;
-}
-.size-col {
-  width: 80px;
-  text-align: right;
-  color: var(--text-secondary);
-}
-.free-col {
-  width: 80px;
-  text-align: right;
-}
-.bar-col {
-  flex: 1;
-  display: flex;
-  align-items: center;
-  gap: 0.5rem;
-  min-width: 100px;
-  padding-left: 0.75rem;
-}
-.disk-bar-track {
-  flex: 1;
-  height: 6px;
+
+.token-box {
   background: var(--bg-input);
-  border-radius: 3px;
-  overflow: hidden;
-}
-.disk-bar-fill {
-  height: 100%;
-  border-radius: 3px;
-  transition: width 0.5s ease;
-}
-.disk-pct-label {
-  font-size: 0.72rem;
-  font-weight: 600;
-  color: var(--text-muted);
-  min-width: 32px;
-  text-align: right;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 0.75rem;
+  word-break: break-all;
+  font-family: monospace;
+  font-size: 0.78rem;
+  color: var(--accent);
 }
 </style>

@@ -255,7 +255,10 @@ test.group('Agent API', (group) => {
       .json({
         cpuModel: 'AMD Ryzen 9',
         totalRamGb: 32,
-        disks: [{ device: '/dev/sda', mountpoint: '/', totalGb: 500, freeGb: 200 }],
+        disks: [
+          { device: '/dev/sda1', mountpoint: '/boot', fstype: 'ext4', totalGb: 1, freeGb: 0.5 },
+          { device: '/dev/sda2', mountpoint: '/', fstype: 'ext4', totalGb: 500, freeGb: 200 },
+        ],
         hostFingerprint: 'SHA256:abcd1234efgh5678ijkl_test_fingerprint', // <-- ENVIADO PELO AGENTE
       })
 
@@ -264,8 +267,8 @@ test.group('Agent API', (group) => {
     assert.equal(machine.cpuModel, 'AMD Ryzen 9')
     assert.equal(machine.totalRamGb, 32)
     assert.equal(machine.hostFingerprint, 'SHA256:abcd1234efgh5678ijkl_test_fingerprint') // <-- SALVO NO BANCO
-    // O controller extrai e salva apenas partições essenciais como a '/'
     assert.isArray(machine.disks)
+    assert.lengthOf(machine.disks, 2)
   })
 
   test('telemetry deve aceitar dados em lote convertendo VRAM e processos', async ({

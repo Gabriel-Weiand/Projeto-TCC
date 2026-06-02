@@ -5,6 +5,41 @@ import MachineUser from '#models/machine_user'
 import SshConnectionAttempt from '#models/ssh_connection_attempt'
 import logger from '@adonisjs/core/services/logger'
 
+/** Conjunto completo de métricas que o agente sabe coletar. */
+const FULL_TELEMETRY_SET = {
+  cpu: true,
+  gpu: true,
+  ramAndSwap: true,
+  diskSpace: true,
+  diskIO: true,
+  networkIO: true,
+  temperatures: true,
+  activeUsers: true,
+} as const
+
+/** Perfis fixos escolhidos pelo admin em `machines.telemetry_preset`. */
+const TELEMETRY_PRESETS = {
+  fast: {
+    intervalSeconds: 30,
+    batchSize: 4,
+    telemetrySet: { ...FULL_TELEMETRY_SET },
+  },
+  eco: {
+    intervalSeconds: 60,
+    batchSize: 15,
+    telemetrySet: {
+      cpu: true,
+      gpu: false,
+      ramAndSwap: true,
+      diskSpace: true,
+      diskIO: false,
+      networkIO: false,
+      temperatures: false,
+      activeUsers: true,
+    },
+  },
+} as const
+
 export default class HeartbeatService {
   /**
    * Processa o ciclo de Heartbeat do agente, executando Reconciliação (Drift)
@@ -143,20 +178,38 @@ export default class HeartbeatService {
     // 5. RESPOSTA DA API (Dita o ritmo do Python)
     // ==========================================
 
-    // Podemos ler o preset da máquina para ajustar a telemetria
     const isOccupied = !!currentAllocation
     const preset = machine.telemetryPreset || 'eco'
     const customConfig = machine.customAgentConfig || {}
 
+    // Telemetria é ditada pela API (admin), não pelo .env do servidor.
+    // - fast / eco: perfis embutidos na API
+    // - custom: intervalSeconds, batchSize, telemetrySet etc. vêm de custom_agent_config
+    let telemetry: Record<string, unknown>
+
+    if (preset === 'custom') {
+      telemetry = {
+        intervalSeconds: customConfig.intervalSeconds ?? (isOccupied ? 5 : 60),
+        batchSize: customConfig.batchSize ?? (isOccupied ? 5 : 15),
+        telemetryPreset: 'custom',
+        telemetrySet: customConfig.telemetrySet ?? { ...FULL_TELEMETRY_SET },
+        onDemandProcessConfig: customConfig.onDemandProcessConfig ?? null,
+      }
+    } else {
+      const profile = TELEMETRY_PRESETS[preset] ?? TELEMETRY_PRESETS.eco
+      telemetry = {
+        intervalSeconds: profile.intervalSeconds,
+        batchSize: profile.batchSize,
+        telemetryPreset: preset,
+        telemetrySet: { ...profile.telemetrySet },
+        onDemandProcessConfig: customConfig.onDemandProcessConfig ?? null,
+      }
+    }
+
     return {
       status: 'acknowledged',
       agentConfig: {
-        telemetry: {
-          intervalSeconds: customConfig.intervalSeconds || (isOccupied ? 5 : 60),
-          batchSize: customConfig.batchSize || (isOccupied ? 5 : 15),
-          telemetryPreset: preset,
-          onDemandProcessConfig: customConfig.onDemandProcessConfig || null,
-        },
+        telemetry,
       },
       provisioning,
       accessControl: {

@@ -1,8 +1,8 @@
-import { ref, onUnmounted } from "vue";
+import { ref, onUnmounted, watch, type MaybeRefOrGetter, toValue } from "vue";
 import { useMachinesStore } from "@/stores/machines";
 import type { RealtimeTelemetry } from "@/types";
 
-export function useTelemetryPlayback(machineId: number) {
+export function useTelemetryPlayback(machineId: MaybeRefOrGetter<number>) {
   const POLL_INTERVAL_MS = 10_000;
 
   const current = ref<RealtimeTelemetry | null>(null);
@@ -14,9 +14,21 @@ export function useTelemetryPlayback(machineId: number) {
   let playbackTimers: ReturnType<typeof setTimeout>[] = [];
   let lastSeenTime = 0;
 
+  function resolvedId(): number {
+    return toValue(machineId);
+  }
+
+  function resetPlaybackState() {
+    playbackTimers.forEach(clearTimeout);
+    playbackTimers = [];
+    lastSeenTime = 0;
+    current.value = null;
+  }
+
   async function fetchLatest() {
     try {
-      const result = await machinesStore.fetchTelemetryStream(machineId, 15);
+      const id = resolvedId();
+      const result = await machinesStore.fetchTelemetryStream(id, 15);
       const rawEntries = Array.isArray(result) ? result : result?.entries;
       if (!rawEntries || rawEntries.length === 0) return;
 
@@ -25,15 +37,18 @@ export function useTelemetryPlayback(machineId: number) {
           new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime(),
       );
 
+      const latest = sortedEntries[sortedEntries.length - 1];
       const newEntries = sortedEntries.filter(
         (e) => new Date(e.timestamp).getTime() > lastSeenTime,
       );
 
       if (newEntries.length > 0) {
         scheduleBatch(newEntries);
+      } else if (latest) {
+        current.value = latest;
       }
     } catch {
-      // Ignora falhas de rede silenciosamente
+      /* ignore */
     }
   }
 
@@ -46,7 +61,6 @@ export function useTelemetryPlayback(machineId: number) {
 
     const baseTime = new Date(firstEntry.timestamp).getTime();
 
-    // Fallback caso a API mande um batch com apenas 1 item
     if (entries.length === 1) {
       current.value = firstEntry;
       lastSeenTime = baseTime;
@@ -57,8 +71,6 @@ export function useTelemetryPlayback(machineId: number) {
       const itemTime = new Date(telemetry.timestamp).getTime();
       let delayMs = itemTime - baseTime;
 
-      // Se der NaN ou se o agente por acaso mandar tempos idênticos,
-      // força o intervalo mínimo exigido de 1 segundo (1000ms) entre os frames
       if (isNaN(delayMs) || (index > 0 && delayMs === 0)) {
         delayMs = index * 1000;
       }
@@ -82,11 +94,24 @@ export function useTelemetryPlayback(machineId: number) {
   function stop() {
     isActive.value = false;
     if (pollTimer) clearInterval(pollTimer);
-    playbackTimers.forEach(clearTimeout);
-    playbackTimers = [];
+    resetPlaybackState();
     pollTimer = null;
-    lastSeenTime = 0;
   }
+
+  function restart() {
+    const wasActive = isActive.value;
+    stop();
+    if (wasActive) start();
+  }
+
+  watch(
+    () => toValue(machineId),
+    (nextId, prevId) => {
+      if (prevId !== undefined && nextId !== prevId) {
+        restart();
+      }
+    },
+  );
 
   onUnmounted(stop);
 
@@ -95,5 +120,6 @@ export function useTelemetryPlayback(machineId: number) {
     isActive,
     start,
     stop,
+    restart,
   };
 }

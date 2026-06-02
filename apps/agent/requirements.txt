@@ -1,0 +1,4 @@
+psutil>=5.9
+requests>=2.31
+# Opcional — telemetria NVIDIA (NVML):
+nvidia-ml-py>=12.0

@@ -1,8 +1,12 @@
 <script setup lang="ts">
-import { ref, computed, onMounted } from "vue";
+import { ref, computed, onMounted, onUnmounted } from "vue";
 import { useMachinesStore } from "@/stores/machines";
 import { useAllocationsStore } from "@/stores/allocations";
 import { useAuthStore } from "@/stores/auth";
+import { useTelemetryPlayback } from "@/composables/useTelemetryPlayback";
+import MachineTelemetryPanel from "@/components/MachineTelemetryPanel.vue";
+import MachineLiveSections from "@/components/MachineLiveSections.vue";
+import CalendarGanttScroll from "@/components/CalendarGanttScroll.vue";
 import type { Machine, Allocation } from "@/types";
 import { useRouter } from "vue-router";
 
@@ -12,21 +16,46 @@ const allocationsStore = useAllocationsStore();
 const auth = useAuthStore();
 const router = useRouter();
 
+const machineId = computed(() => Number(props.id));
 const machine = ref<Machine | null>(null);
 const scheduleAllocations = ref<Allocation[]>([]);
 const loading = ref(true);
 const showForm = ref(false);
+const debugRefreshing = ref(false);
+const debugStreamPreview = ref<unknown>(null);
 
 const isAdmin = computed(() => auth.user?.role === "admin");
+
+const {
+  current: telemetry,
+  start: startPlayback,
+  stop: stopPlayback,
+} = useTelemetryPlayback(machineId);
+
+let allocRefresh: ReturnType<typeof setInterval> | null = null;
 
 onMounted(async () => {
   try {
     const [m, sched] = await Promise.all([
-      machinesStore.fetchMachine(Number(props.id)),
-      machinesStore.fetchMachineAllocations(Number(props.id), { limit: 200 }),
+      machinesStore.fetchMachine(machineId.value),
+      machinesStore.fetchMachineAllocations(machineId.value, { limit: 200 }),
     ]);
     machine.value = m;
     scheduleAllocations.value = sched.data || [];
+    startPlayback();
+
+    allocRefresh = setInterval(async () => {
+      try {
+        const [m, sched] = await Promise.all([
+          machinesStore.fetchMachine(machineId.value),
+          machinesStore.fetchMachineAllocations(machineId.value, { limit: 200 }),
+        ]);
+        machine.value = m;
+        scheduleAllocations.value = sched.data || [];
+      } catch {
+        /* ignore */
+      }
+    }, 30_000);
   } catch {
     router.push({ name: "machines" });
   } finally {
@@ -34,13 +63,101 @@ onMounted(async () => {
   }
 });
 
-/* ---- Inline form ---- */
-const form = ref({
-  date: "",
-  startTime: "",
-  endTime: "",
-  reason: "",
+onUnmounted(() => {
+  stopPlayback();
+  if (allocRefresh) clearInterval(allocRefresh);
 });
+
+const liveData = computed(
+  () => telemetry.value || machine.value?.latestTelemetry || null,
+);
+
+const ganttMachines = computed(() => (machine.value ? [machine.value] : []));
+
+type ActiveUserRow = {
+  key: string;
+  username: string;
+  terminal: string;
+  host: string;
+  isSsh: boolean;
+  source: string;
+};
+
+const activeUserRows = computed((): ActiveUserRow[] => {
+  const rows: ActiveUserRow[] = [];
+  const seen = new Set<string>();
+
+  const tele = liveData.value?.activeUsers;
+  if (Array.isArray(tele)) {
+    for (const raw of tele) {
+      const u = raw as Record<string, unknown>;
+      const username = String(u.username ?? "—");
+      const terminal = String(u.terminal ?? "—");
+      const host = String(u.host ?? "—");
+      const key = `${username}|${terminal}|${host}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      rows.push({
+        key,
+        username,
+        terminal,
+        host,
+        isSsh: Boolean(u.isSsh),
+        source: "telemetria",
+      });
+    }
+  }
+
+  const hb = machine.value?.currentSessions;
+  if (Array.isArray(hb)) {
+    for (const raw of hb) {
+      const username =
+        typeof raw === "string"
+          ? raw
+          : String((raw as { username?: string }).username ?? raw);
+      if (rows.some((r) => r.username === username)) continue;
+      rows.push({
+        key: `hb-${username}`,
+        username,
+        terminal: "—",
+        host: "(heartbeat)",
+        isSsh: false,
+        source: "heartbeat",
+      });
+    }
+  }
+  return rows;
+});
+
+const apiDebugJson = computed(() => ({
+  systemUsername: machine.value?.systemUsername ?? null,
+  currentSessions: machine.value?.currentSessions ?? null,
+  activeUsersTelemetry: liveData.value?.activeUsers ?? null,
+  telemetryPreset: machine.value?.telemetryPreset ?? null,
+  telemetrySet: machine.value?.customAgentConfig?.telemetrySet ?? null,
+  diskIO: {
+    readMbps: liveData.value?.diskReadMbps ?? null,
+    writeMbps: liveData.value?.diskWriteMbps ?? null,
+  },
+  streamPreview: debugStreamPreview.value,
+}));
+
+async function refreshFromApi() {
+  debugRefreshing.value = true;
+  try {
+    const [m, stream] = await Promise.all([
+      machinesStore.fetchMachine(machineId.value),
+      machinesStore.fetchTelemetryStream(machineId.value, 5),
+    ]);
+    machine.value = m;
+    debugStreamPreview.value = stream;
+  } finally {
+    debugRefreshing.value = false;
+  }
+}
+
+/* ---- Reserva ---- */
+const form = ref({ date: "", startTime: "", endTime: "", reason: "" });
 const formSaving = ref(false);
 const formError = ref("");
 
@@ -74,25 +191,24 @@ async function handleCreate() {
       reason: form.value.reason || undefined,
     });
     showForm.value = false;
-    await allocationsStore.fetchAllocations();
-    const sched = await machinesStore.fetchMachineAllocations(
-      Number(props.id),
-      { limit: 200 },
-    );
+    const sched = await machinesStore.fetchMachineAllocations(machineId.value, {
+      limit: 200,
+    });
     scheduleAllocations.value = sched.data || [];
-  } catch (err: any) {
-    const status = err.response?.status;
-    if (status === 409)
-      formError.value = "Conflito de horário com outra reserva.";
-    else if (status === 422)
-      formError.value = "Dados inválidos. Verifique os campos.";
+  } catch (err: unknown) {
+    const status = (err as { response?: { status?: number } })?.response?.status;
+    if (status === 409) formError.value = "Conflito de horário com outra reserva.";
+    else if (status === 422) formError.value = "Dados inválidos. Verifique os campos.";
     else formError.value = "Erro ao criar reserva.";
   } finally {
     formSaving.value = false;
   }
 }
 
-/* ---- Status helpers ---- */
+function onTelemetrySaved(m: Machine) {
+  machine.value = m;
+}
+
 function statusBadge(s: string) {
   const map: Record<string, string> = {
     available: "badge-success",
@@ -102,6 +218,7 @@ function statusBadge(s: string) {
   };
   return map[s] || "badge-muted";
 }
+
 function statusLabel(s: string) {
   const map: Record<string, string> = {
     available: "Disponível",
@@ -111,131 +228,7 @@ function statusLabel(s: string) {
   };
   return map[s] || s;
 }
-function fmtTime(iso: string) {
-  return new Date(iso).toLocaleTimeString("pt-BR", {
-    hour: "2-digit",
-    minute: "2-digit",
-  });
-}
 
-function fmtGb(val: number | null | undefined): string {
-  if (val == null) return "--";
-  return val.toFixed(1) + " GB";
-}
-
-function diskUsedPct(total: number | null, free: number | null): number {
-  if (!total || total <= 0 || free == null) return 0;
-  return Math.round(((total - free) / total) * 100);
-}
-
-/* ---- Weekly calendar ---- */
-const weekOffset = ref(0);
-const HOURS_START = 7;
-const HOURS_END = 23;
-
-const today = new Date();
-today.setHours(0, 0, 0, 0);
-
-const weekStart = computed(() => {
-  const d = new Date(today);
-  const day = d.getDay();
-  const diff = day === 0 ? 6 : day - 1;
-  d.setDate(d.getDate() - diff + weekOffset.value * 7);
-  return d;
-});
-
-const weekDays = computed(() => {
-  const days: Date[] = [];
-  for (let i = 0; i < 7; i++) {
-    const d = new Date(weekStart.value);
-    d.setDate(d.getDate() + i);
-    days.push(d);
-  }
-  return days;
-});
-
-const hours = computed(() => {
-  const h: number[] = [];
-  for (let i = HOURS_START; i <= HOURS_END; i++) h.push(i);
-  return h;
-});
-
-function fmtDayLabel(d: Date) {
-  const names = ["Dom", "Seg", "Ter", "Qua", "Qui", "Sex", "Sáb"];
-  return `${names[d.getDay()]} ${d.getDate().toString().padStart(2, "0")}/${(d.getMonth() + 1).toString().padStart(2, "0")}`;
-}
-
-function isToday(d: Date) {
-  const t = new Date();
-  return (
-    d.getDate() === t.getDate() &&
-    d.getMonth() === t.getMonth() &&
-    d.getFullYear() === t.getFullYear()
-  );
-}
-
-function blocksForDay(day: Date) {
-  const dayStart = new Date(
-    day.getFullYear(),
-    day.getMonth(),
-    day.getDate(),
-    0,
-    0,
-    0,
-    0,
-  );
-  const dayEnd = new Date(
-    day.getFullYear(),
-    day.getMonth(),
-    day.getDate(),
-    23,
-    59,
-    59,
-    999,
-  );
-
-  return scheduleAllocations.value
-    .filter((a) => {
-      if (!["approved", "pending"].includes(a.status)) return false;
-      const s = new Date(a.startTime);
-      const e = new Date(a.endTime);
-      return s <= dayEnd && e >= dayStart;
-    })
-    .map((a) => {
-      const s = new Date(a.startTime);
-      const e = new Date(a.endTime);
-      const clampedStart = Math.max(s.getTime(), dayStart.getTime());
-      const clampedEnd = Math.min(e.getTime(), dayEnd.getTime());
-
-      const startHour =
-        new Date(clampedStart).getHours() +
-        new Date(clampedStart).getMinutes() / 60;
-      const endHour =
-        new Date(clampedEnd).getHours() +
-        new Date(clampedEnd).getMinutes() / 60;
-
-      const top =
-        ((Math.max(startHour, HOURS_START) - HOURS_START) /
-          (HOURS_END - HOURS_START + 1)) *
-        100;
-      const height =
-        ((Math.min(endHour, HOURS_END + 1) - Math.max(startHour, HOURS_START)) /
-          (HOURS_END - HOURS_START + 1)) *
-        100;
-
-      const timeLabel = `${fmtTime(a.startTime)} - ${fmtTime(a.endTime)}`;
-      const userName = a.user?.fullName;
-
-      return {
-        allocation: a,
-        top: `${top}%`,
-        height: `${Math.max(height, 1.5)}%`,
-        isPending: a.status === "pending",
-        timeLabel,
-        label: userName ? `${userName} · ${timeLabel}` : timeLabel,
-      };
-    });
-}
 </script>
 
 <template>
@@ -260,13 +253,19 @@ function blocksForDay(day: Date) {
             {{ machine.description || "Sem descrição" }}
           </p>
         </div>
-        <div style="display: flex; gap: 0.75rem; align-items: center">
+        <div class="header-actions">
           <span
             :class="['badge', statusBadge(machine.status)]"
             style="font-size: 0.85rem; padding: 0.35rem 0.9rem"
           >
             {{ statusLabel(machine.status) }}
           </span>
+          <MachineTelemetryPanel
+            v-if="isAdmin"
+            trigger="button"
+            :machine="machine"
+            @saved="onTelemetrySaved"
+          />
           <button
             v-if="machine.status !== 'maintenance'"
             class="btn btn-primary btn-sm"
@@ -277,278 +276,143 @@ function blocksForDay(day: Date) {
         </div>
       </div>
 
-      <!-- Specs grid -->
       <div class="specs-grid">
-        <div class="stat-card" v-if="machine.cpuModel">
+        <div v-if="machine.cpuModel" class="stat-card">
           <span class="stat-label">CPU</span>
-          <span class="stat-value" style="font-size: 1rem">{{
-            machine.cpuModel
-          }}</span>
+          <span class="stat-value" style="font-size: 1rem">{{ machine.cpuModel }}</span>
         </div>
-        <div class="stat-card" v-if="machine.gpuModel">
+        <div v-if="machine.gpuModel" class="stat-card">
           <span class="stat-label">GPU</span>
-          <span class="stat-value" style="font-size: 1rem">{{
-            machine.gpuModel
-          }}</span>
+          <span class="stat-value" style="font-size: 1rem">{{ machine.gpuModel }}</span>
         </div>
-        <div class="stat-card" v-if="machine.totalRamGb">
+        <div v-if="machine.totalRamGb" class="stat-card">
           <span class="stat-label">RAM</span>
           <span class="stat-value">{{ machine.totalRamGb }} GB</span>
         </div>
-        <div class="stat-card" v-if="machine.totalDiskGb">
+        <div v-if="machine.totalDiskGb" class="stat-card">
           <span class="stat-label">Disco Total</span>
           <span class="stat-value">{{ machine.totalDiskGb }} GB</span>
         </div>
-        <div class="stat-card" v-if="machine.ipAddress">
+        <div v-if="machine.ipAddress" class="stat-card">
           <span class="stat-label">IP</span>
-          <span class="stat-value" style="font-size: 1rem">{{
-            machine.ipAddress
-          }}</span>
+          <span class="stat-value" style="font-size: 1rem">{{ machine.ipAddress }}</span>
         </div>
       </div>
 
-      <!-- Disk Partitions -->
-      <template v-if="machine.disks && machine.disks.length > 0">
-        <h2 class="section-title">Partições de Disco</h2>
-        <div class="disk-table">
-          <div class="disk-header">
-            <span class="disk-col device-col">Dispositivo</span>
-            <span class="disk-col mount-col">Montagem</span>
-            <span class="disk-col fs-col">FS</span>
-            <span class="disk-col size-col">Total</span>
-            <span class="disk-col free-col">Livre</span>
-            <span class="disk-col bar-col">Uso</span>
-          </div>
-          <div v-for="d in machine.disks" :key="d.id" class="disk-row-detail">
-            <span class="disk-col device-col">
-              <code>{{ d.device }}</code>
-            </span>
-            <span class="disk-col mount-col">{{ d.mountpoint }}</span>
-            <span class="disk-col fs-col">
-              <span class="badge badge-info" style="font-size: 0.65rem">{{ d.fstype || "--" }}</span>
-            </span>
-            <span class="disk-col size-col">{{ fmtGb(d.totalGb) }}</span>
-            <span class="disk-col free-col" :class="{
-              'text-success': (d.freeGb ?? 0) > 50,
-              'text-warning': (d.freeGb ?? 0) > 10 && (d.freeGb ?? 0) <= 50,
-              'text-danger': (d.freeGb ?? 0) <= 10 && d.freeGb != null,
-            }">
-              {{ fmtGb(d.freeGb) }}
-            </span>
-            <span class="disk-col bar-col">
-              <div class="disk-bar-track">
-                <div
-                  class="disk-bar-fill"
-                  :style="{
-                    width: diskUsedPct(d.totalGb, d.freeGb) + '%',
-                    background:
-                      diskUsedPct(d.totalGb, d.freeGb) > 90
-                        ? 'var(--danger)'
-                        : diskUsedPct(d.totalGb, d.freeGb) > 70
-                          ? 'var(--warning)'
-                          : 'var(--success)',
-                  }"
-                ></div>
-              </div>
-              <span class="disk-pct-label">{{ diskUsedPct(d.totalGb, d.freeGb) }}%</span>
-            </span>
-          </div>
+      <MachineLiveSections :machine="machine" :live-data="liveData" />
+
+      <template v-if="isAdmin">
+        <h2 class="section-title section-spaced">Usuários na máquina</h2>
+        <p class="section-hint">
+          Sessões reportadas pelo agente (<code>activeUsers</code> na telemetria e
+          <code>connectedUsers</code> no heartbeat a cada 30s).
+        </p>
+
+        <div v-if="activeUserRows.length" class="table-wrap users-table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Usuário</th>
+                <th>Terminal</th>
+                <th>Origem</th>
+                <th>SSH</th>
+                <th>Fonte</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr v-for="row in activeUserRows" :key="row.key">
+                <td>{{ row.username }}</td>
+                <td><code>{{ row.terminal }}</code></td>
+                <td>{{ row.host }}</td>
+                <td>
+                  <span v-if="row.isSsh" class="badge badge-info">SSH</span>
+                  <span v-else class="text-muted">local</span>
+                </td>
+                <td class="text-muted">{{ row.source }}</td>
+              </tr>
+            </tbody>
+          </table>
         </div>
+        <div v-else class="empty-state" style="padding: 1rem 0">
+          Nenhuma sessão ativa na API. Se você está em SSH, confira o preset (activeUsers) e se o
+          agente tem permissão para listar sessões.
+        </div>
+
+        <details class="api-debug">
+          <summary>Debug — dados brutos da API</summary>
+          <div class="api-debug-actions">
+            <button
+              type="button"
+              class="btn btn-ghost btn-sm"
+              :disabled="debugRefreshing"
+              @click="refreshFromApi"
+            >
+              {{ debugRefreshing ? "Consultando…" : "Atualizar da API" }}
+            </button>
+          </div>
+          <pre class="api-debug-pre">{{ JSON.stringify(apiDebugJson, null, 2) }}</pre>
+        </details>
       </template>
 
-      <!-- Telemetry if available -->
-      <template v-if="machine.latestTelemetry">
-        <h2 class="section-title">Telemetria em Tempo Real</h2>
-        <div class="telemetry-grid">
-          <div class="tele-item">
-            <span class="tele-label">CPU</span>
-            <div
-              class="progress-bar"
-              :class="
-                machine.latestTelemetry.cpuUsage > 80
-                  ? 'danger'
-                  : machine.latestTelemetry.cpuUsage > 50
-                    ? 'warning'
-                    : 'success'
-              "
-            >
-              <div
-                class="progress-fill"
-                :style="{ width: machine.latestTelemetry.cpuUsage + '%' }"
-              ></div>
-            </div>
-            <span class="tele-val"
-              >{{ machine.latestTelemetry.cpuUsage.toFixed(0) }}% ·
-              {{ machine.latestTelemetry.cpuTemp.toFixed(0) }}°C</span
-            >
-          </div>
-          <div class="tele-item">
-            <span class="tele-label">GPU</span>
-            <div
-              class="progress-bar"
-              :class="
-                machine.latestTelemetry.gpuUsage > 80
-                  ? 'danger'
-                  : machine.latestTelemetry.gpuUsage > 50
-                    ? 'warning'
-                    : 'success'
-              "
-            >
-              <div
-                class="progress-fill"
-                :style="{ width: machine.latestTelemetry.gpuUsage + '%' }"
-              ></div>
-            </div>
-            <span class="tele-val"
-              >{{ machine.latestTelemetry.gpuUsage.toFixed(0) }}% ·
-              {{ machine.latestTelemetry.gpuTemp.toFixed(0) }}°C</span
-            >
-          </div>
-          <div class="tele-item">
-            <span class="tele-label">RAM</span>
-            <div
-              class="progress-bar"
-              :class="
-                machine.latestTelemetry.ramUsage > 80
-                  ? 'danger'
-                  : machine.latestTelemetry.ramUsage > 50
-                    ? 'warning'
-                    : 'success'
-              "
-            >
-              <div
-                class="progress-fill"
-                :style="{ width: machine.latestTelemetry.ramUsage + '%' }"
-              ></div>
-            </div>
-            <span class="tele-val"
-              >{{ machine.latestTelemetry.ramUsage.toFixed(0) }}%</span
-            >
-          </div>
-        </div>
-      </template>
-
-      <!-- ======== Calendar + Form Row ======== -->
-      <h2 class="section-title">Agenda Semanal</h2>
-
-      <div class="layout-row" :class="{ 'with-panel': showForm }">
-        <!-- Calendar -->
-        <section class="layout-calendar">
-          <div class="cal-toolbar">
-            <div class="cal-nav">
-              <button class="btn btn-ghost btn-sm" @click="weekOffset--">
-                ←
-              </button>
-              <span class="cal-week-label">
-                {{ fmtDayLabel(weekDays[0]!) }} — {{ fmtDayLabel(weekDays[6]!) }}
-              </span>
-              <button class="btn btn-ghost btn-sm" @click="weekOffset++">
-                →
-              </button>
-              <button
-                v-if="weekOffset !== 0"
-                class="btn btn-ghost btn-sm"
-                @click="weekOffset = 0"
-              >
-                Hoje
-              </button>
-            </div>
-          </div>
-
-          <div class="cal-grid-wrap">
-            <div
-              class="cal-grid"
-              :style="{ '--total-hours': HOURS_END - HOURS_START + 1 }"
-            >
-              <div class="cal-hours-col">
-                <div class="cal-corner"></div>
-                <div v-for="h in hours" :key="h" class="cal-hour-label">
-                  {{ String(h).padStart(2, "0") }}:00
-                </div>
-              </div>
-              <div
-                v-for="day in weekDays"
-                :key="day.toISOString()"
-                class="cal-day-col"
-                :class="{ 'is-today': isToday(day) }"
-              >
-                <div
-                  class="cal-day-header"
-                  :class="{ 'is-today': isToday(day) }"
-                >
-                  {{ fmtDayLabel(day) }}
-                </div>
-                <div class="cal-day-body">
-                  <div v-for="h in hours" :key="h" class="cal-hour-line"></div>
-                  <div
-                    v-for="(block, bi) in blocksForDay(day)"
-                    :key="bi"
-                    class="cal-block"
-                    :class="{ pending: block.isPending }"
-                    :style="{ top: block.top, height: block.height }"
-                    :title="block.label"
-                  >
-                    <span class="cal-block-text">{{ block.label }}</span>
-                  </div>
-                </div>
-              </div>
-            </div>
-          </div>
-        </section>
-
-        <aside v-if="showForm" class="layout-panel fade-in">
-          <div class="panel-card">
-            <div class="panel-header">
-              <h2 class="panel-title">Reservar {{ machine.name }}</h2>
-              <button class="btn-close" @click="showForm = false">✕</button>
-            </div>
-            <form class="panel-body" @submit.prevent="handleCreate">
-              <div class="field">
-                <label class="field-label">Data</label>
-                <input v-model="form.date" type="date" />
-              </div>
-              <div class="field-row">
-                <div class="field">
-                  <label class="field-label">Início</label>
-                  <input v-model="form.startTime" type="time" />
-                </div>
-                <div class="field">
-                  <label class="field-label">Fim</label>
-                  <input v-model="form.endTime" type="time" />
-                </div>
-              </div>
-              <div class="field">
-                <label class="field-label"
-                  >Motivo <span class="text-muted">(opcional)</span></label
-                >
-                <textarea
-                  v-model="form.reason"
-                  rows="2"
-                  placeholder="Ex: Treinamento de modelo ML"
-                ></textarea>
-              </div>
-              <p v-if="formError" class="error-text">{{ formError }}</p>
-              <div class="panel-actions">
-                <button
-                  type="button"
-                  class="btn btn-ghost"
-                  @click="showForm = false"
-                >
-                  Cancelar
-                </button>
-                <button
-                  type="submit"
-                  class="btn btn-primary"
-                  :disabled="formSaving"
-                >
-                  {{ formSaving ? "Criando..." : "Criar Reserva" }}
-                </button>
-              </div>
-            </form>
-          </div>
-        </aside>
-      </div>
+      <!-- Gantt -->
+      <section class="row-block gantt-block">
+        <h2 class="row-title">Agenda</h2>
+        <CalendarGanttScroll
+          compact
+          :machines="ganttMachines"
+          :allocations="scheduleAllocations"
+          :current-user-id="auth.user?.id ?? null"
+          :loading="false"
+        />
+      </section>
     </template>
+
+    <!-- Modal: reserva -->
+    <Teleport to="body">
+      <div v-if="showForm && machine" class="modal-overlay" @click.self="showForm = false">
+        <div class="modal-glass fade-in">
+          <div class="modal-header">
+            <h2 class="modal-title">Reservar {{ machine.name }}</h2>
+            <button type="button" class="btn-close" @click="showForm = false">✕</button>
+          </div>
+          <form class="modal-body" @submit.prevent="handleCreate">
+            <div class="field">
+              <label class="field-label">Data</label>
+              <input v-model="form.date" type="date" />
+            </div>
+            <div class="field-row">
+              <div class="field">
+                <label class="field-label">Início</label>
+                <input v-model="form.startTime" type="time" />
+              </div>
+              <div class="field">
+                <label class="field-label">Fim</label>
+                <input v-model="form.endTime" type="time" />
+              </div>
+            </div>
+            <div class="field">
+              <label class="field-label"
+                >Motivo <span class="text-muted">(opcional)</span></label
+              >
+              <textarea
+                v-model="form.reason"
+                rows="2"
+                placeholder="Ex: Treinamento de modelo ML"
+              ></textarea>
+            </div>
+            <p v-if="formError" class="error-text">{{ formError }}</p>
+            <div class="modal-actions">
+              <button type="button" class="btn btn-ghost" @click="showForm = false">
+                Cancelar
+              </button>
+              <button type="submit" class="btn btn-primary" :disabled="formSaving">
+                {{ formSaving ? "Criando..." : "Criar Reserva" }}
+              </button>
+            </div>
+          </form>
+        </div>
+      </div>
+    </Teleport>
   </div>
 </template>
 
@@ -562,6 +426,13 @@ function blocksForDay(day: Date) {
   gap: 1rem;
 }
 
+.header-actions {
+  display: flex;
+  gap: 0.75rem;
+  align-items: center;
+  flex-wrap: wrap;
+}
+
 .specs-grid {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
@@ -569,306 +440,136 @@ function blocksForDay(day: Date) {
   margin-bottom: 2rem;
 }
 
-.section-title {
-  font-size: 1.1rem;
-  font-weight: 600;
-  color: var(--text-primary);
-  margin-bottom: 1rem;
-  margin-top: 0.5rem;
-}
-
-/* ---- Disk Partition Table ---- */
-.disk-table {
+.row-block {
+  background: var(--bg-card);
   border: 1px solid var(--border-subtle);
   border-radius: var(--radius);
-  overflow: hidden;
-  margin-bottom: 2rem;
-  background: var(--bg-card);
-}
-.disk-header {
-  display: flex;
-  padding: 0.5rem 0.75rem;
-  background: var(--bg-card-solid);
-  border-bottom: 1px solid var(--border-subtle);
-  font-size: 0.72rem;
-  font-weight: 600;
-  text-transform: uppercase;
-  letter-spacing: 0.04em;
-  color: var(--text-muted);
-}
-.disk-row-detail {
-  display: flex;
-  padding: 0.55rem 0.75rem;
-  border-bottom: 1px solid var(--border-subtle);
-  align-items: center;
-  font-size: 0.82rem;
-}
-.disk-row-detail:last-child {
-  border-bottom: none;
-}
-.disk-col {
-  flex-shrink: 0;
-}
-.device-col {
-  width: 140px;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-.device-col code {
-  font-size: 0.72rem;
-  color: var(--text-secondary);
-}
-.mount-col {
-  width: 120px;
-  font-weight: 500;
-  color: var(--text-primary);
-}
-.fs-col {
-  width: 70px;
-}
-.size-col {
-  width: 80px;
-  text-align: right;
-  color: var(--text-secondary);
-}
-.free-col {
-  width: 80px;
-  text-align: right;
-}
-.bar-col {
-  flex: 1;
-  display: flex;
-  align-items: center;
-  gap: 0.5rem;
-  min-width: 100px;
-  padding-left: 0.75rem;
-}
-.disk-bar-track {
-  flex: 1;
-  height: 6px;
-  background: var(--bg-input);
-  border-radius: 3px;
-  overflow: hidden;
-}
-.disk-bar-fill {
-  height: 100%;
-  border-radius: 3px;
-  transition: width 0.5s ease;
-}
-.disk-pct-label {
-  font-size: 0.72rem;
-  font-weight: 600;
-  color: var(--text-muted);
-  min-width: 32px;
-  text-align: right;
+  padding: 0.75rem 0.85rem;
 }
 
-.telemetry-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
-  gap: 1rem;
-  margin-bottom: 2rem;
-}
-.tele-item {
-  display: flex;
-  flex-direction: column;
-  gap: 0.3rem;
-}
-.tele-label {
+.row-title {
   font-size: 0.78rem;
   font-weight: 600;
   text-transform: uppercase;
   letter-spacing: 0.04em;
   color: var(--text-muted);
+  margin: 0 0 0.55rem;
 }
-.tele-val {
+
+.section-title {
+  font-size: 1.1rem;
+  font-weight: 600;
+  color: var(--text-primary);
+  margin-bottom: 1rem;
+}
+
+.section-spaced {
+  margin-top: 2rem;
+}
+
+.section-hint {
   font-size: 0.82rem;
+  color: var(--text-muted);
+  margin: -0.5rem 0 1rem;
+  line-height: 1.45;
+}
+
+.section-hint code {
+  font-size: 0.78rem;
+}
+
+.users-table-wrap {
+  margin-bottom: 1rem;
+}
+
+.api-debug {
+  margin-top: 1rem;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius);
+  padding: 0.65rem 0.85rem;
+  background: var(--bg-card-solid);
+}
+
+.api-debug summary {
+  cursor: pointer;
+  font-size: 0.82rem;
+  font-weight: 600;
+  color: var(--text-muted);
+}
+
+.api-debug-actions {
+  margin: 0.75rem 0 0.5rem;
+}
+
+.api-debug-pre {
+  font-size: 0.72rem;
+  max-height: 280px;
+  overflow: auto;
+  background: var(--bg-input);
+  padding: 0.75rem;
+  border-radius: 8px;
   color: var(--text-secondary);
 }
 
-/* ---- Side-by-side layout ---- */
-.layout-row {
-  display: flex;
-  gap: 1.5rem;
-  align-items: flex-start;
-  justify-content: center;
-}
-.layout-calendar {
-  flex: 1;
-  min-width: 0;
-  transition: all 0.3s ease;
-}
-.layout-row.with-panel .layout-calendar {
-  flex: 1 1 0;
-}
-.layout-panel {
-  width: 360px;
-  flex-shrink: 0;
+.gantt-block {
+  padding-bottom: 0.5rem;
 }
 
-.panel-card {
+.modal-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.6);
+  backdrop-filter: blur(4px);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 100;
+  padding: 1rem;
+}
+
+.modal-glass {
   background: var(--bg-card-solid);
   border: 1px solid var(--border);
   border-radius: var(--radius-xl);
-  box-shadow: var(--shadow-card);
-  position: sticky;
-  top: 80px;
+  box-shadow: var(--shadow-elevated);
+  width: 100%;
+  max-width: 460px;
+  max-height: 90vh;
+  overflow-y: auto;
 }
-.panel-header {
+
+.modal-header {
   display: flex;
   align-items: center;
   justify-content: space-between;
   padding: 1rem 1.25rem;
   border-bottom: 1px solid var(--border-subtle);
 }
-.panel-title {
+
+.modal-title {
   font-size: 1.05rem;
   font-weight: 600;
 }
-.panel-body {
+
+.modal-body {
   padding: 1.25rem;
   display: flex;
   flex-direction: column;
-  gap: 0.9rem;
+  gap: 0.75rem;
 }
-.panel-actions {
+
+.modal-actions {
   display: flex;
   justify-content: flex-end;
   gap: 0.75rem;
   margin-top: 0.25rem;
 }
 
-/* ---- Calendar ---- */
-.cal-toolbar {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  margin-bottom: 0.75rem;
-  flex-wrap: wrap;
-  gap: 0.75rem;
-}
-.cal-nav {
-  display: flex;
-  align-items: center;
-  gap: 0.5rem;
-}
-.cal-week-label {
-  font-size: 0.9rem;
-  font-weight: 600;
-  color: var(--text-secondary);
-  min-width: 200px;
-  text-align: center;
-}
-.cal-grid-wrap {
-  overflow-x: auto;
-  border: 1px solid var(--border);
-  border-radius: var(--radius-lg);
-  background: var(--bg-card);
-  box-shadow: var(--shadow-card);
-}
-.cal-grid {
+.detail-list {
   display: grid;
-  grid-template-columns: 60px repeat(7, 1fr);
-  min-width: 700px;
-}
-.cal-hours-col {
-  border-right: 1px solid var(--border-subtle);
-}
-.cal-corner {
-  height: 36px;
-  border-bottom: 1px solid var(--border-subtle);
-}
-.cal-hour-label {
-  height: 40px;
-  display: flex;
-  align-items: flex-start;
-  justify-content: flex-end;
-  padding: 2px 6px 0 0;
-  font-size: 0.68rem;
-  color: var(--text-muted);
-  border-bottom: 1px solid var(--border-subtle);
-}
-.cal-day-col {
-  border-right: 1px solid var(--border-subtle);
-}
-.cal-day-col:last-child {
-  border-right: none;
-}
-.cal-day-col.is-today {
-  background: rgba(124, 108, 240, 0.03);
-}
-.cal-day-header {
-  height: 36px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  font-size: 0.75rem;
-  font-weight: 600;
-  color: var(--text-secondary);
-  border-bottom: 1px solid var(--border-subtle);
-  text-transform: uppercase;
-  letter-spacing: 0.03em;
-}
-.cal-day-header.is-today {
-  color: var(--accent);
-}
-.cal-day-body {
-  position: relative;
-  height: calc(var(--total-hours) * 40px);
-}
-.cal-hour-line {
-  height: 40px;
-  border-bottom: 1px solid var(--border-subtle);
-}
-.cal-block {
-  position: absolute;
-  left: 2px;
-  right: 2px;
-  background: linear-gradient(
-    135deg,
-    rgba(102, 126, 234, 0.35),
-    rgba(155, 109, 255, 0.3)
-  );
-  border-left: 3px solid var(--accent);
-  border-radius: 4px;
-  padding: 2px 4px;
-  overflow: hidden;
-  z-index: 2;
-  cursor: default;
-  transition: background var(--transition);
-}
-.cal-block:hover {
-  background: linear-gradient(
-    135deg,
-    rgba(102, 126, 234, 0.5),
-    rgba(155, 109, 255, 0.45)
-  );
-}
-.cal-block.pending {
-  background: linear-gradient(
-    135deg,
-    rgba(251, 191, 36, 0.2),
-    rgba(251, 191, 36, 0.15)
-  );
-  border-left-color: var(--warning);
-}
-.cal-block-text {
-  font-size: 0.65rem;
-  font-weight: 600;
-  color: var(--text-primary);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  display: block;
+  grid-template-columns: auto 1fr;
+  gap: 0.4rem 1rem;
+  font-size: 0.88rem;
 }
 
-@media (max-width: 900px) {
-  .layout-row {
-    flex-direction: column;
-  }
-  .layout-panel {
-    width: 100%;
-  }
-}
 </style>

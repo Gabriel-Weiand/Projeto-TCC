@@ -278,8 +278,7 @@ apps/api/
 ├─────────────────────────────────────────────────────────────┤
 │                                                              │
 │  • Cada máquina possui um Agent Key único de 512 bits       │
-│  • Headers: Authorization: Bearer <token>                    │
-│             X-Machine-Mac: <mac_address>                     │
+│  • Header: Authorization: Bearer <token>                    │
 │  • Cache de 5 minutos para reduzir consultas ao banco       │
 │  • Usado apenas nas rotas /api/agent/*                      │
 │                                                              │

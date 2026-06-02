@@ -16,10 +16,46 @@ import pwd
 import shutil
 from datetime import datetime, timezone
 
-API_BASE    = "http://localhost:7372/api/v1/agent"
-TOKEN       = "e748e281830727794aab400a3daf938f8e6d4bd1542e4db6273d87677788e273c377cac05b943f1349711c80ce27cf90052cceb501e889b164a6bbd5fb90c176"
-MACHINE     = "PC-LAB-01"
+_AGENT_DIR = os.path.dirname(os.path.abspath(__file__))
+
+
+def _load_dotenv(path: str) -> None:
+    """Carrega KEY=VALUE do .env sem dependência externa."""
+    if not os.path.isfile(path):
+        return
+    with open(path, encoding="utf-8") as f:
+        for raw in f:
+            line = raw.strip()
+            if not line or line.startswith("#"):
+                continue
+            key, sep, val = line.partition("=")
+            if not sep:
+                continue
+            key = key.strip()
+            val = val.strip().strip('"').strip("'")
+            if key:
+                os.environ.setdefault(key, val)
+
+
+_load_dotenv(os.path.join(_AGENT_DIR, ".env"))
+
+def _env(key: str, default: str = "") -> str:
+    return os.environ.get(key, default).strip()
+
+
+SERVER_URL = _env("SERVER_URL", "http://localhost:3333").rstrip("/")
+API_BASE = f"{SERVER_URL}/api/v1/agent"
+TOKEN = _env("MACHINE_TOKEN")
+MACHINE = _env("MACHINE_NAME") or socket.gethostname()
 SYSTEM_USER = getpass.getuser()
+
+# Heartbeat: intervalo fixo de controle (provisionamento SSH). Não é configurável pelo admin.
+HEARTBEAT_INTERVAL = 30
+
+if not TOKEN:
+    raise SystemExit(
+        "[Config] MACHINE_TOKEN ausente. Copie .env.example para .env e preencha o token da máquina."
+    )
 
 # Detecta o caminho real do sftp-server uma vez no boot.
 # O caminho varia por distro/versão — hardcoding quebraria silenciosamente.
@@ -41,9 +77,10 @@ HEADERS = {
 }
 
 CONFIG_LOCK = threading.Lock()
+# Valores iniciais até o 1º heartbeat; depois a API substitui via agentConfig (fast/eco/custom).
 AGENT_CONFIG = {
     "telemetry": {
-        "intervalSeconds": 2,
+        "intervalSeconds": 5,
         "batchSize": 5,
         "telemetrySet": {
             "cpu": True, "gpu": True, "ramAndSwap": True,
@@ -104,6 +141,28 @@ class _NvidiaBackend(_GpuBackend):
             return 0
 
 
+def _pick_amd_drm_device_dir() -> str | None:
+    """
+    Escolhe o card DRM com amdgpu (evita pegar o primeiro glob aleatório).
+    Prefere o dispositivo com mais VRAM dedicada (dGPU vs iGPU).
+    """
+    best_dir: str | None = None
+    best_vram = -1
+    for busy in glob.glob("/sys/class/drm/card*/device/gpu_busy_percent"):
+        dev_dir = busy.rsplit("/", 1)[0]
+        total_path = os.path.join(dev_dir, "mem_info_vram_total")
+        vram = 0
+        try:
+            if os.path.isfile(total_path):
+                vram = int(open(total_path).read().strip())
+        except Exception:
+            pass
+        if vram > best_vram:
+            best_vram = vram
+            best_dir = dev_dir
+    return best_dir
+
+
 class _AmdSysfsBackend(_GpuBackend):
     """
     Lê diretamente do sysfs do kernel — sem dependências extras.
@@ -111,17 +170,21 @@ class _AmdSysfsBackend(_GpuBackend):
     """
     name = "amd_sysfs"
 
+    def __init__(self):
+        self._dev_dir = _pick_amd_drm_device_dir()
+
     def usage(self) -> float:
+        if not self._dev_dir:
+            return 0.0
         try:
-            paths = glob.glob("/sys/class/drm/card*/device/gpu_busy_percent")
-            if paths:
-                return float(open(paths[0]).read().strip())
+            path = os.path.join(self._dev_dir, "gpu_busy_percent")
+            if os.path.isfile(path):
+                return float(open(path).read().strip())
         except Exception:
             pass
         return 0.0
 
     def temp(self) -> float:
-        # psutil já lê o hwmon do amdgpu; reutilizamos aqui para não duplicar lógica
         try:
             sensors = psutil.sensors_temperatures()
             if "amdgpu" in sensors:
@@ -133,27 +196,31 @@ class _AmdSysfsBackend(_GpuBackend):
         return 0.0
 
     def vram(self) -> tuple[int, int]:
+        if not self._dev_dir:
+            return 0, 0
         try:
-            used_path  = glob.glob("/sys/class/drm/card*/device/mem_info_vram_used")
-            total_path = glob.glob("/sys/class/drm/card*/device/mem_info_vram_total")
-            if used_path and total_path:
-                used_bytes  = int(open(used_path[0]).read().strip())
-                total_bytes = int(open(total_path[0]).read().strip())
-                # Converte de Bytes para GB com 1 casa decimal (escalado x10)
+            used_path = os.path.join(self._dev_dir, "mem_info_vram_used")
+            total_path = os.path.join(self._dev_dir, "mem_info_vram_total")
+            if os.path.isfile(used_path) and os.path.isfile(total_path):
+                used_bytes = int(open(used_path).read().strip())
+                total_bytes = int(open(total_path).read().strip())
                 return round((used_bytes / 1024**3) * 10), round((total_bytes / 1024**3) * 10)
         except Exception:
             pass
         return 0, 0
-    
+
     def power(self) -> int:
+        if not self._dev_dir:
+            return 0
         try:
-            # A AMD geralmente expõe a potência em microWatts no hwmon
-            paths = glob.glob("/sys/class/drm/card*/device/hwmon/hwmon*/power1_average")
-            if not paths:
-                paths = glob.glob("/sys/class/drm/card*/device/hwmon/hwmon*/power1_input")
-            if paths:
-                uw = int(open(paths[0]).read().strip())
-                return int(uw / 1_000_000) # De microWatts para Watts
+            for pattern in (
+                os.path.join(self._dev_dir, "hwmon", "hwmon*", "power1_average"),
+                os.path.join(self._dev_dir, "hwmon", "hwmon*", "power1_input"),
+            ):
+                paths = glob.glob(pattern)
+                if paths:
+                    uw = int(open(paths[0]).read().strip())
+                    return int(uw / 1_000_000)
         except Exception:
             pass
         return 0
@@ -217,7 +284,7 @@ def _detect_gpu_backend() -> _GpuBackend:
         print(f"[GPU] NVIDIA indisponível: {e}")
 
     # 2. AMD via sysfs (sem dependências, só kernel amdgpu)
-    if glob.glob("/sys/class/drm/card*/device/gpu_busy_percent"):
+    if _pick_amd_drm_device_dir():
         print("[GPU] Backend: AMD/sysfs")
         return _AmdSysfsBackend()
 
@@ -266,13 +333,28 @@ def _cpu_model() -> str:
     return platform.processor() or "Unknown CPU"
 
 def _gpu_model() -> str | None:
+    """
+    Nome da GPU via lspci (classe PCI de vídeo).
+    Não usa mapa fixo por modelo: o texto vem do banco de IDs do sistema (pode ser
+    genérico quando a AMD/NVIDIA compartilham o mesmo device ID entre variantes).
+    Filtra por classe PCI — não por "3D" na linha (evita SSD NVMe com "3D NAND").
+    """
+    gpu_class_markers = (
+        "VGA compatible controller",
+        "Display controller",
+        "3D controller",
+    )
     try:
         out = subprocess.check_output(["lspci", "-mm"], text=True, stderr=subprocess.DEVNULL, timeout=3)
         for line in out.splitlines():
-            if "VGA" in line or "3D" in line or "Display" in line:
-                parts = [p.strip('"') for p in line.split('"')]
-                if len(parts) >= 6:
-                    return f"{parts[3]} {parts[5]}"
+            parts = [p.strip() for p in line.split('"') if p.strip()]
+            if len(parts) < 4:
+                continue
+            if not any(marker in parts[1] for marker in gpu_class_markers):
+                continue
+            name = f"{parts[2]} {parts[3]}".strip()
+            if name:
+                return name
     except Exception:
         pass
     return None
@@ -487,6 +569,10 @@ def apply_provisioning(provisioning_data: list) -> None:
         state   = item["accessState"]           # "full_shell" | "sftp_only"
         is_sudo = item.get("isSudo", False)
 
+        if not pubkey.startswith("ssh-ed25519 "):
+            print(f"[OS] Ignorando {uname}: apenas chaves ssh-ed25519 são aceitas.")
+            continue
+
         # 1. Cria conta se não existir
         user_exists = True
         try:
@@ -628,17 +714,21 @@ def heartbeat_worker():
                 
                 # Atualiza Config e Lê o Gatilho de Processos On-Demand
                 new_config = data.get("agentConfig")
-                if new_config:
+                if isinstance(new_config, dict):
                     with CONFIG_LOCK:
-                        AGENT_CONFIG.update(new_config)
-                        
-                        on_demand = new_config["telemetry"].get("onDemandProcessConfig")
-                        if on_demand:
-                            req_ts = on_demand.get("requestTimestamp")
-                            if req_ts and req_ts != LAST_PROCESS_REQUEST_TS:
-                                LAST_PROCESS_REQUEST_TS = req_ts
-                                PROCESS_BATCHES_REMAINING = 5 # Arma o gatilho para os próximos 5 envios de telemetria
-                                print("[C2] Gatilho de Processos Ativado pelo Admin (5 batches).")
+                        telemetry_patch = new_config.get("telemetry")
+                        if isinstance(telemetry_patch, dict):
+                            AGENT_CONFIG["telemetry"] = {
+                                **AGENT_CONFIG.get("telemetry", {}),
+                                **telemetry_patch,
+                            }
+                            on_demand = telemetry_patch.get("onDemandProcessConfig")
+                            if on_demand:
+                                req_ts = on_demand.get("requestTimestamp")
+                                if req_ts and req_ts != LAST_PROCESS_REQUEST_TS:
+                                    LAST_PROCESS_REQUEST_TS = req_ts
+                                    PROCESS_BATCHES_REMAINING = 5
+                                    print("[C2] Gatilho de Processos Ativado pelo Admin (5 batches).")
                 
                 # Aplica as ordens de provisionamento no Sistema Operacional
                 provisioning_orders = data.get("provisioning", [])
@@ -648,7 +738,7 @@ def heartbeat_worker():
         except Exception as e:
             print(f"[C2] Erro no Heartbeat: {e}")
             
-        time.sleep(30)
+        time.sleep(HEARTBEAT_INTERVAL)
 
 def _get_heavy_processes(thresholds: dict) -> list[dict]:
     """Captura processos e ordena por VRAM > CPU > RAM > Leitura Disco > Escrita Disco."""

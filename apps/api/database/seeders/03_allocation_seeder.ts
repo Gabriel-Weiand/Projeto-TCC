@@ -88,6 +88,15 @@ export default class extends BaseSeeder {
         status: 'pending' as const,
         isSudo: false,
       },
+      {
+        userId: 4,
+        machineId: 9,
+        startTime: labTime(today.plus({ days: 2 }), 9),
+        endTime: labTime(today.plus({ days: 2 }), 17),
+        reason: 'Visão computacional',
+        status: 'approved' as const,
+        isSudo: false,
+      },
     ]
 
     const allocations = []

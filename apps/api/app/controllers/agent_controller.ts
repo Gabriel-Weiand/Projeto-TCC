@@ -41,15 +41,8 @@ export default class AgentController {
     const { disks, ...machineData } = data as any
     machine.merge(machineData)
 
-    if (disks !== undefined) {
-      let kept: any[] = []
-      if (Array.isArray(disks)) {
-        kept = disks.filter((d) => d.mountpoint === '/')
-        if (kept.length === 0) {
-          kept = disks.filter((d) => d.mountpoint && d.mountpoint !== '/boot/efi').slice(0, 1)
-        }
-      }
-      machine.disks = kept
+    if (disks !== undefined && Array.isArray(disks)) {
+      machine.disks = disks
     }
 
     await machine.save()

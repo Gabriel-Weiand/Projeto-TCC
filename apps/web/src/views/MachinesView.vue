@@ -1,13 +1,25 @@
 <script setup lang="ts">
 import { ref, computed, onMounted } from "vue";
 import { useMachinesStore } from "@/stores/machines";
-import type { Machine } from "@/types";
+import MachineParkInfoModal from "@/components/MachineParkInfoModal.vue";
+import MachineParkCard from "@/components/MachineParkCard.vue";
+import type { Machine, MachineGroupSummary } from "@/types";
 import { useRouter } from "vue-router";
 
 const store = useMachinesStore();
 const router = useRouter();
 const loading = ref(true);
 const search = ref("");
+const infoMachine = ref<Machine | null>(null);
+/** true = grupo recolhido (só header visível) */
+const collapsedGroups = ref<Record<string, boolean>>({});
+
+const GROUP_ORDER = [
+  "Máquinas com placa dedicada",
+  "Renderização e VFX",
+  "Simulações e HPC leve",
+  "Uso geral e programação",
+];
 
 onMounted(async () => {
   try {
@@ -18,38 +30,80 @@ onMounted(async () => {
 });
 
 const filtered = computed(() => {
-  const q = search.value.toLowerCase();
+  const q = search.value.toLowerCase().trim();
   if (!q) return store.machines;
-  return store.machines.filter(
-    (m) =>
+  return store.machines.filter((m) => {
+    const groupTitle = m.group?.title?.toLowerCase() ?? "";
+    return (
       m.name.toLowerCase().includes(q) ||
       (m.description && m.description.toLowerCase().includes(q)) ||
-      m.status.toLowerCase().includes(q),
-  );
+      m.status.toLowerCase().includes(q) ||
+      groupTitle.includes(q) ||
+      (m.cpuModel && m.cpuModel.toLowerCase().includes(q)) ||
+      (m.gpuModel && m.gpuModel.toLowerCase().includes(q))
+    );
+  });
 });
 
-function statusBadge(s: string) {
-  const map: Record<string, string> = {
-    available: "badge-success",
-    occupied: "badge-warning",
-    maintenance: "badge-info",
-    offline: "badge-danger",
-  };
-  return map[s] || "badge-muted";
-}
+type ParkSection = {
+  key: string;
+  group: MachineGroupSummary | null;
+  machines: Machine[];
+};
 
-function statusLabel(s: string) {
-  const map: Record<string, string> = {
-    available: "Disponível",
-    occupied: "Ocupada",
-    maintenance: "Manutenção",
-    offline: "Offline",
-  };
-  return map[s] || s;
-}
+const parkSections = computed((): ParkSection[] => {
+  const byGroup = new Map<string, ParkSection>();
+
+  for (const m of filtered.value) {
+    const key = m.group ? `g-${m.group.id}` : "ungrouped";
+    if (!byGroup.has(key)) {
+      byGroup.set(key, {
+        key,
+        group: m.group ?? null,
+        machines: [],
+      });
+    }
+    byGroup.get(key)!.machines.push(m);
+  }
+
+  for (const section of byGroup.values()) {
+    section.machines.sort((a, b) => a.name.localeCompare(b.name, "pt-BR"));
+  }
+
+  const sections = [...byGroup.values()];
+  sections.sort((a, b) => {
+    const titleA = a.group?.title ?? "Outras máquinas";
+    const titleB = b.group?.title ?? "Outras máquinas";
+    const idxA = GROUP_ORDER.indexOf(titleA);
+    const idxB = GROUP_ORDER.indexOf(titleB);
+    const orderA = idxA === -1 ? 999 : idxA;
+    const orderB = idxB === -1 ? 999 : idxB;
+    if (orderA !== orderB) return orderA - orderB;
+    return titleA.localeCompare(titleB, "pt-BR");
+  });
+
+  return sections;
+});
 
 function goToDetail(m: Machine) {
   router.push({ name: "machine-detail", params: { id: m.id } });
+}
+
+function openInfo(m: Machine, event: MouseEvent) {
+  event.stopPropagation();
+  infoMachine.value = m;
+}
+
+function closeInfo() {
+  infoMachine.value = null;
+}
+
+function isGroupCollapsed(key: string): boolean {
+  return collapsedGroups.value[key] ?? false;
+}
+
+function toggleGroup(key: string) {
+  collapsedGroups.value[key] = !isGroupCollapsed(key);
 }
 </script>
 
@@ -72,69 +126,69 @@ function goToDetail(m: Machine) {
       Nenhuma máquina encontrada.
     </div>
 
-    <div v-else class="machines-grid">
-      <div
-        v-for="m in filtered"
-        :key="m.id"
-        class="card machine-card"
-        @click="goToDetail(m)"
+    <div v-else class="park-sections">
+      <section
+        v-for="section in parkSections"
+        :key="section.key"
+        class="park-group"
       >
-        <div class="mc-header">
-          <h3 class="mc-name">{{ m.name }}</h3>
-          <span :class="['badge', statusBadge(m.status)]">{{
-            statusLabel(m.status)
-          }}</span>
-        </div>
-        <p class="mc-desc">{{ m.description || "Sem descrição" }}</p>
-
-        <div class="mc-specs">
-          <div v-if="m.cpuModel" class="spec-item">
-            <span class="spec-label">CPU</span>
-            <span class="spec-value">{{ m.cpuModel }}</span>
-          </div>
-          <div v-if="m.gpuModel" class="spec-item">
-            <span class="spec-label">GPU</span>
-            <span class="spec-value">{{ m.gpuModel }}</span>
-          </div>
-          <div v-if="m.totalRamGb" class="spec-item">
-            <span class="spec-label">RAM</span>
-            <span class="spec-value">{{ m.totalRamGb }} GB</span>
-          </div>
-          <div v-if="m.totalDiskGb" class="spec-item">
-            <span class="spec-label">Disco</span>
-            <span class="spec-value">{{ m.totalDiskGb }} GB</span>
-          </div>
-        </div>
-
-        <!-- Disk Partitions -->
-        <div v-if="m.disks && m.disks.length > 0" class="mc-disks">
-          <div v-for="d in m.disks.slice(0, 3)" :key="d.id" class="disk-row">
-            <span class="disk-device">{{ d.device }}</span>
-            <span class="disk-mount">{{ d.mountpoint }}</span>
-            <span class="disk-size" v-if="d.totalGb != null">
-              {{ d.freeGb != null ? d.freeGb + ' / ' : '' }}{{ d.totalGb }} GB
+        <button
+          type="button"
+          class="park-group-header"
+          :class="{ 'is-collapsed': isGroupCollapsed(section.key) }"
+          :aria-expanded="!isGroupCollapsed(section.key)"
+          :aria-label="
+            (section.group?.title ?? 'Outras máquinas') +
+            (isGroupCollapsed(section.key)
+              ? ' — expandir máquinas'
+              : ' — recolher máquinas')
+          "
+          @click="toggleGroup(section.key)"
+        >
+          <div class="park-group-header-text">
+            <h2 class="park-group-title">
+              {{ section.group?.title ?? "Outras máquinas" }}
+            </h2>
+            <p v-if="section.group?.description" class="park-group-desc text-secondary">
+              {{ section.group.description }}
+            </p>
+            <span class="park-group-count text-muted">
+              {{ section.machines.length }}
+              {{ section.machines.length === 1 ? "máquina" : "máquinas" }}
             </span>
           </div>
-          <div v-if="m.disks.length > 3" class="disk-more">
-            +{{ m.disks.length - 3 }} partição(ões)
+          <span
+            class="park-group-chevron"
+            :class="{ 'is-collapsed': isGroupCollapsed(section.key) }"
+            aria-hidden="true"
+            >▲</span
+          >
+        </button>
+
+        <div
+          class="park-group-body"
+          :class="{ 'is-expanded': !isGroupCollapsed(section.key) }"
+        >
+          <div class="park-group-body-inner">
+            <div class="machines-grid">
+              <MachineParkCard
+                v-for="m in section.machines"
+                :key="m.id"
+                :machine="m"
+                @open="goToDetail(m)"
+                @details="openInfo(m, $event)"
+              />
+            </div>
           </div>
         </div>
-
-        <div class="mc-footer">
-          <span
-            v-if="m.loggedUser"
-            class="text-secondary"
-            style="font-size: 0.8rem"
-          >
-            Usuário: {{ m.loggedUser }}
-          </span>
-          <span v-else class="text-muted" style="font-size: 0.8rem"
-            >Sem usuário logado</span
-          >
-          <span class="mc-arrow">→</span>
-        </div>
-      </div>
+      </section>
     </div>
+
+    <MachineParkInfoModal
+      v-if="infoMachine"
+      :machine="infoMachine"
+      @close="closeInfo"
+    />
   </div>
 </template>
 
@@ -147,115 +201,116 @@ function goToDetail(m: Machine) {
   padding: 0.55rem 0.9rem;
 }
 
+.park-sections {
+  display: flex;
+  flex-direction: column;
+  gap: 2.25rem;
+}
+
+.park-group-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  width: 100%;
+  margin-bottom: 1rem;
+  padding: 0.55rem 1.25rem 0.65rem 0.75rem;
+  font-family: inherit;
+  color: inherit;
+  border: none;
+  border-bottom: 1px solid var(--border-subtle);
+  border-radius: var(--radius);
+  background: transparent;
+  text-align: left;
+  cursor: pointer;
+  transition:
+    background 0.2s ease,
+    margin-bottom 0.28s ease;
+}
+
+.park-group-header:hover {
+  background: rgba(255, 255, 255, 0.025);
+}
+
+.park-group-header:focus-visible {
+  outline: 2px solid rgba(124, 108, 240, 0.45);
+  outline-offset: 2px;
+}
+
+.park-group-header.is-collapsed {
+  margin-bottom: 0;
+}
+
+.park-group-header-text {
+  min-width: 0;
+  flex: 1;
+}
+
+.park-group-chevron {
+  flex-shrink: 0;
+  align-self: center;
+  margin-right: 0.15rem;
+  font-size: 1.15rem;
+  line-height: 1;
+  color: var(--text-muted);
+  display: inline-block;
+  transform: rotate(0deg);
+  transition:
+    transform 0.28s ease,
+    color 0.2s ease;
+}
+
+.park-group-chevron.is-collapsed {
+  transform: rotate(180deg);
+}
+
+.park-group-header:hover .park-group-chevron {
+  color: var(--text-secondary);
+}
+
+.park-group-body {
+  display: grid;
+  grid-template-rows: 0fr;
+  transition: grid-template-rows 0.32s ease;
+}
+
+.park-group-body.is-expanded {
+  grid-template-rows: 1fr;
+}
+
+.park-group-body-inner {
+  overflow: hidden;
+  min-height: 0;
+  opacity: 0;
+  transition: opacity 0.22s ease;
+}
+
+.park-group-body.is-expanded .park-group-body-inner {
+  opacity: 1;
+  transition: opacity 0.28s ease 0.06s;
+}
+
+.park-group-title {
+  margin: 0 0 0.35rem;
+  font-size: 1.15rem;
+  font-weight: 700;
+  color: var(--text-primary);
+}
+
+.park-group-desc {
+  margin: 0 0 0.4rem;
+  font-size: 0.88rem;
+  line-height: 1.45;
+  max-width: 52rem;
+}
+
+.park-group-count {
+  font-size: 0.78rem;
+}
+
 .machines-grid {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
   gap: 1rem;
-}
-
-.machine-card {
-  cursor: pointer;
-  display: flex;
-  flex-direction: column;
-  gap: 0.6rem;
-  transition:
-    border-color var(--transition),
-    transform var(--transition),
-    box-shadow var(--transition);
-}
-.machine-card:hover {
-  border-color: rgba(124, 108, 240, 0.2);
-  transform: translateY(-2px);
-  box-shadow: var(--shadow-elevated);
-}
-
-.mc-header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-}
-.mc-name {
-  font-size: 1.05rem;
-  font-weight: 600;
-}
-.mc-desc {
-  font-size: 0.85rem;
-  color: var(--text-muted);
-  line-height: 1.4;
-}
-.mc-specs {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 0.35rem 1rem;
-}
-.spec-item {
-  display: flex;
-  flex-direction: column;
-}
-.spec-label {
-  font-size: 0.7rem;
-  font-weight: 600;
-  text-transform: uppercase;
-  letter-spacing: 0.04em;
-  color: var(--text-muted);
-}
-.spec-value {
-  font-size: 0.82rem;
-  color: var(--text-secondary);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
-/* Disk partitions */
-.mc-disks {
-  border-top: 1px solid var(--border-subtle);
-  padding-top: 0.4rem;
-  display: flex;
-  flex-direction: column;
-  gap: 0.2rem;
-}
-.disk-row {
-  display: flex;
-  align-items: center;
-  gap: 0.5rem;
-  font-size: 0.75rem;
-}
-.disk-device {
-  font-family: monospace;
-  color: var(--text-muted);
-  font-size: 0.7rem;
-  min-width: 70px;
-}
-.disk-mount {
-  color: var(--text-secondary);
-  font-weight: 500;
-}
-.disk-size {
-  margin-left: auto;
-  color: var(--text-muted);
-}
-.disk-more {
-  font-size: 0.7rem;
-  color: var(--accent);
-  opacity: 0.8;
-  padding-left: 0.25rem;
-}
-
-.mc-footer {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  margin-top: auto;
-  padding-top: 0.5rem;
-  border-top: 1px solid var(--border-subtle);
-}
-.mc-arrow {
-  color: var(--accent);
-  font-size: 1rem;
-  transition: transform var(--transition);
-}
-.machine-card:hover .mc-arrow {
-  transform: translateX(3px);
 }
 </style>

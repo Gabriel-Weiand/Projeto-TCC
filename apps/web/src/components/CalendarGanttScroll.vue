@@ -9,12 +9,15 @@ const props = withDefaults(
     allocations?: Allocation[];
     currentUserId?: number | null;
     loading?: boolean;
+    /** Modo compacto: uma máquina, toolbar reduzida, linhas mais baixas */
+    compact?: boolean;
   }>(),
   {
     machines: () => [],
     allocations: () => [],
     currentUserId: null,
     loading: false,
+    compact: false,
   },
 );
 
@@ -79,12 +82,12 @@ function scrollMachines(delta: number) {
 
 // ---- Row height helpers (extend first/last rows to host scroll buttons) ----
 function rowH(idx: number): number {
-  if (maxOffset.value === 0) return ROW_H;
+  if (maxOffset.value === 0) return ROW_H.value;
   const last = displayedMachines.value.length - 1;
-  return idx === 0 || idx === last ? ROW_H + BTN_H : ROW_H;
+  return idx === 0 || idx === last ? ROW_H.value + BTN_H : ROW_H.value;
 }
 function barTopOffset(idx: number): number {
-  const center = Math.round((ROW_H - BAR_H) / 2);
+  const center = Math.round((ROW_H.value - BAR_H.value) / 2);
   if (maxOffset.value === 0) return center;
   if (idx === 0) return BTN_H + center;
   return center;
@@ -109,15 +112,19 @@ function onLeftWheel(e: WheelEvent) {
 // ---- Timeline constants ----
 const PAST_DAYS = 30;
 const FUTURE_DAYS = 60;
-const CELL_W = 46;
-const MONTH_HEADER_H = 30;
-const DAY_HEADER_H = 46;
-const ROW_H = 66;
-const BAR_H = 38;
+const CELL_W = computed(() => (props.compact ? 40 : 46));
+const MONTH_HEADER_H = computed(() => (props.compact ? 24 : 30));
+const DAY_HEADER_H = computed(() => (props.compact ? 36 : 46));
+const ROW_H = computed(() => (props.compact ? 48 : 66));
+const BAR_H = computed(() => (props.compact ? 26 : 38));
 const BTN_H = 20;
-const TOTAL_HEADER_H = MONTH_HEADER_H + DAY_HEADER_H;
+const TOTAL_HEADER_H = computed(
+  () => MONTH_HEADER_H.value + DAY_HEADER_H.value,
+);
 const TOTAL_DAYS = PAST_DAYS + 1 + FUTURE_DAYS;
 const MS_PER_DAY = 1000 * 60 * 60 * 24;
+
+const isSingleMachine = computed(() => (props.machines?.length ?? 0) <= 1);
 
 const todayRef = new Date();
 todayRef.setHours(0, 0, 0, 0);
@@ -133,10 +140,10 @@ const timelineDays = computed(() => {
   return days;
 });
 
-const totalWidth = TOTAL_DAYS * CELL_W;
+const totalWidth = computed(() => TOTAL_DAYS * CELL_W.value);
 
-const todayLineX = PAST_DAYS * CELL_W + CELL_W / 2;
-const todayColLeft = PAST_DAYS * CELL_W;
+const todayLineX = computed(() => PAST_DAYS * CELL_W.value + CELL_W.value / 2);
+const todayColLeft = computed(() => PAST_DAYS * CELL_W.value);
 
 // ---- Month spans (for header labels + bg gradient) ----
 const monthSpans = computed(() => {
@@ -169,8 +176,8 @@ const monthSpans = computed(() => {
         .toLocaleDateString("pt-BR", { month: "short" })
         .replace(".", "")
         .toUpperCase(),
-      leftPx: i * CELL_W,
-      widthPx: count * CELL_W,
+      leftPx: i * CELL_W.value,
+      widthPx: count * CELL_W.value,
       idx: spans.length,
     });
     i = j;
@@ -256,8 +263,8 @@ function barsForMachine(machineId: number) {
       const color = machineColor(machineId);
       return {
         allocation: a,
-        leftPx: leftDays * CELL_W,
-        widthPx: widthDays * CELL_W,
+        leftPx: leftDays * CELL_W.value,
+        widthPx: widthDays * CELL_W.value,
         color,
         isPending: a.status === "pending",
         isFinished: a.status === "finished",
@@ -387,7 +394,7 @@ function jumpBy(px: number) {
 function scrollToToday() {
   if (!scrollEl.value) return;
   const w = scrollEl.value.clientWidth;
-  scrollEl.value.scrollTo({ left: todayLineX - w / 2, behavior: "smooth" });
+  scrollEl.value.scrollTo({ left: todayLineX.value - w / 2, behavior: "smooth" });
 }
 
 onMounted(async () => {
@@ -396,7 +403,7 @@ onMounted(async () => {
   window.addEventListener("resize", updateAlignOffset);
   if (scrollEl.value) {
     const w = scrollEl.value.clientWidth;
-    scrollEl.value.scrollLeft = todayLineX - w / 2;
+    scrollEl.value.scrollLeft = todayLineX.value - w / 2;
     scrollLeft.value = scrollEl.value.scrollLeft;
     scrollEl.value.style.cursor = "grab";
     scrollEl.value.addEventListener("wheel", onWheel, { passive: false });
@@ -416,7 +423,7 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-  <div class="gantt-wrap">
+  <div class="gantt-wrap" :class="{ 'gantt-wrap--compact': compact }">
     <div v-if="loading" class="empty-state">Carregando calendário...</div>
 
     <template v-else>
@@ -428,7 +435,7 @@ onBeforeUnmount(() => {
         </div>
 
         <div class="toolbar-controls">
-          <div class="legend">
+          <div v-if="!compact" class="legend">
             <span class="leg-item">
               <span class="leg-bar own-leg"></span>Sua alocação
             </span>
@@ -460,7 +467,7 @@ onBeforeUnmount(() => {
           <div class="left-header" :style="{ height: TOTAL_HEADER_H + 'px' }">
             <span class="left-header-label">
               Máquina
-              <span class="machines-range"
+              <span v-if="!isSingleMachine" class="machines-range"
                 >{{ machineOffset + 1 }}–{{
                   Math.min(machineOffset + PAGE_SIZE, machines.length)
                 }}
@@ -1101,6 +1108,14 @@ onBeforeUnmount(() => {
   overflow: hidden;
   text-overflow: ellipsis;
   pointer-events: none;
+}
+
+.gantt-wrap--compact .toolbar {
+  padding: 0.35rem 0.5rem;
+}
+
+.gantt-wrap--compact .machine-name {
+  font-size: 0.82rem;
 }
 
 /* ---- Hint ---- */

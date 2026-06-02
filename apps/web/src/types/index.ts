@@ -9,6 +9,27 @@ export interface User {
   updatedAt: string | null;
 }
 
+export type TelemetryPreset = "fast" | "eco" | "custom";
+
+export interface TelemetrySetConfig {
+  cpu?: boolean;
+  gpu?: boolean;
+  ramAndSwap?: boolean;
+  diskSpace?: boolean;
+  diskIO?: boolean;
+  networkIO?: boolean;
+  temperatures?: boolean;
+  activeUsers?: boolean;
+}
+
+export interface CustomAgentConfig {
+  intervalSeconds?: number;
+  batchSize?: number;
+  telemetrySet?: TelemetrySetConfig;
+  processThresholds?: Record<string, number>;
+  onDemandProcessConfig?: unknown;
+}
+
 export interface DiskPartition {
   id: number;
   device: string;
@@ -18,10 +39,18 @@ export interface DiskPartition {
   freeGb: number | null;
 }
 
+export interface MachineGroupSummary {
+  id: number;
+  title: string;
+  description: string | null;
+}
+
 export interface Machine {
   id: number;
   name: string;
   description: string;
+  machineGroupId?: number | null;
+  group?: MachineGroupSummary | null;
   cpuModel: string | null;
   gpuModel: string | null;
   totalRamGb: number | null;
@@ -30,7 +59,11 @@ export interface Machine {
   status: "available" | "occupied" | "maintenance" | "offline";
   lastSeenAt: string | null;
   activeUsers: any[] | null;
-  customAgentConfig?: any | null;
+  currentSessions?: string[] | null;
+  hostFingerprint?: string | null;
+  systemUsername?: string | null;
+  telemetryPreset?: TelemetryPreset;
+  customAgentConfig?: CustomAgentConfig | null;
   createdAt: string;
   updatedAt: string | null;
   token?: string;
@@ -45,6 +78,9 @@ export interface RealtimeTelemetry {
   cpuFreqMhz?: number | null;
   gpuUsage: number;
   gpuTemp: number;
+  gpuPowerWatts?: number | null;
+  vramTotalGb?: number | null;
+  vramUsedGb?: number | null;
   ramTotalGb?: number | null;
   ramUsedGb?: number | null;
   swapTotalGb?: number | null;

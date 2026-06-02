@@ -70,7 +70,7 @@ $TWA = \frac{\sum (v_i \cdot \Delta t_i)}{T_{total}}$
 ## Observações
 
 - `system_username` deve ser estável/imutável por regra de negócio (a constraint explícita não está no schema).
-- Caso a autenticação do agente use MAC address, o schema precisa armazenar este campo na tabela `machines`.
+- Autenticação do agente: apenas `Authorization: Bearer <token>` (512 bits). Não há MAC address no schema.
 
 ---
 
@@ -254,8 +254,7 @@ As senhas dos usuários **nunca são armazenadas em texto plano** no banco de da
 ├─────────────────────────────────────────────────────────────┤
 │                                                             │
 │  • Cada máquina possui um Agent Key único de 512 bits       │
-│  • Headers: Authorization: Bearer <token>                   │
-│             X-Machine-Mac: <mac_address>                     │
+│  • Header: Authorization: Bearer <token>                    │
 │  • Cache de 5 minutos para reduzir consultas ao banco       │
 │  • Usado apenas nas rotas /api/agent/*                      │
 │                                                             │
@@ -627,7 +626,6 @@ Cadastrar máquina e gerar Agent Key para o agente.
   "totalRamGb": 16,
   "totalDiskGb": 512,
   "ipAddress": "192.168.1.100",
-  "macAddress": "AA:BB:CC:DD:EE:FF",
   "status": "available"
 }
 ```
@@ -639,9 +637,7 @@ Cadastrar máquina e gerar Agent Key para o agente.
 | `cpuModel`    | string | ❌          | Modelo do processador                             |
 | `gpuModel`    | string | ❌          | Modelo da GPU                                     |
 | `totalRamGb`  | number | ❌          | RAM total em GB                                   |
-| `totalDiskGb` | number | ❌          | Disco total em GB                                 |
 | `ipAddress`   | string | ❌          | Endereço IP                                       |
-| `macAddress`  | string | ❌          | MAC Address (formato: `AA:BB:CC:DD:EE:FF`)        |
 | `status`      | enum   | ❌          | `available`, `occupied`, `maintenance`, `offline` |
 
 **Response (201):**
@@ -673,8 +669,6 @@ Inventário de máquinas com status em tempo real.
 
 **Permissão:** Geral (autenticado)
 
-> ⚠️ **Visibilidade:** `macAddress` só é retornado para administradores. Usuários normais não recebem este campo.
-
 **Response (200):**
 
 ```json
@@ -688,7 +682,7 @@ Inventário de máquinas com status em tempo real.
     "totalRamGb": 16,
     "totalDiskGb": 512,
     "status": "available",
-    "macAddress": "AA:BB:CC:DD:EE:FF",
+    "hostFingerprint": "SHA256:abcd1234...",
     "latestTelemetry": {
       "cpuUsage": 250,
       "ramUsage": 450,
@@ -698,8 +692,6 @@ Inventário de máquinas com status em tempo real.
 ]
 ```
 
-> 🔒 **Admin:** Resposta inclui `macAddress`. **Usuário normal:** `macAddress` é omitido.
-
 ---
 
 ##### `GET /api/v1/machines/:id`
@@ -708,7 +700,7 @@ Detalhes técnicos de uma máquina específica.
 
 **Permissão:** Geral (autenticado)
 
-**Response para Admin (200):** Inclui `token` e `macAddress`
+**Response para Admin (200):** Inclui `token` (para configurar o agente)
 
 ```json
 {
@@ -720,7 +712,7 @@ Detalhes técnicos de uma máquina específica.
   "totalRamGb": 16,
   "totalDiskGb": 512,
   "ipAddress": "192.168.1.100",
-  "macAddress": "AA:BB:CC:DD:EE:FF",
+  "hostFingerprint": "SHA256:abcd1234...",
   "status": "available",
   "lastSeenAt": "2026-01-28T12:00:00.000Z",
   "loggedUser": "gabriel.santos",
@@ -736,9 +728,9 @@ Detalhes técnicos de uma máquina específica.
 }
 ```
 
-**Response para Usuário Normal (200):** Sem `token` e sem `macAddress`
+**Response para Usuário Normal (200):** Sem `token`
 
-> 🔒 **Admin:** Resposta inclui `token` e `macAddress`. **Usuário normal:** ambos são omitidos.
+> 🔒 **Admin:** Resposta inclui `token`. **Usuário normal:** `token` é omitido.
 
 > ⚠️ **Importante:** O `token` é sensível. Use apenas para configurar o agente.
 

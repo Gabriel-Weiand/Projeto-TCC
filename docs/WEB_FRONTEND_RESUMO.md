@@ -221,7 +221,7 @@ Calendário semanal (7 dias, horas 7–23). Navegação entre semanas. Filtro po
 Grid responsivo de cards de máquinas. Busca por nome/descrição/status. Badge de status colorido (disponível, ocupada, manutenção, offline). Clica no card para ir ao detalhe.
 
 ### `MachineDetailView`
-Info da máquina (CPU, GPU, RAM, Disco, IP — MAC apenas para admin). Telemetria em tempo real via polling (progress bars coloridas por threshold: <50% verde, <80% amarelo, >80% vermelho). Calendário semanal restrito à máquina. Botão de reserva (desabilitado se em manutenção).
+Info da máquina (CPU, GPU, RAM, Disco, IP). Telemetria em tempo real via polling (progress bars coloridas por threshold: <50% verde, <80% amarelo, >80% vermelho). Calendário semanal restrito à máquina. Botão de reserva (desabilitado se em manutenção).
 
 ### `ProfileView`
 Edição de nome, email, senha (opcional). Avatar com iniciais. Badge de role. Data de criação da conta.
@@ -233,7 +233,7 @@ Cards de estatísticas: total de máquinas / online, usuários, reservas pendent
 Tabela de usuários com busca. CRUD completo via modals. Na criação, senha é obrigatória; na edição, deixar em branco mantém a senha atual. Seleção de role apenas na criação.
 
 ### `AdminMachinesView`
-Tabela de máquinas com busca. CRUD completo via modals. Regenerar token (confirmação + exibe token gerado). Formulário: nome, descrição, endereço MAC, status (só na edição).
+Tabela de máquinas com busca. CRUD completo via modals. Regenerar token (confirmação + exibe token gerado). Formulário: nome, descrição, status (só na edição).
 
 ### `AdminMachineDetailView`
 Telemetria ao vivo em grid com valores coloridos. Tabela das últimas 20 alocações com ações de aprovar/negar/cancelar. Auto-refresh de alocações a cada 30s.
@@ -269,7 +269,7 @@ User {
 Machine {
   id, name, description,
   cpuModel, gpuModel, totalRamGb, totalDiskGb,
-  ipAddress, macAddress,
+  ipAddress,
   status: 'available' | 'occupied' | 'maintenance' | 'offline',
   lastSeenAt, loggedUser, createdAt, updatedAt,
   token, latestTelemetry
