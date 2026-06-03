@@ -35,7 +35,7 @@ test.group('Agent API', (group) => {
       status: 'acknowledged',
       accessControl: { shouldBlock: false },
       agentConfig: {
-        telemetry: { telemetryPreset: 'eco' },
+        telemetry: { telemetryPreset: 'eco', telemetryMode: 'auto' },
       },
     })
 
@@ -99,6 +99,9 @@ test.group('Agent API', (group) => {
           accessState: 'sftp_only', // Impede o terminal antes da hora
         },
       ],
+      agentConfig: {
+        telemetry: { telemetryPreset: 'fast', telemetryMode: 'auto' },
+      },
     })
   })
 
@@ -133,6 +136,74 @@ test.group('Agent API', (group) => {
           accessState: 'full_shell',
         },
       ],
+      agentConfig: {
+        telemetry: { telemetryPreset: 'fast', telemetryMode: 'auto' },
+      },
+    })
+  })
+
+  test('coleta automática: ociosa eco, em alocação fast; custom fixo', async ({
+    client,
+  }) => {
+    const machine = await Machine.create({
+      name: 'PC-TEL-AUTO',
+      description: 'Lab',
+      token: 'tel-auto',
+      telemetryPreset: 'eco',
+    })
+
+    const idle = await client
+      .post('/api/v1/agent/heartbeat')
+      .header('Authorization', `Bearer ${machine.token}`)
+    idle.assertStatus(200)
+    idle.assertBodyContains({
+      agentConfig: { telemetry: { telemetryPreset: 'eco', telemetryMode: 'auto' } },
+    })
+
+    const user = await User.create({
+      fullName: 'Tel User',
+      email: 'tel@teste.com',
+      password: '123',
+      role: 'user',
+      systemUsername: 'lab.tel_user',
+    })
+
+    await Allocation.create({
+      userId: user.id,
+      machineId: machine.id,
+      startTime: DateTime.now().minus({ minutes: 2 }),
+      endTime: DateTime.now().plus({ hours: 1 }),
+      status: 'approved',
+    })
+
+    const active = await client
+      .post('/api/v1/agent/heartbeat')
+      .header('Authorization', `Bearer ${machine.token}`)
+    active.assertStatus(200)
+    active.assertBodyContains({
+      agentConfig: { telemetry: { telemetryPreset: 'fast', telemetryMode: 'auto' } },
+    })
+
+    const customMachine = await Machine.create({
+      name: 'PC-TEL-CUSTOM',
+      description: 'Lab',
+      token: 'tel-custom',
+      telemetryPreset: 'custom',
+      customAgentConfig: {
+        intervalSeconds: 12,
+        batchSize: 3,
+        telemetrySet: { cpu: true, ramAndSwap: true },
+      },
+    })
+
+    const customHb = await client
+      .post('/api/v1/agent/heartbeat')
+      .header('Authorization', `Bearer ${customMachine.token}`)
+    customHb.assertStatus(200)
+    customHb.assertBodyContains({
+      agentConfig: {
+        telemetry: { telemetryPreset: 'custom', telemetryMode: 'custom' },
+      },
     })
   })
 

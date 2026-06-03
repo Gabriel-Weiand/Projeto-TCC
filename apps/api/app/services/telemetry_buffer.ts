@@ -59,11 +59,16 @@ interface MachineLatestState {
  * O estado real-time é indexado por machineId para fácil acesso do dashboard,
  * enquanto a persistência usa allocationId como FK.
  */
+/** Máximo de amostras por lote do agente e no snapshot exposto ao dashboard. */
+export const TELEMETRY_AGENT_BATCH_MAX = 15
+
 class TelemetryBuffer {
   private buffer: TelemetryData[] = []
   private latestState = new Map<number, MachineLatestState>()
   private recentEntries = new Map<number, TelemetryData[]>()
-  private readonly MAX_RECENT_ENTRIES = 30
+  /** Último lote completo recebido do agente (para diff no frontend). */
+  private lastBatchByMachine = new Map<number, TelemetryData[]>()
+  private readonly MAX_RECENT_ENTRIES = TELEMETRY_AGENT_BATCH_MAX
 
   private readonly FLUSH_INTERVAL_MS = 60 * 1000
   private readonly MAX_BUFFER_SIZE = 1000
@@ -114,21 +119,49 @@ class TelemetryBuffer {
     }
   }
 
+  /**
+   * Guarda o último lote enviado pelo agente (até 15 amostras).
+   * Usado pelo stream HTTP para o front comparar lote a lote.
+   */
+  recordBatch(machineId: number, batch: TelemetryData[]): void {
+    if (batch.length === 0) return
+    const capped =
+      batch.length > TELEMETRY_AGENT_BATCH_MAX
+        ? batch.slice(-TELEMETRY_AGENT_BATCH_MAX)
+        : [...batch]
+    this.lastBatchByMachine.set(machineId, capped)
+  }
+
   getLatest(machineId: number): TelemetryData | null {
     return this.latestState.get(machineId)?.data ?? null
   }
 
   /**
+   * Último lote do agente; se ainda não houve POST em lote, usa o ring (máx. 15).
+   */
+  getLastBatch(machineId: number, count?: number): TelemetryData[] {
+    const max = Math.min(
+      count ?? TELEMETRY_AGENT_BATCH_MAX,
+      TELEMETRY_AGENT_BATCH_MAX
+    )
+    const batch = this.lastBatchByMachine.get(machineId)
+    if (batch && batch.length > 0) {
+      return batch.length > max ? batch.slice(-max) : [...batch]
+    }
+    return this.getRecent(machineId, max)
+  }
+
+  /**
    * Retorna as últimas entradas do ring buffer de uma máquina.
-   * Usado pelo frontend para playback de telemetria 1/s.
    * @param machineId - ID da máquina
-   * @param count - Número máximo de entradas (default: todas disponíveis)
+   * @param count - Número máximo de entradas (default: todas disponíveis, máx. 15 no ring)
    */
   getRecent(machineId: number, count?: number): TelemetryData[] {
     const ring = this.recentEntries.get(machineId)
     if (!ring || ring.length === 0) return []
-    if (count && count < ring.length) {
-      return ring.slice(-count)
+    const cap = Math.min(count ?? ring.length, TELEMETRY_AGENT_BATCH_MAX)
+    if (cap < ring.length) {
+      return ring.slice(-cap)
     }
     return [...ring]
   }
@@ -235,6 +268,7 @@ class TelemetryBuffer {
   clearMachine(machineId: number): void {
     this.latestState.delete(machineId)
     this.recentEntries.delete(machineId)
+    this.lastBatchByMachine.delete(machineId)
   }
 
   /**
@@ -245,6 +279,7 @@ class TelemetryBuffer {
     this.buffer = []
     this.latestState.clear()
     this.recentEntries.clear()
+    this.lastBatchByMachine.clear()
   }
 }
 

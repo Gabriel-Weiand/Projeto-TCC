@@ -3,6 +3,7 @@ import { ref, computed, onMounted, onUnmounted } from "vue";
 import { useMachinesStore } from "@/stores/machines";
 import { useAuthStore } from "@/stores/auth";
 import { useTelemetryPlayback } from "@/composables/useTelemetryPlayback";
+import { pickNewerTelemetry } from "@/utils/telemetryBatchDiff";
 import MachineTelemetryPanel from "@/components/MachineTelemetryPanel.vue";
 import MachineLiveSections from "@/components/MachineLiveSections.vue";
 import CalendarGanttScroll from "@/components/CalendarGanttScroll.vue";
@@ -68,8 +69,8 @@ onUnmounted(() => {
   if (allocRefresh) clearInterval(allocRefresh);
 });
 
-const liveData = computed(
-  () => telemetry.value || machine.value?.latestTelemetry || null,
+const liveData = computed(() =>
+  pickNewerTelemetry(telemetry.value, machine.value?.latestTelemetry ?? null),
 );
 
 const showLiveSections = computed(

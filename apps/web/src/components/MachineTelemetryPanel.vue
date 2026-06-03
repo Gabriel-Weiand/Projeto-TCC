@@ -11,7 +11,10 @@ import {
   clampTelemetryInterval,
   enforceMandatoryTelemetrySet,
 } from "@/utils/telemetryPresets";
-import type { Machine, TelemetryPreset } from "@/types";
+import type { Machine } from "@/types";
+
+/** Modo na UI: automático (fast/eco pelo lab) ou custom explícito do admin. */
+type CollectionMode = "automatic" | "custom";
 
 const props = withDefaults(
   defineProps<{ machine: Machine; trigger?: "inline" | "button" }>(),
@@ -26,26 +29,28 @@ const error = ref("");
 const saved = ref(false);
 const showModal = ref(false);
 
-const preset = ref<TelemetryPreset>("eco");
+const mode = ref<CollectionMode>("automatic");
 
-const PRESET_INFO = computed(() => {
-  const p = labConfig.telemetryPresets;
-  return {
-    fast: {
-      label: "Fast",
-      intervalSeconds: p.fast.intervalSeconds,
-      batchSize: p.fast.batchSize,
-      blurb: "Perfil global do lab — amostras frequentes.",
-    },
-    eco: {
-      label: "Eco",
-      intervalSeconds: p.eco.intervalSeconds,
-      batchSize: p.eco.batchSize,
-      blurb: "Perfil global do lab — menor carga no host.",
-    },
-    custom: { label: "Custom", blurb: "Intervalo, lote e métricas só desta máquina." },
-  };
+const labPresets = computed(() => labConfig.telemetryPresets);
+
+const automaticSummary = computed(() => {
+  const f = labPresets.value.fast;
+  const e = labPresets.value.eco;
+  return `Em alocação: fast (${f.intervalSeconds}s, lote ${f.batchSize}) · ociosa: eco (${e.intervalSeconds}s, lote ${e.batchSize})`;
 });
+
+const MODE_INFO: Record<CollectionMode, { label: string; blurb: string }> = {
+  automatic: {
+    label: "Automático",
+    blurb: "Fast durante reserva ativa; eco sem alocação. Perfis globais do laboratório.",
+  },
+  custom: {
+    label: "Custom",
+    blurb: "Intervalo, lote e métricas fixos só nesta máquina.",
+  },
+};
+
+const activeModeInfo = computed(() => MODE_INFO[mode.value]);
 
 function defaultTelemetrySet() {
   return {
@@ -66,16 +71,8 @@ const custom = reactive({
   telemetrySet: defaultTelemetrySet(),
 });
 
-const activePresetInfo = computed(() => PRESET_INFO.value[preset.value]);
-
-function presetMetaLine(key: string): string | null {
-  if (key !== "fast" && key !== "eco") return null;
-  const p = labConfig.telemetryPresets[key];
-  return `${p.intervalSeconds}s · lote ${p.batchSize}`;
-}
-
 function loadFromMachine(m: Machine) {
-  preset.value = (m.telemetryPreset as TelemetryPreset) || "eco";
+  mode.value = m.telemetryPreset === "custom" ? "custom" : "automatic";
   const c = m.customAgentConfig || {};
   custom.intervalSeconds = c.intervalSeconds ?? 5;
   custom.batchSize = c.batchSize ?? 5;
@@ -87,8 +84,8 @@ function loadFromMachine(m: Machine) {
 
 watch(() => props.machine, loadFromMachine, { immediate: true });
 
-function selectPreset(p: TelemetryPreset) {
-  preset.value = p;
+function selectMode(next: CollectionMode) {
+  mode.value = next;
   saved.value = false;
 }
 
@@ -105,8 +102,9 @@ async function handleSave() {
   saved.value = false;
   saving.value = true;
   try {
-    const payload: Record<string, unknown> = { telemetryPreset: preset.value };
-    if (preset.value === "custom") {
+    const payload: Record<string, unknown> = {};
+
+    if (mode.value === "custom") {
       if (
         custom.intervalSeconds < TELEMETRY_INTERVAL_MIN ||
         custom.intervalSeconds > TELEMETRY_INTERVAL_MAX
@@ -118,12 +116,16 @@ async function handleSave() {
         error.value = `Tamanho do lote deve ser entre 1 e ${TELEMETRY_BATCH_MAX}.`;
         return;
       }
+      payload.telemetryPreset = "custom";
       payload.customAgentConfig = {
         intervalSeconds: clampTelemetryInterval(custom.intervalSeconds),
         batchSize: custom.batchSize,
         telemetrySet: enforceMandatoryTelemetrySet(custom.telemetrySet),
       };
+    } else {
+      payload.telemetryPreset = "eco";
     }
+
     const updated = await store.updateMachine(props.machine.id, payload);
     emit("saved", updated);
     saved.value = true;
@@ -145,33 +147,35 @@ async function handleSave() {
     class="btn btn-ghost btn-sm"
     @click="openModal"
   >
-    Coleta · {{ activePresetInfo.label }}
+    Coleta · {{ activeModeInfo.label }}
   </button>
 
   <section v-else-if="trigger === 'inline'" class="telemetry-panel card">
     <h2 class="section-title">Coleta de telemetria</h2>
     <div class="panel-inner">
       <p class="panel-hint">
-        Definido aqui (admin) e enviado ao agente no próximo heartbeat (~30s).
+        Padrão do laboratório: <strong>automático</strong> (fast em alocação, eco ociosa).
+        Enviado ao agente no próximo heartbeat (~30s).
       </p>
 
       <div class="preset-row">
         <button
-          v-for="(info, key) in PRESET_INFO"
+          v-for="(info, key) in MODE_INFO"
           :key="key"
           type="button"
-          :class="['preset-btn', { active: preset === key }]"
-          @click="selectPreset(key as TelemetryPreset)"
+          :class="['preset-btn', { active: mode === key }]"
+          @click="selectMode(key as CollectionMode)"
         >
           <span class="preset-name">{{ info.label }}</span>
           <span class="preset-blurb">{{ info.blurb }}</span>
-          <span v-if="presetMetaLine(key)" class="preset-meta">
-            {{ presetMetaLine(key) }}
-          </span>
         </button>
       </div>
 
-      <div v-if="preset === 'custom'" class="custom-block">
+      <p v-if="mode === 'automatic'" class="auto-summary text-secondary">
+        {{ automaticSummary }}
+      </p>
+
+      <div v-if="mode === 'custom'" class="custom-block">
         <div class="custom-row">
           <NumberStepper
             v-model="custom.intervalSeconds"
@@ -212,26 +216,27 @@ async function handleSave() {
         </div>
         <div class="modal-body panel-inner">
           <p class="panel-hint">
-            Definido aqui (admin) e enviado ao agente no próximo heartbeat (~30s).
+            Padrão: <strong>automático</strong>. Use <strong>custom</strong> só para exceção nesta máquina.
           </p>
 
           <div class="preset-row">
             <button
-              v-for="(info, key) in PRESET_INFO"
+              v-for="(info, key) in MODE_INFO"
               :key="key"
               type="button"
-              :class="['preset-btn', { active: preset === key }]"
-              @click="selectPreset(key as TelemetryPreset)"
+              :class="['preset-btn', { active: mode === key }]"
+              @click="selectMode(key as CollectionMode)"
             >
               <span class="preset-name">{{ info.label }}</span>
               <span class="preset-blurb">{{ info.blurb }}</span>
-              <span v-if="presetMetaLine(key)" class="preset-meta">
-                {{ presetMetaLine(key) }}
-              </span>
             </button>
           </div>
 
-          <div v-if="preset === 'custom'" class="custom-block">
+          <p v-if="mode === 'automatic'" class="auto-summary text-secondary">
+            {{ automaticSummary }}
+          </p>
+
+          <div v-if="mode === 'custom'" class="custom-block">
             <div class="custom-row">
               <NumberStepper
                 v-model="custom.intervalSeconds"
@@ -275,9 +280,15 @@ async function handleSave() {
   line-height: 1.45;
 }
 
+.auto-summary {
+  font-size: 0.78rem;
+  margin: 0.75rem 0 0;
+  line-height: 1.45;
+}
+
 .preset-row {
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 0.6rem;
 }
 
@@ -320,8 +331,7 @@ async function handleSave() {
   color: var(--text-primary);
 }
 
-.preset-blurb,
-.preset-meta {
+.preset-blurb {
   font-size: 0.75rem;
   color: var(--text-muted);
   line-height: 1.35;

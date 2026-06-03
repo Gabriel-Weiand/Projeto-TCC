@@ -1,10 +1,19 @@
 import { ref, onUnmounted, watch, type MaybeRefOrGetter, toValue } from "vue";
 import { useMachinesStore } from "@/stores/machines";
 import type { RealtimeTelemetry } from "@/types";
+import {
+  TELEMETRY_STREAM_BATCH_MAX,
+  diffTelemetryBatches,
+  sortTelemetryByTimestamp,
+  telemetryStepDelaysMs,
+  telemetryTimestampMs,
+} from "@/utils/telemetryBatchDiff";
+
+const POLL_INTERVAL_MS = 3_000;
+const STALE_BATCH_MS = POLL_INTERVAL_MS * 3;
+const MAX_STEP_MS = 60_000;
 
 export function useTelemetryPlayback(machineId: MaybeRefOrGetter<number>) {
-  const POLL_INTERVAL_MS = 10_000;
-
   const current = ref<RealtimeTelemetry | null>(null);
   const isActive = ref(false);
 
@@ -12,76 +21,130 @@ export function useTelemetryPlayback(machineId: MaybeRefOrGetter<number>) {
 
   let pollTimer: ReturnType<typeof setInterval> | null = null;
   let playbackTimers: ReturnType<typeof setTimeout>[] = [];
-  let lastSeenTime = 0;
+  let pendingPlayback = false;
+  let lastDisplayedMs = 0;
+  let previousBatch: RealtimeTelemetry[] = [];
+  const scheduledTimestamps = new Set<string>();
 
   function resolvedId(): number {
     return toValue(machineId);
   }
 
-  function resetPlaybackState() {
+  function cancelPendingPlayback() {
     playbackTimers.forEach(clearTimeout);
     playbackTimers = [];
-    lastSeenTime = 0;
+    pendingPlayback = false;
+  }
+
+  function resetPlaybackState() {
+    cancelPendingPlayback();
+    scheduledTimestamps.clear();
+    lastDisplayedMs = 0;
+    previousBatch = [];
     current.value = null;
+  }
+
+  /** Atualiza só se o timestamp for >= ao já exibido (nunca volta no tempo). */
+  function commitIfNewer(
+    telemetry: RealtimeTelemetry,
+    options?: { cancelTimers?: boolean },
+  ): boolean {
+    const ts = telemetryTimestampMs(telemetry.timestamp);
+    if (ts < lastDisplayedMs) return false;
+    if (options?.cancelTimers) cancelPendingPlayback();
+    current.value = telemetry;
+    lastDisplayedMs = ts;
+    return true;
+  }
+
+  function markSeen(entries: readonly RealtimeTelemetry[]) {
+    for (const e of entries) scheduledTimestamps.add(e.timestamp);
+  }
+
+  /**
+   * Reproduz amostras novas respeitando o intervalo entre coletas no agente.
+   * Não cancela timers já agendados — só adiciona timestamps ainda não programados.
+   */
+  function schedulePlayback(entries: RealtimeTelemetry[]) {
+    const sorted = sortTelemetryByTimestamp(entries).filter((e) => {
+      const ts = telemetryTimestampMs(e.timestamp);
+      return !scheduledTimestamps.has(e.timestamp) && ts > lastDisplayedMs;
+    });
+    if (!sorted.length) return;
+
+    const latestTs = telemetryTimestampMs(
+      sorted[sorted.length - 1]!.timestamp,
+    );
+    if (Date.now() - latestTs > STALE_BATCH_MS) {
+      commitIfNewer(sorted[sorted.length - 1]!, { cancelTimers: true });
+      markSeen(sorted);
+      return;
+    }
+
+    if (sorted.length === 1) {
+      commitIfNewer(sorted[0]!, { cancelTimers: true });
+      scheduledTimestamps.add(sorted[0]!.timestamp);
+      return;
+    }
+
+    const delays = telemetryStepDelaysMs(sorted, MAX_STEP_MS);
+    let accumulated = 0;
+    pendingPlayback = true;
+
+    sorted.forEach((telemetry, index) => {
+      if (index > 0) accumulated += delays[index] ?? 1000;
+
+      scheduledTimestamps.add(telemetry.timestamp);
+
+      const timer = setTimeout(() => {
+        commitIfNewer(telemetry);
+        if (index === sorted.length - 1) pendingPlayback = false;
+      }, accumulated);
+
+      playbackTimers.push(timer);
+    });
   }
 
   async function fetchLatest() {
     try {
       const id = resolvedId();
-      const result = await machinesStore.fetchTelemetryStream(id, 15);
-      const rawEntries = Array.isArray(result) ? result : result?.entries;
-      if (!rawEntries || rawEntries.length === 0) return;
-
-      const sortedEntries = [...rawEntries].sort(
-        (a, b) =>
-          new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime(),
+      const result = await machinesStore.fetchTelemetryStream(
+        id,
+        TELEMETRY_STREAM_BATCH_MAX,
       );
 
-      const latest = sortedEntries[sortedEntries.length - 1];
-      const newEntries = sortedEntries.filter(
-        (e) => new Date(e.timestamp).getTime() > lastSeenTime,
-      );
-
-      if (newEntries.length > 0) {
-        scheduleBatch(newEntries);
-      } else if (latest) {
-        current.value = latest;
+      const rawBatch = result.batch ?? result.entries ?? [];
+      if (!rawBatch.length) {
+        if (result.latest) commitIfNewer(result.latest);
+        return;
       }
+
+      const sortedBatch = sortTelemetryByTimestamp(rawBatch);
+
+      if (previousBatch.length === 0) {
+        const latest = sortedBatch[sortedBatch.length - 1]!;
+        commitIfNewer(latest, { cancelTimers: true });
+        previousBatch = sortedBatch;
+        markSeen(sortedBatch);
+        return;
+      }
+
+      const delta = diffTelemetryBatches(previousBatch, sortedBatch);
+      previousBatch = sortedBatch;
+
+      if (delta.length === 0) {
+        const latest = sortedBatch[sortedBatch.length - 1]!;
+        const latestMs = telemetryTimestampMs(latest.timestamp);
+        if (!pendingPlayback && latestMs > lastDisplayedMs) {
+          commitIfNewer(latest, { cancelTimers: true });
+        }
+        return;
+      }
+
+      schedulePlayback(delta);
     } catch {
       /* ignore */
     }
-  }
-
-  function scheduleBatch(entries: RealtimeTelemetry[]) {
-    const firstEntry = entries[0];
-    if (!firstEntry) return;
-
-    playbackTimers.forEach(clearTimeout);
-    playbackTimers = [];
-
-    const baseTime = new Date(firstEntry.timestamp).getTime();
-
-    if (entries.length === 1) {
-      current.value = firstEntry;
-      lastSeenTime = baseTime;
-      return;
-    }
-
-    entries.forEach((telemetry, index) => {
-      const itemTime = new Date(telemetry.timestamp).getTime();
-      let delayMs = itemTime - baseTime;
-
-      if (isNaN(delayMs) || (index > 0 && delayMs === 0)) {
-        delayMs = index * 1000;
-      }
-
-      const timer = setTimeout(() => {
-        current.value = telemetry;
-        lastSeenTime = Math.max(lastSeenTime, itemTime);
-      }, delayMs);
-
-      playbackTimers.push(timer);
-    });
   }
 
   function start() {

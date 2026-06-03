@@ -64,7 +64,9 @@ export const useMachinesStore = defineStore("machines", () => {
     count?: number,
   ): Promise<{
     machineId: number;
+    batch: import("@/types").RealtimeTelemetry[];
     entries: import("@/types").RealtimeTelemetry[];
+    latest: import("@/types").RealtimeTelemetry | null;
     total: number;
   }> {
     const params: Record<string, unknown> = {};

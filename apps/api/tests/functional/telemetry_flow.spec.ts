@@ -1001,7 +1001,7 @@ test.group('Ring Buffer de Telemetria', (group) => {
     assert.equal(recent[9].allocationId, allocation.id)
   })
 
-  test('ring buffer respeita limite máximo (30 entradas)', async ({ assert }) => {
+  test('ring buffer respeita limite máximo (15 entradas)', async ({ assert }) => {
     const user = await User.create({
       fullName: 'Aluno RingMax',
       email: 'aluno.ringmax@teste.com',
@@ -1032,12 +1032,40 @@ test.group('Ring Buffer de Telemetria', (group) => {
     }
 
     const recent = telemetryBuffer.getRecent(machine.id)
-    assert.equal(recent.length, 30)
+    assert.equal(recent.length, 15)
 
-    // Deve manter as últimas 30 (tick 20 a 49)
+    // Deve manter as últimas 15 (ticks mais recentes)
     // Os valores de cpuUsage variam por tick, confirma que é sequencial
     assert.equal(recent[0].allocationId, allocation.id)
-    assert.equal(recent[29].allocationId, allocation.id)
+    assert.equal(recent[14].allocationId, allocation.id)
+  })
+
+  test('recordBatch guarda último lote do agente (máx. 15)', async ({ assert }) => {
+    const machine = await Machine.create({
+      name: 'PC-BATCH-01',
+      description: 'Máquina last batch',
+      status: 'available',
+    })
+
+    const batch1 = Array.from({ length: 15 }, (_, i) => ({
+      allocationId: 0,
+      ...generateTelemetry(i, 0.4),
+    }))
+    telemetryBuffer.recordBatch(machine.id, batch1)
+
+    let stored = telemetryBuffer.getLastBatch(machine.id)
+    assert.equal(stored.length, 15)
+
+    const batch2 = Array.from({ length: 15 }, (_, i) => ({
+      allocationId: 0,
+      ...generateTelemetry(i + 20, 0.6),
+    }))
+    telemetryBuffer.recordBatch(machine.id, batch2)
+
+    stored = telemetryBuffer.getLastBatch(machine.id)
+    assert.equal(stored.length, 15)
+    assert.equal(stored[0].timestamp, batch2[0].timestamp)
+    assert.equal(stored[14].timestamp, batch2[14].timestamp)
   })
 
   test('getRecent com count retorna quantidade solicitada', async ({ assert }) => {
@@ -1212,13 +1240,14 @@ test.group('Telemetry Stream Endpoint', (group) => {
       status: 'approved',
     })
 
-    // Popula ring buffer com 15 entradas
-    for (let i = 0; i < 15; i++) {
-      telemetryBuffer.add(machine.id, {
-        allocationId: allocation.id,
-        ...generateTelemetry(i, 0.5),
-      })
+    const batch = Array.from({ length: 15 }, (_, i) => ({
+      allocationId: allocation.id,
+      ...generateTelemetry(i, 0.5),
+    }))
+    for (const item of batch) {
+      telemetryBuffer.add(machine.id, item)
     }
+    telemetryBuffer.recordBatch(machine.id, batch)
 
     const response = await client
       .get(`/api/v1/machines/${machine.id}/telemetry/stream`)
@@ -1228,10 +1257,12 @@ test.group('Telemetry Stream Endpoint', (group) => {
     const body = response.body()
     assert.equal(body.machineId, machine.id)
     assert.equal(body.total, 15)
+    assert.equal(body.batch.length, 15)
     assert.equal(body.entries.length, 15)
+    assert.property(body, 'latest')
 
     // Valores devem estar normalizados (0-100, não 0-1000)
-    const first = body.entries[0]
+    const first = body.batch[0]
     assert.isAtMost(first.cpuUsage, 100)
     assert.isAtLeast(first.ramUsedGb, 0)
     assert.property(first, 'timestamp')

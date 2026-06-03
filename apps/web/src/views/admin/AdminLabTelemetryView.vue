@@ -25,8 +25,16 @@ const form = reactive<LabTelemetryPresets>({
 });
 
 const presetSections = computed(() => [
-  { key: "fast" as const, title: "Fast (todas as máquinas com preset fast)" },
-  { key: "eco" as const, title: "Eco (padrão offline do agente + preset eco)" },
+  {
+    key: "fast" as const,
+    title: "Fast (máquina em alocação)",
+    hint: "Aplicado automaticamente enquanto houver reserva ativa (prepare, sessão, grace ou SFTP pós-reserva).",
+  },
+  {
+    key: "eco" as const,
+    title: "Eco (máquina ociosa)",
+    hint: "Padrão automático sem reserva e fallback do agente quando a API não responde.",
+  },
 ]);
 
 onMounted(async () => {
@@ -107,11 +115,14 @@ async function handleSave() {
   <div class="fade-in admin-lab-telemetry">
     <h1 class="page-title">Telemetria do laboratório</h1>
     <p class="page-lead text-secondary">
-      Perfis <strong>fast</strong> e <strong>eco</strong> valem para todas as máquinas com esse
-      preset. O agente usa <strong>eco</strong> enquanto a API não responde. Preset
-      <strong>custom</strong> continua por máquina. <strong>CPU</strong> e
-      <strong>RAM / Swap</strong> são sempre coletadas; intervalo entre
-      <strong>1s</strong> e <strong>600s</strong>.
+      Todas as máquinas usam coleta <strong>automática</strong>: perfil
+      <strong>fast</strong> durante alocação (reserva em andamento) e
+      <strong>eco</strong> quando estão ociosas. O agente offline inicia em
+      <strong>eco</strong> até o primeiro heartbeat.
+      <strong>Custom</strong> só vale se o admin configurar na página da máquina.
+      <strong>CPU</strong> e <strong>RAM / Swap</strong> são sempre coletadas; intervalo entre
+      <strong>1s</strong> e <strong>600s</strong>; lote até
+      <strong>{{ TELEMETRY_BATCH_MAX }}</strong> amostras.
     </p>
 
     <div v-if="loading" class="empty-state">Carregando…</div>
@@ -123,6 +134,7 @@ async function handleSave() {
         class="card preset-card"
       >
         <h2 class="preset-title">{{ section.title }}</h2>
+        <p class="preset-hint text-secondary">{{ section.hint }}</p>
         <div class="preset-fields">
           <NumberStepper
             v-model="form[section.key].intervalSeconds"
@@ -170,7 +182,12 @@ async function handleSave() {
 }
 .preset-title {
   font-size: 1rem;
+  margin: 0 0 0.35rem;
+}
+.preset-hint {
+  font-size: 0.82rem;
   margin: 0 0 0.85rem;
+  line-height: 1.45;
 }
 .preset-fields {
   display: flex;

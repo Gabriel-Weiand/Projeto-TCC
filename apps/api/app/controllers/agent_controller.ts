@@ -78,16 +78,21 @@ export default class AgentController {
     )
 
     // 2. Roteamento Inteligente da Telemetria
-    for (const item of data) {
+    const batchPayload = data.map((item) =>
+      activeAlloc
+        ? { allocationId: activeAlloc.id, ...item }
+        : { allocationId: 0, ...item }
+    )
+
+    for (const item of batchPayload) {
       if (activeAlloc) {
-        // Se tem alocação: manda para o buffer de persistência no Banco (Flush)
-        telemetryBuffer.add(machine.id, { allocationId: activeAlloc.id, ...item })
+        telemetryBuffer.add(machine.id, item)
       } else {
-        // Sem alocação: máquina está ligada atoa.
-        // Atualiza só o cache Realtime pro Dashboard, mas descarta do banco para poupar espaço.
-        telemetryBuffer.updateRealtime(machine.id, { allocationId: 0, ...item })
+        telemetryBuffer.updateRealtime(machine.id, item)
       }
     }
+
+    telemetryBuffer.recordBatch(machine.id, batchPayload)
 
     // 3. Atualiza o status de atividade da máquina
     machine.lastSeenAt = DateTime.now()

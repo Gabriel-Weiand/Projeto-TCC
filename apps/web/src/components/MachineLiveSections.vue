@@ -332,6 +332,10 @@ function diskUsedPct(total: number | null, free: number | null): number {
   transition: color 0.4s ease;
 }
 
+.telemetry-grid .progress-fill {
+  transition: width 0.2s ease, background-color 0.2s ease;
+}
+
 .tele-value small {
   font-size: 0.65em;
   font-weight: 400;

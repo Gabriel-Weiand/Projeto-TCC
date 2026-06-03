@@ -183,12 +183,38 @@ export function getLabTelemetryPresets(): LabTelemetryPresets {
   return normalizeLabTelemetryPresets({ fast, eco })
 }
 
+/** Valor em `machines.telemetry_preset` que indica coleta automática (fast/eco por fase). */
+export const MACHINE_TELEMETRY_AUTO_DB_PRESET = 'eco' as const
+
+export function isMachineTelemetryCustom(machine: Machine): boolean {
+  return machine.telemetryPreset === 'custom'
+}
+
+/**
+ * Perfil efetivo no heartbeat: fast com alocação ativa, eco ociosa.
+ * Ignora `fast`/`eco` gravados na máquina (legado) — só `custom` é fixo por máquina.
+ */
+export function resolveRuntimeTelemetryPreset(
+  machine: Machine,
+  isInAllocation: boolean
+): 'fast' | 'eco' {
+  if (isMachineTelemetryCustom(machine)) {
+    return 'eco'
+  }
+  return isInAllocation ? 'fast' : 'eco'
+}
+
 /** Payload público (agente offline + front). */
 export function labTelemetryPublicConfig() {
   const presets = getLabTelemetryPresets()
   return {
     defaultOfflinePreset: 'eco' as const,
     presets,
+    collectionRules: {
+      inAllocation: 'fast' as const,
+      idle: 'eco' as const,
+      perMachineOverride: 'custom' as const,
+    },
   }
 }
 
@@ -204,24 +230,26 @@ export function saveLabTelemetryPresets(presets: LabTelemetryPresets): void {
  */
 export function buildAgentTelemetryConfig(
   machine: Machine,
-  isOccupied: boolean
+  isInAllocation: boolean
 ): Record<string, unknown> {
-  const preset = machine.telemetryPreset || 'eco'
   const customConfig = machine.customAgentConfig || {}
   const labPresets = getLabTelemetryPresets()
 
-  if (preset === 'custom') {
+  if (isMachineTelemetryCustom(machine)) {
     const intervalSeconds = clampTelemetryInterval(
       typeof customConfig.intervalSeconds === 'number'
         ? customConfig.intervalSeconds
-        : isOccupied
-          ? 5
-          : 60
+        : isInAllocation
+          ? labPresets.fast.intervalSeconds
+          : labPresets.eco.intervalSeconds
     )
     return {
       intervalSeconds,
-      batchSize: customConfig.batchSize ?? (isOccupied ? 5 : 15),
+      batchSize:
+        customConfig.batchSize ??
+        (isInAllocation ? labPresets.fast.batchSize : labPresets.eco.batchSize),
       telemetryPreset: 'custom',
+      telemetryMode: 'custom',
       telemetrySet: mergeTelemetrySet(
         FULL_TELEMETRY_SET,
         customConfig.telemetrySet as Partial<TelemetrySetConfig> | undefined
@@ -230,11 +258,13 @@ export function buildAgentTelemetryConfig(
     }
   }
 
-  const profile = labPresets[preset] ?? labPresets.eco
+  const runtimePreset = resolveRuntimeTelemetryPreset(machine, isInAllocation)
+  const profile = labPresets[runtimePreset]
   return {
     intervalSeconds: profile.intervalSeconds,
     batchSize: profile.batchSize,
-    telemetryPreset: preset,
+    telemetryPreset: runtimePreset,
+    telemetryMode: 'auto',
     telemetrySet: { ...profile.telemetrySet },
     onDemandProcessConfig: customConfig.onDemandProcessConfig ?? null,
   }

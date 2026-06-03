@@ -3,6 +3,7 @@ import { ref, onMounted, onUnmounted, computed } from "vue";
 import { useRoute, useRouter } from "vue-router";
 import { useMachinesStore } from "@/stores/machines";
 import { useTelemetryPlayback } from "@/composables/useTelemetryPlayback";
+import { pickNewerTelemetry } from "@/utils/telemetryBatchDiff";
 import MachineTelemetryPanel from "@/components/MachineTelemetryPanel.vue";
 import MachineLiveSections from "@/components/MachineLiveSections.vue";
 import CalendarGanttScroll from "@/components/CalendarGanttScroll.vue";
@@ -62,8 +63,8 @@ onUnmounted(() => {
   if (refreshInterval) clearInterval(refreshInterval);
 });
 
-const liveData = computed(
-  () => telemetry.value || machine.value?.latestTelemetry || null,
+const liveData = computed(() =>
+  pickNewerTelemetry(telemetry.value, machine.value?.latestTelemetry ?? null),
 );
 
 const ganttMachines = computed(() => (machine.value ? [machine.value] : []));

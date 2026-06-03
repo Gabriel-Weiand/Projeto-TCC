@@ -266,15 +266,22 @@ export default class MachinesController {
   async telemetryStream({ params, request, response }: HttpContext) {
     const machine = await Machine.findOrFail(params.id)
     const { count } = request.qs()
-    const maxCount = count ? Math.min(Number(count), 30) : undefined
+    const maxCount = count ? Math.min(Number(count), 15) : 15
 
-    const recent = telemetryBuffer.getRecent(machine.id, maxCount)
+    const batch = telemetryBuffer.getLastBatch(machine.id, maxCount)
+    const normalized = batch
+      .map((raw) => this.normalizeTelemetry(raw))
+      .filter((e): e is NonNullable<typeof e> => e != null)
 
-    const normalized = recent.map((raw) => this.normalizeTelemetry(raw))
+    const latestRaw = telemetryBuffer.getLatest(machine.id)
+    const latest = this.normalizeTelemetry(latestRaw)
 
     return response.ok({
       machineId: machine.id,
+      batch: normalized,
+      /** @deprecated use `batch` — mantido para compatibilidade */
       entries: normalized,
+      latest,
       total: normalized.length,
     })
   }

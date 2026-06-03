@@ -11,6 +11,8 @@ test.group('Lab telemetry presets', (group) => {
     response.assertStatus(200)
     assert.exists(response.body().telemetry)
     assert.equal(response.body().telemetry.defaultOfflinePreset, 'eco')
+    assert.equal(response.body().telemetry.collectionRules.inAllocation, 'fast')
+    assert.equal(response.body().telemetry.collectionRules.idle, 'eco')
     assert.exists(response.body().telemetry.presets.fast)
     assert.exists(response.body().telemetry.presets.eco)
     assert.equal(

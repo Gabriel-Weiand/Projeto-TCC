@@ -11,7 +11,7 @@ import {
 } from '#services/notification_service'
 import {
   graceEndsAt,
-  isTelemetryHotPhase,
+  machineHasAllocationTelemetry,
   phaseToProvisioning,
   resolveDominantAccessForUser,
   sftpEndsAt,
@@ -126,8 +126,14 @@ export default class HeartbeatService {
       })
     }
 
-    const isOccupied = isTelemetryHotPhase(currentPhase)
-    const telemetry = buildAgentTelemetryConfig(machine, isOccupied)
+    let isInAllocation = false
+    for (const { phase } of phasesByUserId.values()) {
+      if (machineHasAllocationTelemetry(phase)) {
+        isInAllocation = true
+        break
+      }
+    }
+    const telemetry = buildAgentTelemetryConfig(machine, isInAllocation)
 
     const current = currentAllocationPayload
     return {
