@@ -4,7 +4,8 @@ import { useAuthStore } from "@/stores/auth";
 import { useLabConfigStore } from "@/stores/labConfig";
 import type { Allocation } from "@/types";
 import { formatLabDateTime } from "@/utils/datetime";
-import { buildSshCommand } from "@/utils/ssh";
+import { effectiveLifecycleStatus } from "@/utils/allocationLifecycle";
+import { buildSshCommand, buildSftpCommand } from "@/utils/ssh";
 
 const props = defineProps<{
   allocation: Allocation;
@@ -31,19 +32,41 @@ const systemUser = computed(
   () => auth.user?.systemUsername || machine.value?.systemUsername,
 );
 
-const sshCommand = computed(() => {
+const isSftpPhase = computed(
+  () =>
+    effectiveLifecycleStatus(
+      props.allocation,
+      lab.allocationAccess,
+    ) === "sftp",
+);
+
+const connectCommand = computed(() => {
   const ip = machine.value?.ipAddress;
   const user = systemUser.value;
   if (!ip || !user) return null;
-  return buildSshCommand(ip, user, machine.value?.sshPort);
+  const port = machine.value?.sshPort;
+  return isSftpPhase.value
+    ? buildSftpCommand(ip, user, port)
+    : buildSshCommand(ip, user, port);
 });
+
+const modalTitle = computed(() =>
+  isSftpPhase.value ? "Conectar via SFTP" : "Conectar via SSH",
+);
+
+const loginLabel = computed(() =>
+  isSftpPhase.value ? "Login SFTP" : "Login SSH",
+);
+
+const sftpPhaseNotice =
+  "Neste período o acesso é apenas para transferência de arquivos via SFTP (sem terminal bash).";
 
 const fingerprint = computed(() => machine.value?.hostFingerprint ?? null);
 
 async function copyCommand() {
-  if (!sshCommand.value) return;
+  if (!connectCommand.value) return;
   try {
-    await navigator.clipboard.writeText(sshCommand.value);
+    await navigator.clipboard.writeText(connectCommand.value);
   } catch {
     /* ignore */
   }
@@ -55,7 +78,7 @@ async function copyCommand() {
     <div class="modal-overlay" @click.self="emit('close')">
       <div class="modal-glass fade-in connect-modal">
         <div class="modal-header">
-          <h2 class="modal-title">Conectar via SSH</h2>
+          <h2 class="modal-title">{{ modalTitle }}</h2>
           <button type="button" class="btn-close" @click="emit('close')">✕</button>
         </div>
 
@@ -80,7 +103,7 @@ async function copyCommand() {
                 <dd><code class="connect-inline-code">{{ machine.ipAddress }}</code></dd>
               </div>
               <div v-if="systemUser" class="connect-details-row">
-                <dt>Login SSH</dt>
+                <dt>{{ loginLabel }}</dt>
                 <dd><code class="connect-inline-code">{{ systemUser }}</code></dd>
               </div>
               <div v-if="reservationWindow" class="connect-details-row">
@@ -90,16 +113,20 @@ async function copyCommand() {
             </dl>
           </section>
 
+          <p v-if="isSftpPhase" class="connect-phase-notice" role="status">
+            {{ sftpPhaseNotice }}
+          </p>
+
           <p class="connect-network-note">
             <strong>Rede:</strong>
             o IP informado pode ser alcançável apenas na rede local do
             laboratório.
           </p>
 
-          <div v-if="sshCommand" class="command-block">
+          <div v-if="connectCommand" class="command-block">
             <label class="field-label">Comando</label>
             <div class="command-row">
-              <code class="command-text">{{ sshCommand }}</code>
+              <code class="command-text">{{ connectCommand }}</code>
               <button type="button" class="btn btn-ghost btn-sm" @click="copyCommand">
                 Copiar
               </button>
@@ -217,6 +244,17 @@ async function copyCommand() {
 .connect-inline-code {
   font-size: 0.86rem;
   word-break: break-all;
+}
+
+.connect-phase-notice {
+  margin: 0;
+  padding: 0.75rem 0.9rem;
+  font-size: 0.82rem;
+  line-height: 1.5;
+  color: var(--text-secondary);
+  background: rgba(245, 158, 11, 0.1);
+  border: 1px solid rgba(245, 158, 11, 0.25);
+  border-radius: var(--radius);
 }
 
 .connect-network-note {

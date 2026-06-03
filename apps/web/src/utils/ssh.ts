@@ -18,3 +18,16 @@ export function buildSshCommand(
   }
   return `ssh -p ${p} ${user}@${ip}`;
 }
+
+/** Monta comando SFTP; inclui `-P` (maiúsculo) somente se a porta não for 22. */
+export function buildSftpCommand(
+  ip: string,
+  user: string,
+  port?: number | null,
+): string {
+  const p = effectiveSshPort(port);
+  if (p === DEFAULT_SSH_PORT) {
+    return `sftp ${user}@${ip}`;
+  }
+  return `sftp -P ${p} ${user}@${ip}`;
+}
