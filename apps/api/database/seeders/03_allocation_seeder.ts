@@ -25,7 +25,6 @@ export default class extends BaseSeeder {
         endTime: at(today.minus({ days: 14 }), 22),
         reason: 'Fine-tuning SlowFast — corpus UFPel (2 semanas)',
         status: 'finished' as const,
-        isSudo: true,
       },
       {
         userId: 4,
@@ -34,7 +33,6 @@ export default class extends BaseSeeder {
         endTime: at(today.minus({ days: 7 }), 20),
         reason: 'Detecção + tracking CUDA em vídeo esportivo (2 semanas)',
         status: 'finished' as const,
-        isSudo: false,
       },
       {
         userId: 5,
@@ -43,7 +41,6 @@ export default class extends BaseSeeder {
         endTime: at(today.minus({ days: 8 }), 18),
         reason: 'Simulação optical flow + métricas PSNR (4 semanas)',
         status: 'finished' as const,
-        isSudo: true,
       },
       {
         userId: 6,
@@ -52,18 +49,6 @@ export default class extends BaseSeeder {
         endTime: at(today.minus({ days: 10 }), 11, 30),
         reason: 'Teste rápido de ambiente CUDA',
         status: 'finished' as const,
-        isSudo: false,
-      },
-
-      // —— Em andamento (barras longas no Gantt) ——
-      {
-        userId: 3,
-        machineId: 1,
-        startTime: at(today.minus({ days: 12 }), 8),
-        endTime: at(today.plus({ days: 16 }), 22),
-        reason: 'TCC — pipeline VideoMAE + exportação H.265 (4 semanas)',
-        status: 'approved' as const,
-        isSudo: true,
       },
       // —— Gabriel — demo SSH (fingerprint + porta padrão vs custom) ——
       {
@@ -73,7 +58,6 @@ export default class extends BaseSeeder {
         endTime: at(today.plus({ days: 6 }), 18),
         reason: 'Ingestão corpora 4K — comando `ssh user@ip` (porta 22)',
         status: 'approved' as const,
-        isSudo: false,
       },
       {
         userId: 3,
@@ -82,7 +66,6 @@ export default class extends BaseSeeder {
         endTime: at(today.plus({ days: 5 }), 21),
         reason: 'RTX A6000 — diffusion vídeo (`ssh -p 8022 user@ip`)',
         status: 'approved' as const,
-        isSudo: false,
       },
       {
         userId: 3,
@@ -91,7 +74,6 @@ export default class extends BaseSeeder {
         endTime: at(today.plus({ days: 3 }), 16),
         reason: 'Protótipo CNN leve — sessão curta (SSH -p 2222)',
         status: 'approved' as const,
-        isSudo: false,
       },
       {
         userId: 3,
@@ -100,7 +82,6 @@ export default class extends BaseSeeder {
         endTime: at(today.plus({ days: 16 }), 20),
         reason: 'Optical flow CUDA — conferir host fingerprint antes do 1º acesso (-p 22022)',
         status: 'approved' as const,
-        isSudo: true,
       },
       {
         userId: 4,
@@ -109,7 +90,6 @@ export default class extends BaseSeeder {
         endTime: at(today.plus({ days: 10 }), 20),
         reason: 'Benchmark inferência CUDA — modelos leves de vídeo (2 semanas)',
         status: 'approved' as const,
-        isSudo: false,
       },
       {
         userId: 5,
@@ -118,7 +98,6 @@ export default class extends BaseSeeder {
         endTime: at(today.plus({ days: 12 }), 23),
         reason: 'Treino distribuído NeRF em sequências 4K (≈2 semanas)',
         status: 'approved' as const,
-        isSudo: false,
       },
 
       // —— Futuras aprovadas / pendentes ——
@@ -129,7 +108,6 @@ export default class extends BaseSeeder {
         endTime: at(today.plus({ days: 24 }), 20),
         reason: 'Reserva 3 semanas — RTX A6000 para diffusion vídeo',
         status: 'approved' as const,
-        isSudo: false,
       },
       {
         userId: 7,
@@ -138,7 +116,6 @@ export default class extends BaseSeeder {
         endTime: at(today.plus({ days: 28 }), 18),
         reason: 'Simulação estabilização + CUDA (3 semanas) — aguardando confirmação',
         status: 'pending' as const,
-        isSudo: false,
       },
       {
         userId: 8,
@@ -147,7 +124,6 @@ export default class extends BaseSeeder {
         endTime: at(today.plus({ days: 21 }), 18),
         reason: 'Ablação arquitetura — 1 semana',
         status: 'approved' as const,
-        isSudo: false,
       },
 
       // —— Cancelada (curta) ——
@@ -158,7 +134,6 @@ export default class extends BaseSeeder {
         endTime: at(today.minus({ days: 33 }), 18),
         reason: 'Reserva semanal cancelada — conflito de orientação',
         status: 'cancelled' as const,
-        isSudo: false,
       },
     ]
 
@@ -354,7 +329,12 @@ export default class extends BaseSeeder {
         message: 'Aguardando aprovação da simulação CUDA (3 semanas).',
         isRead: false,
       },
-      { userId: 1, title: 'SSH — tentativas bloqueadas', message: 'Falhas de login em PC-LAB-01.', isRead: false },
+      {
+        userId: 1,
+        title: 'SSH — tentativas bloqueadas',
+        message: 'Falhas de login em PC-LAB-01.',
+        isRead: false,
+      },
     ]
 
     for (const n of notifData) {

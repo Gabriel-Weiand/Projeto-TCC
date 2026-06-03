@@ -38,9 +38,6 @@ export default class Allocation extends BaseModel {
   declare status: 'pending' | 'approved' | 'denied' | 'cancelled' | 'finished'
 
   @column({ consume: (value: any) => Boolean(value) })
-  declare isSudo: boolean
-
-  @column({ consume: (value: any) => Boolean(value) })
   declare userHidden: boolean
 
   @column.dateTime({ autoCreate: true })

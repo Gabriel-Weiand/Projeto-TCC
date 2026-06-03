@@ -9,6 +9,15 @@ import {
   checkSshFailureFlood,
   maybeNotifyMissingSshKeyAtSessionStart,
 } from '#services/notification_service'
+import {
+  graceEndsAt,
+  isTelemetryHotPhase,
+  phaseToProvisioning,
+  resolveDominantAccessForUser,
+  sftpEndsAt,
+  type AccessPhase,
+} from '#services/allocation_access'
+import { getLabAccessConfig } from '#services/lab_config'
 
 export default class HeartbeatService {
   /**
@@ -24,10 +33,8 @@ export default class HeartbeatService {
     }
   ) {
     const now = DateTime.utc()
+    const access = getLabAccessConfig()
 
-    // ==========================================
-    // 1. AUDITORIA: Salvar tentativas de SSH
-    // ==========================================
     if (payload.sshAttempts && payload.sshAttempts.length > 0) {
       try {
         await SshConnectionAttempt.createMany(
@@ -42,117 +49,87 @@ export default class HeartbeatService {
       }
     }
 
-    // ==========================================
-    // 2. ESTADO DAS ALOCAÇÕES (Ativa e T-5 Pendente)
-    // ==========================================
-    const activeAllocations = await Allocation.query()
+    const lifecycleAllocations = await Allocation.query()
       .where('machineId', machine.id)
-      .whereIn('status', ['approved'])
+      .whereIn('status', ['approved', 'finished'])
       .preload('user')
 
-    // Alocação rodando neste exato segundo
-    const currentAllocation = activeAllocations.find(
-      (a) => a.startTime.toMillis() <= now.toMillis() && a.endTime.toMillis() >= now.toMillis()
-    )
+    const allocationsByUserId = new Map<number, Allocation[]>()
+    for (const allocation of lifecycleAllocations) {
+      if (!allocation.user) {
+        continue
+      }
+      const list = allocationsByUserId.get(allocation.userId) ?? []
+      list.push(allocation)
+      allocationsByUserId.set(allocation.userId, list)
+    }
 
-    // Alocação que vai começar em 5 minutos ou menos (T-5 Provisionamento Antecipado)
-    const pendingAllocation = activeAllocations.find(
-      (a) =>
-        a.startTime.toMillis() > now.toMillis() && a.startTime.diff(now, 'minutes').minutes <= 5
-    )
+    const phasesByUserId = new Map<number, { phase: AccessPhase; allocation: Allocation }>()
+    for (const [userId, userAllocations] of allocationsByUserId) {
+      const dominant = resolveDominantAccessForUser(userAllocations, now, access)
+      if (dominant) {
+        phasesByUserId.set(userId, dominant)
+      }
+    }
 
-    // ==========================================
-    // 3. RECONCILIAÇÃO (Drift Detection)
-    // ==========================================
     const dbMachineUsers = await MachineUser.query().where('machineId', machine.id).preload('user')
-
     const osUsers = payload.provisionedOsUsers || []
 
     for (const dbUser of dbMachineUsers) {
       if (!osUsers.includes(dbUser.osUsername)) {
-        // DESVIO: O usuário existe no banco, mas sumiu do Linux (Admin excluiu na mão?)
-        const isNeededNow =
-          currentAllocation?.userId === dbUser.userId || pendingAllocation?.userId === dbUser.userId
-
-        if (!isNeededNow) {
-          // Se não precisa dele agora, deletamos do banco para refletir a realidade do SO
+        const needed = phasesByUserId.has(dbUser.userId)
+        if (!needed) {
           await dbUser.delete()
           logger.info(
             `[Drift] Usuário ${dbUser.osUsername} removido do inventário da máquina ${machine.id}`
           )
         }
-        // Se ele for necessário, ele será recriado no passo 4 abaixo.
       }
     }
 
-    // ==========================================
-    // 4. POLÍTICAS DE ACESSO E PROVISIONAMENTO
-    // ==========================================
     const provisioning: any[] = []
-    const usersToEnforce = new Map<number, any>()
+    let currentAllocationPayload: Allocation | null = null
+    let currentPhase: AccessPhase = 'none'
 
-    // Recarrega o banco após a limpeza do Drift
-    const currentDbMachineUsers = await MachineUser.query()
-      .where('machineId', machine.id)
-      .preload('user')
-
-    // REGRA A: Todos que já têm conta na máquina ficam restritos a SFTP (sem terminal)
-    for (const dbUser of currentDbMachineUsers) {
-      usersToEnforce.set(dbUser.userId, {
-        user: dbUser.user,
-        accessState: 'sftp_only',
-        isSudo: false,
-      })
-    }
-
-    // REGRA B: Preparação T-5 minutos (Cria a conta, mas deixa bloqueada no SFTP)
-    if (pendingAllocation && pendingAllocation.user) {
-      usersToEnforce.set(pendingAllocation.userId, {
-        user: pendingAllocation.user,
-        accessState: 'sftp_only',
-        isSudo: false,
-      })
-    }
-
-    // REGRA C: Alocação Ativa (Libera o Terminal e o Sudo se autorizado)
-    if (currentAllocation && currentAllocation.user) {
-      usersToEnforce.set(currentAllocation.userId, {
-        user: currentAllocation.user,
-        accessState: 'full_shell',
-        isSudo: Boolean(currentAllocation.isSudo), // <-- Garante que vira true/false
-      })
-      await maybeNotifyMissingSshKeyAtSessionStart(currentAllocation, machine)
-    }
-
-    // Montar o payload final e garantir a tabela pivô (`machine_users`) atualizada
-    for (const config of usersToEnforce.values()) {
-      const user = config.user
-
-      if (user.systemUsername) {
-        await MachineUser.updateOrCreate(
-          { machineId: machine.id, userId: user.id },
-          {
-            osUsername: user.systemUsername,
-            lastActiveAt: config.accessState === 'full_shell' ? now : undefined,
-          }
-        )
-
-        provisioning.push({
-          systemUsername: user.systemUsername,
-          sshPublicKey: user.sshPublicKey || '',
-          accessState: config.accessState,
-          isSudo: config.isSudo,
-        })
+    for (const { phase, allocation } of phasesByUserId.values()) {
+      const user = allocation.user
+      if (!user?.systemUsername) {
+        continue
       }
+
+      const prov = phaseToProvisioning(phase, allocation, user.sshPublicKey)
+      if (!prov) {
+        continue
+      }
+
+      if (phase === 'active' || phase === 'grace') {
+        currentAllocationPayload = allocation
+        currentPhase = phase
+        if (phase === 'active') {
+          await maybeNotifyMissingSshKeyAtSessionStart(allocation, machine)
+        }
+      }
+
+      await MachineUser.updateOrCreate(
+        { machineId: machine.id, userId: user.id },
+        {
+          osUsername: user.systemUsername,
+          lastActiveAt: prov.accessState === 'full_shell' ? now : undefined,
+        }
+      )
+
+      provisioning.push({
+        systemUsername: user.systemUsername,
+        sshPublicKey: prov.sshPublicKey,
+        accessState: prov.accessState,
+        revokeSshKey: prov.revokeSshKey,
+      })
     }
 
-    // ==========================================
-    // 5. RESPOSTA DA API (Dita o ritmo do Python)
-    // ==========================================
-
-    const isOccupied = !!currentAllocation
+    const isOccupied = isTelemetryHotPhase(currentPhase)
     const telemetry = buildAgentTelemetryConfig(machine, isOccupied)
 
+    const current = currentAllocationPayload
     return {
       status: 'acknowledged',
       agentConfig: {
@@ -160,14 +137,17 @@ export default class HeartbeatService {
       },
       provisioning,
       accessControl: {
-        shouldBlock: false, // Controlado agora pelo accessState (shell) em vez de overlay
+        shouldBlock: false,
       },
-      currentAllocation: currentAllocation
+      currentAllocation: current
         ? {
-            id: currentAllocation.id,
-            userId: currentAllocation.userId,
-            userName: currentAllocation.user?.fullName,
-            endTime: currentAllocation.endTime.toISO(),
+            id: current.id,
+            userId: current.userId,
+            userName: current.user?.fullName,
+            endTime: current.endTime.toISO(),
+            phase: currentPhase,
+            graceEndsAt: graceEndsAt(current, access).toISO(),
+            sftpEndsAt: sftpEndsAt(current, access).toISO(),
           }
         : null,
     }

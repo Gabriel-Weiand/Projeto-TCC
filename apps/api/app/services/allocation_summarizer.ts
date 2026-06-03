@@ -4,6 +4,7 @@ import Telemetry from '#models/telemetry'
 import logger from '@adonisjs/core/services/logger'
 import { DateTime } from 'luxon'
 import { notifyAllocationAutoFinished } from '#services/notification_service'
+import { sftpEndsAt } from '#services/allocation_access'
 
 /**
  * Calcula métricas agregadas usando Time-Weighted Average (Média Ponderada no Tempo).
@@ -146,15 +147,15 @@ export async function summarizeAllocation(
 }
 
 /**
- * Finaliza alocações aprovadas cujo endTime já passou.
+ * Finaliza alocações aprovadas após a janela SFTP pós-reserva (end + grace + postSftp).
  * Para cada uma: muda status para 'finished' e tenta gerar o resumo.
  */
 export async function autoFinalizeExpired(): Promise<number> {
-  const nowMs = DateTime.now().toMillis()
+  const now = DateTime.utc()
 
   const approved = await Allocation.query().where('status', 'approved')
 
-  const expired = approved.filter((a) => a.endTime.toMillis() < nowMs)
+  const expired = approved.filter((a) => now.toMillis() > sftpEndsAt(a).toMillis())
 
   let count = 0
   for (const allocation of expired) {

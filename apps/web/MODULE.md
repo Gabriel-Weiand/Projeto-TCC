@@ -20,7 +20,7 @@ A API gera eventos; o front apenas lista e marca como lidas.
 
 | Título (API) | Quando |
 |--------------|--------|
-| Reserva aprovada | sudo aprovado pelo admin |
+| Reserva aprovada | admin aprovou reserva que estava `pending` |
 | Reserva negada | admin negou |
 | Reserva cancelada | cancelamento manual ou soft-delete |
 | Reserva cancelada (manutenção) | máquina em manutenção |
@@ -34,8 +34,8 @@ A API gera eventos; o front apenas lista e marca como lidas.
 
 | Título (API) | Quando |
 |--------------|--------|
-| Nova reserva pendente (sudo) | nova solicitação sudo |
-| Reserva sudo negada / cancelada | auditoria de pedidos sudo |
+| Nova reserva pendente | nova solicitação aguardando aprovação |
+| Reserva negada / cancelada (pendente) | auditoria de pedidos pendentes |
 | Possível flood SSH | muitas falhas SSH na máquina (alerta com cooldown) |
 | Agente offline | scheduler: sem heartbeat &gt;10 min; no máximo 1×/24 h por máquina (manutenção/retirar do parque) |
 
@@ -43,7 +43,7 @@ Componentes: `src/stores/notifications.ts`, `src/components/NotificationsPanel.v
 
 **Conectar SSH:** `ProfileAllocationConnectModal.vue` (perfil → Minhas alocações e detalhe da máquina) exibe nome, grupo, descrição, IP, login SSH, janela da reserva e aviso de que o IP costuma exigir rede local do campus. Comando via `utils/ssh.ts`: `-p` só quando `machine.sshPort` ≠ 22 (null no banco = 22). Admin configura IP/porta em `AdminMachinesView.vue`; detalhe mostra porta em `AdminMachineDetailView.vue`.
 
-**Reserva sudo:** toggle no formulário de reserva (`HomeView` / `ReservationFormFields`) para usuários não-admin → API `pending` + notificação admin.
+**Aprovação de reservas:** com `LAB_ALLOCATION_REQUIRE_ADMIN_APPROVAL=true` na API, reservas de alunos nascem `pending` e admins recebem notificação; com `false` (padrão MVP), nascem `approved` automaticamente.
 
 ## Estado local
 

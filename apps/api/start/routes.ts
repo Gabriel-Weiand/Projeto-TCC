@@ -157,6 +157,7 @@ router
               router.get('/', [AllocationsController, 'index']).as('allocations.index') // General
               router.patch('/:id', [AllocationsController, 'update']).as('allocations.update') // General
               router.post('/:id/extend', [AllocationsController, 'extend']).as('allocations.extend')
+              router.post('/:id/finish', [AllocationsController, 'finish']).as('allocations.finish')
               router
                 .delete('/:id', [AllocationsController, 'softDelete'])
                 .as('allocations.softDelete') // General (user soft-delete)

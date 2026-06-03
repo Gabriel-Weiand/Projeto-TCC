@@ -12,12 +12,15 @@ import type { Allocation, Machine } from "@/types";
 import { wallClockToUtcIso } from "@/utils/datetime";
 import {
   ALLOCATION_REASON_MAX_LENGTH,
+  allocationApiErrorMessage,
   PERIOD_END_TOO_FAR_MESSAGE,
   PERIOD_INVALID_RANGE_MESSAGE,
+  periodTooShortMessage,
 } from "@/utils/allocationLabels";
 import { isMachineAvailableForPeriod } from "@/utils/allocationAvailability";
 import {
   isAllocationEndBeyondLabLimit,
+  isPeriodDurationTooShort,
   isPeriodRangeOrderInvalid,
 } from "@/utils/allocationPeriodValidation";
 
@@ -90,8 +93,20 @@ const periodEndTooFar = computed(() => {
   }
 });
 
+const periodTooShort = computed(() => {
+  if (!periodFilled.value || periodRangeInvalid.value) return false;
+  return isPeriodDurationTooShort(
+    periodFields.value,
+    lab.timezone,
+    lab.config.allocation.minDurationMinutes,
+  );
+});
+
 const periodErrorMessage = computed((): string | null => {
   if (periodRangeInvalid.value) return PERIOD_INVALID_RANGE_MESSAGE;
+  if (periodTooShort.value) {
+    return periodTooShortMessage(lab.config.allocation.minDurationMinutes);
+  }
   if (periodEndTooFar.value) return PERIOD_END_TOO_FAR_MESSAGE;
   return null;
 });
@@ -168,7 +183,6 @@ function emptyReservationForm(machineId: string | number = "") {
     endDate: "",
     endTime: "",
     reason: "",
-    isSudo: false,
   };
 }
 
@@ -242,24 +256,11 @@ async function handleCreate() {
       startTime,
       endTime,
       reason: form.value.reason.trim().slice(0, ALLOCATION_REASON_MAX_LENGTH) || undefined,
-      isSudo: auth.isAdmin ? undefined : form.value.isSudo,
     });
     showForm.value = false;
     await Promise.all([loadGanttAllocations(), notifications.fetchNotifications()]);
   } catch (err: unknown) {
-    const status = (err as { response?: { status?: number } })?.response?.status;
-    if (status === 409)
-      formError.value = "Conflito de horário com outra reserva.";
-    else if (status === 422) {
-      const code = (err as { response?: { data?: { code?: string } } })?.response
-        ?.data?.code;
-      const msg = (err as { response?: { data?: { message?: string } } })?.response
-        ?.data?.message;
-      if (code === "ALLOCATION_TOO_FAR") formError.value = PERIOD_END_TOO_FAR_MESSAGE;
-      else if (code === "ALLOCATION_TOO_SHORT" && msg) formError.value = msg;
-      else formError.value = "Dados inválidos. Verifique os campos.";
-    }
-    else formError.value = "Erro ao criar reserva.";
+    formError.value = allocationApiErrorMessage(err, "Erro ao criar reserva.");
   } finally {
     formSaving.value = false;
   }
@@ -308,9 +309,7 @@ async function handleCreate() {
               v-model:end-date="form.endDate"
               v-model:end-time="form.endTime"
               v-model:reason="form.reason"
-              v-model:is-sudo="form.isSudo"
               show-machine-picker
-              :show-sudo="!auth.isAdmin"
               :machines="machinesStore.machines"
               :status-labels="MACHINE_STATUS_LABELS"
               :period-ready="!!formRangeIso"

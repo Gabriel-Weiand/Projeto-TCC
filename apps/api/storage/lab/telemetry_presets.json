@@ -1,6 +1,6 @@
 {
   "fast": {
-    "intervalSeconds": 20,
+    "intervalSeconds": 25,
     "batchSize": 6,
     "telemetrySet": {
       "cpu": true,

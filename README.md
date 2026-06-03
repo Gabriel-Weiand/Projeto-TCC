@@ -84,7 +84,7 @@ O projeto adota uma estrutura de **Monorepo** organizada, onde a API Central orq
 
 ### 📅 Alocação de Recursos (Modelo Otimista)
 
-- **Aprovação Automática:** Visando agilidade no MVP, solicitações de alunos autenticados nascem com status `APPROVED`. Com exceção a solicitações com status Sudo.
+- **Aprovação de reservas:** Por padrão (`LAB_ALLOCATION_REQUIRE_ADMIN_APPROVAL=false`), alunos autenticados criam reservas já `approved`. Com a variável `true`, toda reserva de usuário nasce `pending` até o admin aprovar.
 - **Controle Reativo:** O Administrador monitora alocações ativas e pode alterá-las para `DENIED` ou `APPROVED` dependendo da alocação. Isso aciona o bloqueio imediato na máquina física via Agente.
 - **Privacidade:** Alunos veem a ocupação do laboratório (mapa de máquinas), mas os dados de _quem_ está usando podem ou não ser anonimizados para não-admins (configurável).
 

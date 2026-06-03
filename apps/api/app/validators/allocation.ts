@@ -21,9 +21,6 @@ export const createAllocationValidator = vine.compile(
     status: vine
       .enum(['pending', 'approved', 'denied', 'cancelled', 'finished'] as const)
       .optional(),
-
-    // NOVO: Permissão de sudo
-    isSudo: vine.boolean().optional(),
   })
 )
 
@@ -61,6 +58,8 @@ export const listAllocationsValidator = vine.compile(
     status: vine
       .enum(['pending', 'approved', 'denied', 'cancelled', 'finished'] as const)
       .optional(),
+    /** Fase operacional (reservas `approved` no tempo); filtra após carregar do banco */
+    lifecycleStatus: vine.enum(['active', 'grace', 'sftp'] as const).optional(),
     /** Admin: true = só ocultas pelo usuário; omitido/false = lista operacional (sem ocultas) */
     userHidden: vine.boolean().optional(),
 

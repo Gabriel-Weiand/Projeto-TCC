@@ -57,7 +57,7 @@ node ace test
 - `machine_groups` para agrupar o parque (ex.: CUDA vídeo, render).
 - `machines` com `agent_token`, specs (`total_ram_gb`, `total_vram_gb` em **wire GB×10**), `telemetry_preset`, `custom_agent_config`, `host_fingerprint`.
 - `machine_users` — vínculo usuário ↔ máquina provisionada no SO.
-- `allocations` com janela de uso e `is_sudo` (no seed dev, reservas típicas de **2–4 semanas**).
+- `allocations` com janela de uso (no seed dev, reservas típicas de **2–4 semanas**).
 - `telemetries` — amostras brutas (wire ×10 para uso/temp; processos em JSON).
 - `allocation_metrics` — TWA e picos por sessão.
 - `ssh_connection_attempts` — auditoria de login SSH.
@@ -101,8 +101,8 @@ Marcador `[alloc#id#]` na mensagem evita duplicata nos lembretes agendados (e `[
 
 | Título | Gatilho |
 |--------|---------|
-| Nova reserva pendente (sudo) | criação `pending` + `isSudo` |
-| Reserva sudo negada / cancelada | `pending` → `denied` ou `cancelled` (sudo) |
+| Nova reserva pendente | criação com `status: pending` (`LAB_ALLOCATION_REQUIRE_ADMIN_APPROVAL=true` ou admin criou pending) |
+| Reserva pendente negada / cancelada | `pending` → `denied` ou `cancelled` |
 | Possível flood SSH | **heartbeat** com `sshAttempts`: ≥20 falhas em 15 min (`LAB_NOTIF_SSH_FLOOD_*`), cooldown 1 h por máquina |
 | Agente offline | scheduler (a cada 5 min): `lastSeenAt` ausente ou &gt; **10 min** em máquina `available`/`occupied`; **no máximo 1 alerta a cada 24 h** por máquina (`LAB_NOTIF_AGENT_OFFLINE_COOLDOWN_HOURS`) — sinal para colocar em **manutenção** ou retirar do parque, sem flood |
 
@@ -322,25 +322,39 @@ As senhas dos usuários **nunca são armazenadas em texto plano** no banco de da
 
 ```
 ┌─────────────────────────────────────────────────────────────────────────┐
-│                      REGRA DE 5 MINUTOS DE GAP                          │
+│              GAP E CICLO PÓS-RESERVA (env LAB_ALLOCATION_*)             │
 ├─────────────────────────────────────────────────────────────────────────┤
 │                                                                         │
-│  Objetivo: Garantir tempo para troca de usuários entre sessões          │
+│  Grace (`LAB_ALLOCATION_GRACE_MINUTES`, padrão 10): bash após endTime;   │
+│    mesmo valor = intervalo mínimo entre reservas (conflito calendário)  │
+│  SFTP (`LAB_ALLOCATION_POST_SFTP_MINUTES`, padrão 1440):chave após grace│
+│  Delete (`LAB_ALLOCATION_DELETE_USER_DAYS`, padrão 7): userdel no SO    │
+│  Aprovação (`LAB_ALLOCATION_REQUIRE_ADMIN_APPROVAL`): pending vs approved│
+│  `lifecycleStatus` (JSON): active | grace | sftp além do `status` DB   │
 │                                                                         │
-│  Implementação:                                                         │
-│  • Ao criar alocação, verificar conflito com gap de 5 minutos           │
-│  • Alocação A (10:00-11:00) bloqueia criação de B antes de 11:05        │
-│                                                                         │
-│  Linha do tempo:                                                        │
+│  Linha do tempo (reserva normal):                                       │
 │  ┌──────────────────────────────────────────────────────────────────┐   │
-│  │ 10:00      11:00  11:05      12:00                               │   │
-│  │   │──────────│      │──────────│                                 │   │
-│  │   │ Alocação │ GAP  │ Alocação │                                 │   │
-│  │   │    A     │ 5min │    B     │                                 │   │
+│  │ start    end   +grace    +postSftp   +7d                         │   │
+│  │  │───────│────│────│──────────────│────────│                     │   │
+│  │  │ bash  │grace│ SFTP c/ chave   │ sem chave │ teardown          │   │
 │  └──────────────────────────────────────────────────────────────────┘   │
+│                                                                         │
+│  Finalização antecipada (`POST /allocations/:id/finish`):               │
+│  • `status` → `finished`, `endTime` → agora (UTC)                       │
+│  • Pula grace e SFTP com chave — fase operacional vai a `no_key`        │
+│  • Estender (`POST /extend`): antes do início, `active` ou `grace` (não SFTP) │
 │                                                                         │
 └─────────────────────────────────────────────────────────────────────────┘
 ```
+
+### `LAB_ALLOCATION_GRACE_MINUTES` (padrão: 10)
+
+Variável única no `.env` com **dois papéis**:
+
+1. **Grace pós-`endTime`** (somente reserva `approved` no calendário): minutos extras de bash SSH após o horário reservado; habilita `POST /extend` e `lifecycleStatus: grace`.
+2. **Intervalo entre reservas**: ao criar ou estender, a API recusa sobreposição até `endTime + grace` da reserva existente (mesmo valor — não há variável `GAP` separada).
+
+Exposto em `GET /api/config` em `allocation.access.graceMinutes`. Respostas de alocação incluem `lifecycleStatus` (`active`, `grace`, `sftp`, …) calculado no servidor.
 
 ### Limite de antecedência (`LAB_MAX_ALLOCATION_DAYS_AHEAD`)
 
@@ -1304,7 +1318,7 @@ Autenticação: `Authorization: Bearer <MACHINE_TOKEN>` (middleware `machineAuth
       "systemUsername": "lab.maria_silva",
       "publicKey": "ssh-ed25519 AAAA…",
       "accessState": "full_shell",
-      "isSudo": false
+      "revokeSshKey": false
     }
   ],
   "accessControl": { "shouldBlock": false },
@@ -1314,7 +1328,7 @@ Autenticação: `Authorization: Bearer <MACHINE_TOKEN>` (middleware `machineAuth
 
 **Telemetria global (admin):** `GET` / `PUT /api/v1/lab/telemetry-presets` — define fast/eco para todo o parque (persistido em `storage/lab/telemetry_presets.json`). Máquinas com `telemetry_preset: custom` usam só `custom_agent_config`.
 
-**Rotas de interface ainda não detalhadas neste doc** (ver `start/routes.ts`): `machine-groups`, `notifications`, `ssh-attempts`, `GET /allocations/my`, `POST /allocations/:id/extend`, `GET /machines/:id/telemetry/stream`, `POST /machines/:id/request-processes`.
+**Rotas de interface ainda não detalhadas neste doc** (ver `start/routes.ts`): `machine-groups`, `notifications`, `ssh-attempts`, `GET /allocations/my`, `POST /allocations/:id/extend`, `POST /allocations/:id/finish`, `GET /machines/:id/telemetry/stream`, `POST /machines/:id/request-processes`.
 
 ---
 

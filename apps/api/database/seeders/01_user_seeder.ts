@@ -22,7 +22,7 @@ export default class extends BaseSeeder {
         email: 'gabriel.santos@ufpel.edu.br',
         password: 'aluno123',
         role: 'user' as const,
-        sshPublicKey: 'ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIPfakeUserKey1... gabriel@local',
+        sshPublicKey: 'ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIBFRuyv6OZIWKCPKRomv9dUcoAMdVA5cSnJShykFAEWZ teste_pc_ssh',
       },
       {
         fullName: 'Maria Oliveira',

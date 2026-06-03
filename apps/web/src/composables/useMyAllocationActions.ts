@@ -1,51 +1,77 @@
+import { computed } from "vue";
 import type { Allocation } from "@/types";
+import { useLabConfigStore } from "@/stores/labConfig";
 import {
-  isNowBeforeUtc,
-  isNowInUtcRange,
-  isNowWithinGraceAfterEnd,
-} from "@/utils/datetime";
+  effectiveLifecycleStatus,
+  isExtendablePhase,
+  isPostSessionPhase,
+  isSessionPhase,
+} from "@/utils/allocationLifecycle";
+import { isNowBeforeUtc } from "@/utils/datetime";
 
-const DEFAULT_GRACE_MINUTES = 5;
+export function useMyAllocationActions() {
+  const lab = useLabConfigStore();
+  const access = computed(() => lab.allocationAccess);
 
-export function useMyAllocationActions(graceMinutes = DEFAULT_GRACE_MINUTES) {
+  function lifecycle(a: Allocation) {
+    return effectiveLifecycleStatus(a, access.value);
+  }
+
   function canCancel(a: Allocation) {
-    return ["pending", "approved"].includes(a.status);
+    const lc = lifecycle(a);
+    return (
+      (lc === "pending" || lc === "approved") && isNowBeforeUtc(a.startTime)
+    );
   }
 
   function showConnectButton(a: Allocation) {
-    return a.status === "approved";
+    return isSessionPhase(lifecycle(a));
   }
 
   function canConnectNow(a: Allocation) {
-    return (
-      a.status === "approved" &&
-      !isNowBeforeUtc(a.startTime) &&
-      isNowInUtcRange(a.startTime, a.endTime)
-    );
+    return showConnectButton(a);
   }
 
   function connectDisabledTitle(a: Allocation): string | undefined {
     if (!showConnectButton(a)) return undefined;
-    if (isNowBeforeUtc(a.startTime)) {
-      return "Disponível após o horário de início";
+    if (lifecycle(a) === "sftp") {
+      return "Conectar via SFTP (somente transferência de arquivos)";
     }
-    if (!canConnectNow(a)) return "Fora do período da reserva";
+    if (lifecycle(a) === "grace") {
+      return "Conectar via SSH (período de encerramento)";
+    }
     return "Conectar via SSH";
   }
 
+  function connectPhaseNotice(a: Allocation): string | null {
+    if (lifecycle(a) === "sftp") {
+      return "Neste período o acesso é apenas para transferência de arquivos via SFTP (sem terminal bash).";
+    }
+    return null;
+  }
+
   function showExtendButton(a: Allocation) {
+    return a.status === "approved" && isExtendablePhase(lifecycle(a));
+  }
+
+  function showFinishButton(a: Allocation) {
+    return isSessionPhase(lifecycle(a));
+  }
+
+  function finishConfirmMessage(): string {
     return (
-      a.status === "approved" &&
-      isNowWithinGraceAfterEnd(a.endTime, graceMinutes)
+      "Finalizar a sessão agora?\n\n" +
+      "O acesso bash encerra em seguida. Os períodos de grace e SFTP pós-sessão também serão pulados."
     );
   }
 
   function showStatistics(a: Allocation) {
-    return a.status === "finished";
+    return isPostSessionPhase(lifecycle(a));
   }
 
   function canRemoveFromHistory(a: Allocation) {
-    return ["finished", "cancelled", "denied"].includes(a.status);
+    const lc = lifecycle(a);
+    return lc === "finished" || lc === "cancelled" || lc === "denied";
   }
 
   function hasActions(a: Allocation) {
@@ -53,6 +79,7 @@ export function useMyAllocationActions(graceMinutes = DEFAULT_GRACE_MINUTES) {
       canCancel(a) ||
       showConnectButton(a) ||
       showExtendButton(a) ||
+      showFinishButton(a) ||
       showStatistics(a) ||
       canRemoveFromHistory(a)
     );
@@ -63,9 +90,13 @@ export function useMyAllocationActions(graceMinutes = DEFAULT_GRACE_MINUTES) {
     showConnectButton,
     canConnectNow,
     connectDisabledTitle,
+    connectPhaseNotice,
     showExtendButton,
+    showFinishButton,
+    finishConfirmMessage,
     showStatistics,
     canRemoveFromHistory,
     hasActions,
+    lifecycle,
   };
 }

@@ -60,3 +60,24 @@ export function isPeriodRangeOrderInvalid(
     return true;
   }
 }
+
+/** Duração em minutos menor que o mínimo do laboratório (API: ALLOCATION_TOO_SHORT). */
+export function isPeriodDurationTooShort(
+  fields: ReservationPeriodFields,
+  timezone: string,
+  minDurationMinutes: number,
+): boolean {
+  if (isPeriodRangeOrderInvalid(fields, timezone)) return false;
+  try {
+    const startMs = new Date(
+      wallClockToUtcIso(fields.startDate, fields.startTime, timezone),
+    ).getTime();
+    const endMs = new Date(
+      wallClockToUtcIso(fields.endDate, fields.endTime, timezone),
+    ).getTime();
+    const minutes = (endMs - startMs) / 60_000;
+    return minutes < minDurationMinutes;
+  } catch {
+    return false;
+  }
+}

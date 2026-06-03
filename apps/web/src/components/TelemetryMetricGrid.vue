@@ -13,12 +13,16 @@ const model = defineModel<TelemetrySetConfig>({ required: true });
       v-for="m in TELEMETRY_METRIC_KEYS"
       :key="m.key"
       class="metric-toggle"
-      :class="{ 'is-checked': model[m.key] }"
+      :class="{
+        'is-checked': model[m.key],
+        'is-mandatory': m.mandatory,
+      }"
     >
       <input
         v-model="model[m.key]"
         type="checkbox"
         class="metric-toggle-input"
+        :disabled="m.mandatory"
       />
       <span class="metric-toggle-box" aria-hidden="true" />
       <span class="metric-toggle-label">{{ m.label }}</span>

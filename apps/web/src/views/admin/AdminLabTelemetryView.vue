@@ -6,6 +6,10 @@ import TelemetryMetricGrid from "@/components/TelemetryMetricGrid.vue";
 import {
   DEFAULT_LAB_TELEMETRY_PRESETS,
   TELEMETRY_BATCH_MAX,
+  TELEMETRY_INTERVAL_MAX,
+  TELEMETRY_INTERVAL_MIN,
+  clampTelemetryInterval,
+  enforceMandatoryTelemetrySet,
   type LabTelemetryPresets,
 } from "@/utils/telemetryPresets";
 
@@ -29,12 +33,24 @@ onMounted(async () => {
   loading.value = true;
   try {
     const data = await labStore.fetchLabTelemetryPresets();
-    form.fast = structuredClone(data.fast);
-    form.eco = structuredClone(data.eco);
+    form.fast = {
+      ...structuredClone(data.fast),
+      telemetrySet: enforceMandatoryTelemetrySet(data.fast.telemetrySet),
+    };
+    form.eco = {
+      ...structuredClone(data.eco),
+      telemetrySet: enforceMandatoryTelemetrySet(data.eco.telemetrySet),
+    };
   } catch {
     const fromConfig = labStore.telemetryPresets;
-    form.fast = structuredClone(fromConfig.fast);
-    form.eco = structuredClone(fromConfig.eco);
+    form.fast = {
+      ...structuredClone(fromConfig.fast),
+      telemetrySet: enforceMandatoryTelemetrySet(fromConfig.fast.telemetrySet),
+    };
+    form.eco = {
+      ...structuredClone(fromConfig.eco),
+      telemetrySet: enforceMandatoryTelemetrySet(fromConfig.eco.telemetrySet),
+    };
   } finally {
     loading.value = false;
   }
@@ -43,8 +59,11 @@ onMounted(async () => {
 function validatePresets(): string | null {
   for (const key of ["fast", "eco"] as const) {
     const p = form[key];
-    if (p.intervalSeconds < 1) {
-      return "Intervalo deve ser ≥ 1 em fast e eco.";
+    if (
+      p.intervalSeconds < TELEMETRY_INTERVAL_MIN ||
+      p.intervalSeconds > TELEMETRY_INTERVAL_MAX
+    ) {
+      return `Intervalo deve ser entre ${TELEMETRY_INTERVAL_MIN}s e ${TELEMETRY_INTERVAL_MAX}s.`;
     }
     if (p.batchSize < 1 || p.batchSize > TELEMETRY_BATCH_MAX) {
       return `Tamanho do lote deve ser entre 1 e ${TELEMETRY_BATCH_MAX}.`;
@@ -65,14 +84,14 @@ async function handleSave() {
   try {
     await labStore.saveLabTelemetryPresets({
       fast: {
-        intervalSeconds: form.fast.intervalSeconds,
+        intervalSeconds: clampTelemetryInterval(form.fast.intervalSeconds),
         batchSize: form.fast.batchSize,
-        telemetrySet: { ...form.fast.telemetrySet },
+        telemetrySet: enforceMandatoryTelemetrySet(form.fast.telemetrySet),
       },
       eco: {
-        intervalSeconds: form.eco.intervalSeconds,
+        intervalSeconds: clampTelemetryInterval(form.eco.intervalSeconds),
         batchSize: form.eco.batchSize,
-        telemetrySet: { ...form.eco.telemetrySet },
+        telemetrySet: enforceMandatoryTelemetrySet(form.eco.telemetrySet),
       },
     });
     saved.value = true;
@@ -90,7 +109,9 @@ async function handleSave() {
     <p class="page-lead text-secondary">
       Perfis <strong>fast</strong> e <strong>eco</strong> valem para todas as máquinas com esse
       preset. O agente usa <strong>eco</strong> enquanto a API não responde. Preset
-      <strong>custom</strong> continua por máquina.
+      <strong>custom</strong> continua por máquina. <strong>CPU</strong> e
+      <strong>RAM / Swap</strong> são sempre coletadas; intervalo entre
+      <strong>1s</strong> e <strong>600s</strong>.
     </p>
 
     <div v-if="loading" class="empty-state">Carregando…</div>

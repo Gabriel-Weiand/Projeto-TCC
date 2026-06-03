@@ -13,13 +13,7 @@ import {
   allocationStatusLabel,
   fmtAllocationDateTime,
 } from "@/utils/allocationLabels";
-import {
-  isNowBeforeUtc,
-  isNowInUtcRange,
-  isNowWithinGraceAfterEnd,
-} from "@/utils/datetime";
-
-const GRACE_MINUTES = 5;
+import { useMyAllocationActions } from "@/composables/useMyAllocationActions";
 
 const store = useAllocationsStore();
 const notifications = useNotificationsStore();
@@ -40,22 +34,51 @@ const filterTabs = [
   { key: "all", label: "Todas" },
   { key: "pending", label: "Pendentes" },
   { key: "approved", label: "Aprovadas" },
-  { key: "denied", label: "Negadas" },
+  { key: "active", label: "Ativas", lifecycle: true },
+  { key: "grace", label: "Grace", lifecycle: true },
+  { key: "sftp", label: "SFTP", lifecycle: true },
   { key: "finished", label: "Finalizadas" },
+  { key: "denied", label: "Negadas" },
   { key: "cancelled", label: "Canceladas" },
-];
+] as const;
 
 function fmt(iso: string) {
   return fmtAllocationDateTime(iso, lab.timezone);
 }
 
-onMounted(() => void loadList());
+const {
+  canCancel,
+  showConnectButton,
+  canConnectNow,
+  connectDisabledTitle,
+  showExtendButton,
+  showFinishButton,
+  showStatistics,
+  canRemoveFromHistory,
+  hasActions,
+  finishConfirmMessage,
+  lifecycle,
+} = useMyAllocationActions();
+
+onMounted(async () => {
+  if (!lab.loaded) await lab.fetchConfig();
+  void loadList();
+});
 
 async function loadList() {
   loading.value = true;
   try {
+    const tab = filterTabs.find((t) => t.key === statusFilter.value);
+    const params: Record<string, string> = {};
+    if (statusFilter.value !== "all") {
+      if (tab && "lifecycle" in tab && tab.lifecycle) {
+        params.lifecycleStatus = statusFilter.value;
+      } else {
+        params.status = statusFilter.value;
+      }
+    }
     list.value = await store.fetchMyAllocations(
-      statusFilter.value !== "all" ? { status: statusFilter.value } : undefined,
+      Object.keys(params).length ? params : undefined,
     );
   } finally {
     loading.value = false;
@@ -75,47 +98,6 @@ const filtered = computed(() => {
 
 function machineName(a: Allocation) {
   return a.machine?.name ?? `Máquina #${a.machineId}`;
-}
-
-function canCancel(a: Allocation) {
-  return ["pending", "approved"].includes(a.status);
-}
-
-function showConnectButton(a: Allocation) {
-  return a.status === "approved";
-}
-
-function canConnectNow(a: Allocation) {
-  return (
-    a.status === "approved" &&
-    !isNowBeforeUtc(a.startTime) &&
-    isNowInUtcRange(a.startTime, a.endTime)
-  );
-}
-
-function showExtendButton(a: Allocation) {
-  return (
-    a.status === "approved" &&
-    isNowWithinGraceAfterEnd(a.endTime, GRACE_MINUTES)
-  );
-}
-
-function showStatistics(a: Allocation) {
-  return a.status === "finished";
-}
-
-function canRemoveFromHistory(a: Allocation) {
-  return ["finished", "cancelled", "denied"].includes(a.status);
-}
-
-function hasActions(a: Allocation) {
-  return (
-    canCancel(a) ||
-    showConnectButton(a) ||
-    showExtendButton(a) ||
-    showStatistics(a) ||
-    canRemoveFromHistory(a)
-  );
 }
 
 function openDetail(a: Allocation) {
@@ -139,6 +121,24 @@ function openExtend(a: Allocation) {
 function openStatistics(a: Allocation) {
   closeDetail();
   usageStatsTarget.value = a;
+}
+
+async function handleFinish(a: Allocation) {
+  if (!confirm(finishConfirmMessage())) {
+    return;
+  }
+  updating.value = a.id;
+  try {
+    const updated = await store.finishAllocation(a.id);
+    const idx = list.value.findIndex((x) => x.id === updated.id);
+    if (idx !== -1) list.value[idx] = updated;
+    if (detailTarget.value?.id === updated.id) detailTarget.value = updated;
+    await notifications.fetchNotifications();
+  } catch {
+    alert("Erro ao finalizar sessão.");
+  } finally {
+    updating.value = null;
+  }
 }
 
 async function handleCancel(a: Allocation) {
@@ -233,8 +233,13 @@ async function handleDelete(a: Allocation) {
             <td class="text-secondary alloc-datetime">{{ fmt(a.startTime) }}</td>
             <td class="text-secondary alloc-datetime">{{ fmt(a.endTime) }}</td>
             <td>
-              <span :class="['badge', allocationStatusBadge(a.status)]">
-                {{ allocationStatusLabel(a.status) }}
+              <span
+                :class="[
+                  'badge',
+                  allocationStatusBadge(a.status, lifecycle(a)),
+                ]"
+              >
+                {{ allocationStatusLabel(a.status, lifecycle(a)) }}
               </span>
             </td>
             <td class="alloc-actions" @click.stop>
@@ -246,6 +251,15 @@ async function handleDelete(a: Allocation) {
                   @click="openExtend(a)"
                 >
                   Estender
+                </button>
+                <button
+                  v-if="showFinishButton(a)"
+                  type="button"
+                  class="btn btn-ghost btn-sm btn-action"
+                  :disabled="updating === a.id"
+                  @click="handleFinish(a)"
+                >
+                  Finalizar
                 </button>
                 <button
                   v-if="canCancel(a)"
@@ -262,13 +276,7 @@ async function handleDelete(a: Allocation) {
                   class="btn btn-primary btn-sm btn-action"
                   :class="{ 'btn-action--waiting': !canConnectNow(a) }"
                   :disabled="!canConnectNow(a)"
-                  :title="
-                    isNowBeforeUtc(a.startTime)
-                      ? 'Disponível após o horário de início'
-                      : !canConnectNow(a)
-                        ? 'Fora do período da reserva'
-                        : 'Conectar via SSH'
-                  "
+                  :title="connectDisabledTitle(a)"
                   @click="openConnect(a)"
                 >
                   Conectar
@@ -308,6 +316,7 @@ async function handleDelete(a: Allocation) {
       @extend="openExtend(detailTarget)"
       @statistics="openStatistics(detailTarget)"
       @cancel="handleCancel(detailTarget)"
+      @finish="handleFinish(detailTarget)"
       @delete="handleDelete(detailTarget)"
     />
 

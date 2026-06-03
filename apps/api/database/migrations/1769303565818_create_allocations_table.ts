@@ -32,8 +32,6 @@ export default class extends BaseSchema {
         .enum('status', ['pending', 'approved', 'denied', 'cancelled', 'finished'])
         .defaultTo('approved') // No seu MVP é aprovação automática
 
-      table.boolean('is_sudo').defaultTo(false).notNullable()
-
       // Soft-delete: oculta do histórico do usuário, mas mantém no admin
       table.boolean('user_hidden').defaultTo(false).notNullable()
 

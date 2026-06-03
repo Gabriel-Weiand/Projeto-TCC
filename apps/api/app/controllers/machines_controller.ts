@@ -10,6 +10,7 @@ import { telemetryBuffer } from '#services/telemetry_buffer'
 import { machineCache } from '#services/machine_cache'
 import { DateTime } from 'luxon'
 import { cancelAllocationsForMaintenance } from '#services/notification_service'
+import { normalizeCustomAgentConfig } from '#services/telemetry_presets'
 
 export default class MachinesController {
   /** Agente envia GB×10; respostas HTTP ao front em GB (1 decimal). */
@@ -159,6 +160,9 @@ export default class MachinesController {
     const isEnteringMaintenance = data.status === 'maintenance'
 
     const { totalDiskGb, ...updateData } = data
+    if (updateData.customAgentConfig !== undefined) {
+      updateData.customAgentConfig = normalizeCustomAgentConfig(updateData.customAgentConfig)
+    }
     machine.merge(updateData)
     await machine.save()
 

@@ -25,6 +25,13 @@ export type LabTelemetryPresets = {
   eco: TelemetryPresetProfile
 }
 
+/** Intervalo entre capturas enviadas ao agente (segundos). */
+export const TELEMETRY_INTERVAL_MIN = 1
+export const TELEMETRY_INTERVAL_MAX = 600
+
+/** Sempre coletadas em fast, eco e custom (não podem ser desligadas). */
+export const MANDATORY_TELEMETRY_METRICS = ['cpu', 'ramAndSwap'] as const satisfies readonly (keyof TelemetrySetConfig)[]
+
 /** Métricas que o agente suporta coletar. */
 export const FULL_TELEMETRY_SET: TelemetrySetConfig = {
   cpu: true,
@@ -64,6 +71,54 @@ export const DEFAULT_LAB_TELEMETRY_PRESETS: LabTelemetryPresets = {
 
 const TELEMETRY_SET_KEYS = Object.keys(FULL_TELEMETRY_SET) as (keyof TelemetrySetConfig)[]
 
+export function clampTelemetryInterval(seconds: number): number {
+  if (!Number.isFinite(seconds)) return TELEMETRY_INTERVAL_MIN
+  return Math.min(
+    TELEMETRY_INTERVAL_MAX,
+    Math.max(TELEMETRY_INTERVAL_MIN, Math.round(seconds))
+  )
+}
+
+export function normalizeTelemetrySet(set: TelemetrySetConfig): TelemetrySetConfig {
+  const out = { ...set }
+  for (const key of MANDATORY_TELEMETRY_METRICS) {
+    out[key] = true
+  }
+  return out
+}
+
+export function normalizePresetProfile(profile: TelemetryPresetProfile): TelemetryPresetProfile {
+  return {
+    intervalSeconds: clampTelemetryInterval(profile.intervalSeconds),
+    batchSize: profile.batchSize,
+    telemetrySet: normalizeTelemetrySet(profile.telemetrySet),
+  }
+}
+
+export function normalizeLabTelemetryPresets(presets: LabTelemetryPresets): LabTelemetryPresets {
+  return {
+    fast: normalizePresetProfile(presets.fast),
+    eco: normalizePresetProfile(presets.eco),
+  }
+}
+
+export function normalizeCustomAgentConfig(
+  config: Record<string, unknown> | null | undefined
+): Record<string, unknown> | null | undefined {
+  if (!config) return config
+  const out = { ...config }
+  if (typeof out.intervalSeconds === 'number') {
+    out.intervalSeconds = clampTelemetryInterval(out.intervalSeconds)
+  }
+  if (out.telemetrySet && typeof out.telemetrySet === 'object') {
+    out.telemetrySet = normalizeTelemetrySet({
+      ...FULL_TELEMETRY_SET,
+      ...(out.telemetrySet as Partial<TelemetrySetConfig>),
+    })
+  }
+  return out
+}
+
 function envJson<T>(key: string): T | null {
   const raw = process.env[key]?.trim()
   if (!raw) return null
@@ -89,20 +144,20 @@ function mergeTelemetrySet(
       out[key] = patch[key]!
     }
   }
-  return out
+  return normalizeTelemetrySet(out)
 }
 
 function mergeProfile(
   base: TelemetryPresetProfile,
   patch?: Partial<TelemetryPresetProfile> | null
 ): TelemetryPresetProfile {
-  if (!patch) return { ...base, telemetrySet: { ...base.telemetrySet } }
-  return {
+  if (!patch) return normalizePresetProfile({ ...base, telemetrySet: { ...base.telemetrySet } })
+  return normalizePresetProfile({
     intervalSeconds:
       typeof patch.intervalSeconds === 'number' ? patch.intervalSeconds : base.intervalSeconds,
     batchSize: typeof patch.batchSize === 'number' ? patch.batchSize : base.batchSize,
     telemetrySet: mergeTelemetrySet(base.telemetrySet, patch.telemetrySet),
-  }
+  })
 }
 
 function loadStorageOverrides(): Partial<LabTelemetryPresets> | null {
@@ -125,7 +180,7 @@ export function getLabTelemetryPresets(): LabTelemetryPresets {
   if (stored?.fast) fast = mergeProfile(fast, stored.fast)
   if (stored?.eco) eco = mergeProfile(eco, stored.eco)
 
-  return { fast, eco }
+  return normalizeLabTelemetryPresets({ fast, eco })
 }
 
 /** Payload público (agente offline + front). */
@@ -138,9 +193,10 @@ export function labTelemetryPublicConfig() {
 }
 
 export function saveLabTelemetryPresets(presets: LabTelemetryPresets): void {
+  const normalized = normalizeLabTelemetryPresets(presets)
   const path = storagePath()
   mkdirSync(dirname(path), { recursive: true })
-  writeFileSync(path, JSON.stringify(presets, null, 2), 'utf-8')
+  writeFileSync(path, JSON.stringify(normalized, null, 2), 'utf-8')
 }
 
 /**
@@ -155,8 +211,15 @@ export function buildAgentTelemetryConfig(
   const labPresets = getLabTelemetryPresets()
 
   if (preset === 'custom') {
+    const intervalSeconds = clampTelemetryInterval(
+      typeof customConfig.intervalSeconds === 'number'
+        ? customConfig.intervalSeconds
+        : isOccupied
+          ? 5
+          : 60
+    )
     return {
-      intervalSeconds: customConfig.intervalSeconds ?? (isOccupied ? 5 : 60),
+      intervalSeconds,
       batchSize: customConfig.batchSize ?? (isOccupied ? 5 : 15),
       telemetryPreset: 'custom',
       telemetrySet: mergeTelemetrySet(

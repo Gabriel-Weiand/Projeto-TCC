@@ -85,4 +85,54 @@ test.group('Lab telemetry presets', (group) => {
 
     response.assertStatus(403)
   })
+
+  test('rejeita intervalo fora de 1–600s', async ({ client }) => {
+    const admin = await User.create({
+      fullName: 'Admin Tel Val',
+      email: 'admin-tel-val@teste.com',
+      password: 'senha123',
+      role: 'admin',
+    })
+    const presets = getLabTelemetryPresets()
+
+    const response = await client
+      .put('/api/v1/lab/telemetry-presets')
+      .loginAs(admin)
+      .json({
+        fast: {
+          intervalSeconds: 601,
+          batchSize: presets.fast.batchSize,
+          telemetrySet: presets.fast.telemetrySet,
+        },
+        eco: presets.eco,
+      })
+
+    response.assertStatus(422)
+  })
+
+  test('força CPU e RAM/Swap mesmo se desligados no payload', async ({ client, assert }) => {
+    const admin = await User.create({
+      fullName: 'Admin Tel Mand',
+      email: 'admin-tel-mand@teste.com',
+      password: 'senha123',
+      role: 'admin',
+    })
+    const presets = getLabTelemetryPresets()
+
+    const putRes = await client
+      .put('/api/v1/lab/telemetry-presets')
+      .loginAs(admin)
+      .json({
+        fast: {
+          intervalSeconds: 25,
+          batchSize: presets.fast.batchSize,
+          telemetrySet: { ...presets.fast.telemetrySet, cpu: false, ramAndSwap: false },
+        },
+        eco: presets.eco,
+      })
+
+    putRes.assertStatus(200)
+    assert.isTrue(putRes.body().fast.telemetrySet.cpu)
+    assert.isTrue(putRes.body().fast.telemetrySet.ramAndSwap)
+  })
 })

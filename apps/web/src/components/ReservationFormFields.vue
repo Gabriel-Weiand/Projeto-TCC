@@ -2,13 +2,11 @@
 import { computed } from "vue";
 import type { Machine } from "@/types";
 import ReservationMachinePicker from "@/components/ReservationMachinePicker.vue";
-import SudoAllocationToggle from "@/components/SudoAllocationToggle.vue";
 import { ALLOCATION_REASON_MAX_LENGTH } from "@/utils/allocationLabels";
 
 const props = withDefaults(
   defineProps<{
     showMachinePicker?: boolean;
-    showSudo?: boolean;
     reasonMaxLength?: number;
     machines?: Machine[];
     statusLabels?: Record<Machine["status"], string>;
@@ -18,7 +16,6 @@ const props = withDefaults(
   }>(),
   {
     showMachinePicker: false,
-    showSudo: false,
     reasonMaxLength: ALLOCATION_REASON_MAX_LENGTH,
     machines: () => [],
     periodReady: false,
@@ -35,7 +32,6 @@ const startTime = defineModel<string>("startTime", { default: "" });
 const endDate = defineModel<string>("endDate", { default: "" });
 const endTime = defineModel<string>("endTime", { default: "" });
 const reason = defineModel<string>("reason", { default: "" });
-const isSudo = defineModel<boolean>("isSudo", { default: false });
 </script>
 
 <template>
@@ -93,11 +89,6 @@ const isSudo = defineModel<boolean>("isSudo", { default: false });
           </div>
         </div>
       </div>
-    </section>
-
-    <section v-if="props.showSudo" class="reservation-section">
-      <h3 class="reservation-section-title">Privilégios na máquina</h3>
-      <SudoAllocationToggle v-model="isSudo" hide-label />
     </section>
 
     <section class="reservation-section reservation-section--reason">

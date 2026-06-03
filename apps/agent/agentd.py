@@ -67,6 +67,8 @@ SFTP_SHELL  = (
 )
 LAST_PROCESS_REQUEST_TS = None
 PROCESS_BATCHES_REMAINING = 0
+# Último accessState por usuário lab.* (pkill na transição full_shell → sftp_only)
+LAST_ACCESS_STATE: dict[str, str] = {}
 _process_io_prev = {} # Cache para calcular velocidade de disco (PID -> bytes)
 SSH_AUDIT_BUFFER = []
 
@@ -619,57 +621,50 @@ def apply_provisioning(provisioning_data: list) -> None:
     """
     Sincroniza o Linux com a verdade da API.
     FASE 1 — Drift Correction: remove contas 'lab.*' que a API não listou.
-    FASE 2 — Provisioning: cria/atualiza conta, chave SSH, shell e sudo.
+    FASE 2 — Provisioning: cria/atualiza conta, chave SSH e shell.
     """
     expected_users = {item["systemUsername"] for item in provisioning_data}
 
-    # ------------------------------------------------------------------
-    # FASE 1: DRIFT CORRECTION
-    # ------------------------------------------------------------------
     for entry in pwd.getpwall():
         uname = entry.pw_name
         if uname.startswith("lab.") and uname not in expected_users:
             print(f"[OS] Removendo conta expirada: {uname}")
             subprocess.run(["pkill", "-u", uname], stderr=subprocess.DEVNULL)
             subprocess.run(["userdel", "-r", "-f", uname], stderr=subprocess.DEVNULL)
-
-    # ------------------------------------------------------------------
-    # FASE 2: PROVISIONAMENTO
-    # ------------------------------------------------------------------
-    import grp  # Importado para consultar os membros do grupo nativamente
+            LAST_ACCESS_STATE.pop(uname, None)
 
     for item in provisioning_data:
-        uname   = item["systemUsername"]
-        pubkey  = item["sshPublicKey"].strip()
-        state   = item["accessState"]           # "full_shell" | "sftp_only"
-        is_sudo = item.get("isSudo", False)
+        uname = item["systemUsername"]
+        pubkey = (item.get("sshPublicKey") or "").strip()
+        state = item["accessState"]
+        revoke_key = item.get("revokeSshKey", False)
 
-        if not pubkey.startswith("ssh-ed25519 "):
-            print(f"[OS] Ignorando {uname}: apenas chaves ssh-ed25519 são aceitas.")
-            continue
+        if revoke_key:
+            pubkey_to_write = ""
+        elif not pubkey:
+            pubkey_to_write = None  # não alterar authorized_keys existente
+        elif not pubkey.startswith("ssh-ed25519 "):
+            print(f"[OS] Aviso: {uname}: chave ignorada (apenas ssh-ed25519); shell será ajustado.")
+            pubkey_to_write = None
+        else:
+            pubkey_to_write = pubkey
 
-        # 1. Cria conta se não existir
-        user_exists = True
         try:
             user_info = pwd.getpwnam(uname)
         except KeyError:
-            user_exists = False
             print(f"[OS] Criando conta: {uname}")
             subprocess.run(
                 ["useradd", "-m", "-s", "/bin/bash", "-K", "UMASK=0077", "-G", "lab", uname],
-                check=True
+                check=True,
             )
             user_info = pwd.getpwnam(uname)
 
-        # 2. Garante que a home é 700
         home = f"/home/{uname}"
         if os.path.isdir(home):
             subprocess.run(["chmod", "700", home], check=False)
 
-        # 3. Injeção da chave SSH — só reescreve se o conteúdo mudou
-        ssh_dir   = os.path.join(home, ".ssh")
+        ssh_dir = os.path.join(home, ".ssh")
         auth_keys = os.path.join(ssh_dir, "authorized_keys")
-
         os.makedirs(ssh_dir, mode=0o700, exist_ok=True)
 
         current_key = ""
@@ -680,32 +675,30 @@ def apply_provisioning(provisioning_data: list) -> None:
             except OSError:
                 pass
 
-        if current_key != pubkey:
+        if revoke_key:
+            if current_key:
+                with open(auth_keys, "w") as f:
+                    f.write("")
+                print(f"[ACCESS] Chave SSH revogada para {uname}")
+        elif pubkey_to_write is not None and current_key != pubkey_to_write:
             with open(auth_keys, "w") as f:
-                f.write(pubkey + "\n")
+                f.write(pubkey_to_write + "\n")
 
         os.chmod(auth_keys, 0o600)
-        shutil.chown(ssh_dir,   user=uname, group=uname)
+        shutil.chown(ssh_dir, user=uname, group=uname)
         shutil.chown(auth_keys, user=uname, group=uname)
 
-        # 4. Controlo de shell (SÓ EXECUTA SE HOUVER MUDANÇA REAL)
+        prev_state = LAST_ACCESS_STATE.get(uname)
+        if prev_state == "full_shell" and state == "sftp_only":
+            print(f"[ACCESS] {uname}: full_shell → sftp_only (encerrando processos)")
+            subprocess.run(["pkill", "-u", uname], stderr=subprocess.DEVNULL)
+
         target_shell = SFTP_SHELL if state == "sftp_only" else "/bin/bash"
         if user_info.pw_shell != target_shell:
             subprocess.run(["usermod", "-s", target_shell, uname], check=True)
             print(f"[OS] Shell de {uname} alterado para {target_shell}")
 
-        # 5. Gestão de sudo (SÓ EXECUTA SE HOUVER MUDANÇA REAL)
-        try:
-            is_currently_sudo = uname in grp.getgrnam("sudo").gr_mem
-        except KeyError:
-            is_currently_sudo = False
-
-        if is_sudo and not is_currently_sudo:
-            subprocess.run(["usermod", "-aG", "sudo", uname], stderr=subprocess.DEVNULL)
-            print(f"[OS] Usuário {uname} adicionado ao grupo sudo")
-        elif not is_sudo and is_currently_sudo:
-            subprocess.run(["gpasswd", "-d", uname, "sudo"], stderr=subprocess.DEVNULL)
-            print(f"[OS] Usuário {uname} removido do grupo sudo")
+        LAST_ACCESS_STATE[uname] = state
 
 def _host_fingerprint() -> str | None:
     """Extrai o Fingerprint SHA256 da chave ed25519 da máquina (para o front validar)."""
@@ -816,8 +809,7 @@ def heartbeat_worker():
                 
                 # Aplica as ordens de provisionamento no Sistema Operacional
                 provisioning_orders = data.get("provisioning", [])
-                if provisioning_orders:
-                    apply_provisioning(provisioning_orders)
+                apply_provisioning(provisioning_orders if provisioning_orders else [])
                     
         except Exception as e:
             print(f"[C2] Erro no Heartbeat: {e}")

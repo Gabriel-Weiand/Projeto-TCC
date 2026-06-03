@@ -337,6 +337,14 @@ tr:hover td { background: var(--bg-hover); }
   background: var(--accent-soft);
   color: var(--text-primary);
 }
+.metric-toggle.is-mandatory {
+  cursor: default;
+  opacity: 0.92;
+}
+.metric-toggle.is-mandatory:hover {
+  border-color: var(--border-glass);
+  background: var(--accent-soft);
+}
 .metric-toggle-input {
   position: absolute;
   width: 1px;

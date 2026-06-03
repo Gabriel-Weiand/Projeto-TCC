@@ -15,26 +15,69 @@ export const PERIOD_INVALID_RANGE_MESSAGE =
 export const PERIOD_END_TOO_FAR_MESSAGE =
   "Datas inválidas para o período selecionado.";
 
-export function allocationStatusBadge(status: string): string {
+/** Duração menor que `minDurationMinutes` (alinhado à API). */
+export function periodTooShortMessage(minDurationMinutes: number): string {
+  return `A reserva deve ter pelo menos ${minDurationMinutes} minutos de duração.`;
+}
+
+/** Mensagem da API em POST/PATCH de alocação (400/409/422). */
+export function allocationApiErrorMessage(
+  err: unknown,
+  fallback = "Erro ao processar a reserva.",
+): string {
+  const res = (
+    err as {
+      response?: { status?: number; data?: { code?: string; message?: string } };
+    }
+  )?.response;
+  const status = res?.status;
+  const code = res?.data?.code;
+  const msg = res?.data?.message;
+
+  if (status === 409) return "Conflito de horário com outra reserva.";
+  if (status === 400 || status === 422) {
+    if (code === "ALLOCATION_TOO_FAR") return PERIOD_END_TOO_FAR_MESSAGE;
+    if (code === "ALLOCATION_TOO_SHORT" && msg) return msg;
+    if (code === "INVALID_RANGE") return PERIOD_INVALID_RANGE_MESSAGE;
+    if (msg) return msg;
+  }
+  return fallback;
+}
+
+export function allocationStatusBadge(
+  status: string,
+  lifecycleStatus?: string,
+): string {
+  const key = lifecycleStatus ?? status;
   const map: Record<string, string> = {
     pending: "badge-warning",
     approved: "badge-success",
+    active: "badge-success",
+    grace: "badge-warning",
+    sftp: "badge-info",
     denied: "badge-danger",
     cancelled: "badge-muted",
     finished: "badge-info",
   };
-  return map[status] || "badge-muted";
+  return map[key] || "badge-muted";
 }
 
-export function allocationStatusLabel(status: string): string {
+export function allocationStatusLabel(
+  status: string,
+  lifecycleStatus?: string,
+): string {
+  const key = lifecycleStatus ?? status;
   const map: Record<string, string> = {
     pending: "Pendente",
     approved: "Aprovada",
+    active: "Ativa",
+    grace: "Grace",
+    sftp: "SFTP",
     denied: "Negada",
     cancelled: "Cancelada",
     finished: "Finalizada",
   };
-  return map[status] || status;
+  return map[key] || key;
 }
 
 /** @deprecated use formatLabDateTime(iso, labTz) */

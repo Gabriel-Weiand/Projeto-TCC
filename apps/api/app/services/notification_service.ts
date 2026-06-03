@@ -72,48 +72,48 @@ async function notifyAllAdmins(title: string, message: string) {
   }
 }
 
-/** Admin: nova reserva pendente com sudo. */
-export async function notifyAdminsPendingSudoAllocation(
+/** Admin: nova reserva aguardando aprovação. */
+export async function notifyAdminsPendingAllocation(
   allocation: AllocationModel,
   machine: MachineModel
 ) {
-  if (allocation.status !== 'pending' || !allocation.isSudo) return
+  if (allocation.status !== 'pending') return
 
   const range = formatAllocationRange(allocation.startTime, allocation.endTime)
   await notifyAllAdmins(
-    'Nova reserva pendente (sudo)',
-    `${allocRef(allocation.id)} Solicitação com privilégios sudo em ${machine.name} (${range}). Aprove ou negue em Alocações.`
+    'Nova reserva pendente',
+    `${allocRef(allocation.id)} Solicitação de reserva em ${machine.name} (${range}). Aprove ou negue em Alocações.`
   )
 }
 
-/** Admin: reserva sudo negada ou cancelada enquanto pendente. */
-export async function notifyAdminsSudoAllocationOutcome(
+/** Admin: reserva pendente negada ou cancelada pelo solicitante. */
+export async function notifyAdminsPendingAllocationOutcome(
   allocation: AllocationModel,
   machine: MachineModel,
   previousStatus: AllocationModel['status']
 ) {
-  if (!allocation.isSudo) return
+  if (previousStatus !== 'pending') return
 
   const range = formatAllocationRange(allocation.startTime, allocation.endTime)
   const ref = allocRef(allocation.id)
 
-  if (allocation.status === 'denied' && previousStatus === 'pending') {
+  if (allocation.status === 'denied') {
     await notifyAllAdmins(
-      'Reserva sudo negada',
-      `${ref} Solicitação sudo em ${machine.name} (${range}) foi negada.`
+      'Reserva negada',
+      `${ref} Solicitação pendente em ${machine.name} (${range}) foi negada.`
     )
     return
   }
 
-  if (allocation.status === 'cancelled' && previousStatus === 'pending') {
+  if (allocation.status === 'cancelled') {
     await notifyAllAdmins(
-      'Reserva sudo cancelada',
-      `${ref} Solicitação sudo pendente em ${machine.name} (${range}) foi cancelada.`
+      'Reserva cancelada',
+      `${ref} Solicitação pendente em ${machine.name} (${range}) foi cancelada pelo usuário.`
     )
   }
 }
 
-/** User: só quando saiu de pending → approved (ex.: sudo aprovado pelo admin). */
+/** User: só quando saiu de pending → approved. */
 export async function notifyAllocationApprovedFromPending(
   allocation: AllocationModel,
   machine: MachineModel,
@@ -168,7 +168,7 @@ export async function notifyAllocationCancelledDueToMaintenance(
   )
 }
 
-/** User: sessão encerrada automaticamente pelo scheduler. */
+/** User: sessão encerrada pelo scheduler após a janela SFTP. */
 export async function notifyAllocationAutoFinished(
   allocation: AllocationModel,
   machine: MachineModel
@@ -178,6 +178,19 @@ export async function notifyAllocationAutoFinished(
     allocation.userId,
     'Sessão encerrada',
     `${allocRef(allocation.id)} Sua sessão em ${machine.name} (${range}) foi finalizada automaticamente.`
+  )
+}
+
+/** User: encerrou a sessão com POST /allocations/:id/finish. */
+export async function notifyAllocationFinishedByUser(
+  allocation: AllocationModel,
+  machine: MachineModel
+) {
+  const range = formatAllocationRange(allocation.startTime, allocation.endTime)
+  await notifyUser(
+    allocation.userId,
+    'Sessão encerrada',
+    `${allocRef(allocation.id)} Você finalizou sua sessão em ${machine.name} (${range}).`
   )
 }
 
@@ -272,7 +285,7 @@ export async function runScheduledAllocationReminders(): Promise<{
   for (const allocation of sshT5Rows) {
     const machine = allocation.machine
     if (!machine) continue
-    if (await notifyMissingSshKeyForAllocation(allocation, machine, TITLE_SSH_T5, 'Faltam até 5 minutos.')) {
+    if (await notifyMissingSshKeyForAllocation(allocation, machine, TITLE_SSH_T5, 'Faltam menos de 5 minutos.')) {
       sshT5++
     }
   }
@@ -318,7 +331,7 @@ export async function maybeNotifyMissingSshKeyAtSessionStart(
 
 /**
  * Heartbeat: alerta admin se houver muitas falhas SSH recentes.
- * Só roda quando o agente envia sshAttempts no heartbeat (não na telemetria).
+ * Só roda quando o agente envia sshAttempts através do heartbeat.
  */
 export async function checkSshFailureFlood(machine: MachineModel): Promise<void> {
   const { windowMinutes, threshold, cooldownHours } = labConfig.notifications.sshFailureFlood
@@ -391,13 +404,13 @@ export async function notifyAllocationStatusChange(
 
   if (allocation.status === 'denied') {
     await notifyAllocationDenied(allocation, machine)
-    await notifyAdminsSudoAllocationOutcome(allocation, machine, previousStatus)
+    await notifyAdminsPendingAllocationOutcome(allocation, machine, previousStatus)
     return
   }
 
   if (allocation.status === 'cancelled') {
     await notifyAllocationCancelled(allocation, machine)
-    await notifyAdminsSudoAllocationOutcome(allocation, machine, previousStatus)
+    await notifyAdminsPendingAllocationOutcome(allocation, machine, previousStatus)
   }
 }
 

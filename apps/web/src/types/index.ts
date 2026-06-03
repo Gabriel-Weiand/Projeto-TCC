@@ -99,6 +99,17 @@ export interface RealtimeTelemetry {
   activeUsers: any[] | null;
 }
 
+/** Fase operacional (API calcula a partir de `status` + relógio). */
+export type AllocationLifecycleStatus =
+  | "pending"
+  | "approved"
+  | "active"
+  | "grace"
+  | "sftp"
+  | "finished"
+  | "denied"
+  | "cancelled";
+
 export interface Allocation {
   id: number;
   userId: number;
@@ -107,7 +118,8 @@ export interface Allocation {
   endTime: string;
   reason: string | null;
   status: "pending" | "approved" | "denied" | "cancelled" | "finished";
-  isSudo?: boolean;
+  /** Presente nas respostas da API; use para badge e ações na UI */
+  lifecycleStatus?: AllocationLifecycleStatus;
   userHidden: boolean;
   /** Presente quando a rota retorna dados anonimizados (usuário não-admin) */
   isOwn?: boolean;

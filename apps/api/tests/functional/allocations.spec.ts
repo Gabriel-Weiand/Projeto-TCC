@@ -12,10 +12,7 @@ test.group('Allocations', (group) => {
   // CRIAÇÃO E REGRAS DE NEGÓCIO (store)
   // =========================================================================
 
-  test('usuário deve criar uma alocação comum (sem sudo) e auto-aprovar', async ({
-    client,
-    assert,
-  }) => {
+  test('usuário deve criar uma alocação e auto-aprovar', async ({ client, assert }) => {
     const user = await User.create({
       fullName: 'Teste User',
       email: 'teste@teste.com',
@@ -31,21 +28,25 @@ test.group('Allocations', (group) => {
         machineId: machine.id,
         startTime: DateTime.utc().plus({ hours: 1 }).toISO(), // Tudo em UTC no teste
         endTime: DateTime.utc().plus({ hours: 3 }).toISO(),
-        isSudo: false,
       })
 
     response.assertStatus(201)
-    response.assertBodyContains({ status: 'approved', isSudo: false })
+    response.assertBodyContains({ status: 'approved' })
   })
 
-  test('alocação com privilégios (sudo) deve ficar pendente de aprovação', async ({ client }) => {
+  test('com LAB_ALLOCATION_REQUIRE_ADMIN_APPROVAL=true usuário cria pending', async ({
+    client,
+  }) => {
+    const prev = process.env.LAB_ALLOCATION_REQUIRE_ADMIN_APPROVAL
+    process.env.LAB_ALLOCATION_REQUIRE_ADMIN_APPROVAL = 'true'
+
     const user = await User.create({
-      fullName: 'Sudo User',
-      email: 'sudo@teste.com',
+      fullName: 'Pending User',
+      email: 'pending@teste.com',
       password: '123',
       role: 'user',
     })
-    const machine = await Machine.create({ name: 'PC-02', description: 'Lab', status: 'available' })
+    const machine = await Machine.create({ name: 'PC-PEND', description: 'Lab', status: 'available' })
 
     const response = await client
       .post('/api/v1/allocations')
@@ -54,11 +55,14 @@ test.group('Allocations', (group) => {
         machineId: machine.id,
         startTime: DateTime.utc().plus({ hours: 1 }).toISO(),
         endTime: DateTime.utc().plus({ hours: 3 }).toISO(),
-        isSudo: true,
+        status: 'approved',
       })
 
+    if (prev !== undefined) process.env.LAB_ALLOCATION_REQUIRE_ADMIN_APPROVAL = prev
+    else delete process.env.LAB_ALLOCATION_REQUIRE_ADMIN_APPROVAL
+
     response.assertStatus(201)
-    response.assertBodyContains({ status: 'pending', isSudo: true })
+    response.assertBodyContains({ status: 'pending' })
   })
 
   test('NÃO deve criar alocação em máquina em manutenção', async ({ client }) => {
@@ -239,7 +243,39 @@ test.group('Allocations', (group) => {
     )
   })
 
-  test('deve negar extensão se a alocação já tiver passado do grace period', async ({ client }) => {
+  test('usuário deve estender reserva aprovada antes do início', async ({ client, assert }) => {
+    const user = await User.create({
+      fullName: 'Ext Future',
+      email: 'extfuture@teste.com',
+      password: '123',
+      role: 'user',
+    })
+    const machine = await Machine.create({
+      name: 'PC-EXT-FUT',
+      description: 'Lab',
+      status: 'available',
+    })
+
+    const endTime = DateTime.utc().plus({ days: 3 })
+    const allocation = await Allocation.create({
+      userId: user.id,
+      machineId: machine.id,
+      startTime: DateTime.utc().plus({ days: 1 }),
+      endTime,
+      status: 'approved',
+    })
+
+    const response = await client
+      .post(`/api/v1/allocations/${allocation.id}/extend`)
+      .loginAs(user)
+      .json({ additionalMinutes: 60 })
+
+    response.assertStatus(200)
+    await allocation.refresh()
+    assert.closeTo(allocation.endTime.diff(endTime, 'minutes').minutes, 60, 1)
+  })
+
+  test('deve negar extensão na fase SFTP pós-sessão', async ({ client }) => {
     const user = await User.create({
       fullName: 'Teste',
       email: 't2@teste.com',
@@ -252,7 +288,7 @@ test.group('Allocations', (group) => {
       userId: user.id,
       machineId: machine.id,
       startTime: DateTime.utc().minus({ hours: 2 }),
-      endTime: DateTime.utc().minus({ minutes: 10 }), // Acabou há 10 minutos (fora dos 5 min de tolerância)
+      endTime: DateTime.utc().minus({ minutes: 11 }),
       status: 'approved',
     })
 
@@ -265,7 +301,8 @@ test.group('Allocations', (group) => {
 
     response.assertStatus(400)
     response.assertBodyContains({
-      message: 'O tempo limite para extensão expirou (Grace Period encerrado).',
+      message:
+        'Não é possível estender nesta fase. Estenda antes do início, durante a sessão ou no grace.',
     })
   })
 
@@ -303,6 +340,130 @@ test.group('Allocations', (group) => {
 
     response.assertStatus(409)
     response.assertBodyContains({ code: 'ALLOCATION_CONFLICT' })
+  })
+
+  test('deve permitir reserva após gap mínimo de 10 minutos', async ({ client }) => {
+    const user = await User.create({
+      fullName: 'Gap Ok',
+      email: 'gapok@teste.com',
+      password: '123',
+      role: 'user',
+    })
+    const machine = await Machine.create({ name: 'PC-GAP', description: 'Lab', status: 'available' })
+
+    const end = DateTime.utc().plus({ hours: 2 })
+    await Allocation.create({
+      userId: user.id,
+      machineId: machine.id,
+      startTime: DateTime.utc().plus({ hours: 1 }),
+      endTime: end,
+      status: 'approved',
+    })
+
+    const response = await client.post('/api/v1/allocations').loginAs(user).json({
+      machineId: machine.id,
+      startTime: end.plus({ minutes: 10 }).toISO(),
+      endTime: end.plus({ hours: 3 }).toISO(),
+    })
+
+    response.assertStatus(201)
+  })
+
+  test('deve negar reserva durante grace da alocação anterior', async ({ client }) => {
+    const user = await User.create({
+      fullName: 'Grace Conflict',
+      email: 'grace-conflict@teste.com',
+      password: '123',
+      role: 'user',
+    })
+    const machine = await Machine.create({
+      name: 'PC-GRACE-CONF',
+      description: 'Lab',
+      status: 'available',
+    })
+
+    const end = DateTime.utc().minus({ minutes: 5 })
+    await Allocation.create({
+      userId: user.id,
+      machineId: machine.id,
+      startTime: end.minus({ hours: 2 }),
+      endTime: end,
+      status: 'approved',
+    })
+
+    const response = await client.post('/api/v1/allocations').loginAs(user).json({
+      machineId: machine.id,
+      startTime: end.plus({ minutes: 5 }).toISO(),
+      endTime: end.plus({ hours: 2 }).toISO(),
+    })
+
+    response.assertStatus(409)
+    response.assertBodyContains({ code: 'ALLOCATION_CONFLICT' })
+  })
+
+  test('deve negar reserva dentro do intervalo mínimo (grace) após endTime', async ({ client }) => {
+    const user = await User.create({
+      fullName: 'Gap Fail',
+      email: 'gapfail@teste.com',
+      password: '123',
+      role: 'user',
+    })
+    const machine = await Machine.create({
+      name: 'PC-GAP2',
+      description: 'Lab',
+      status: 'available',
+    })
+
+    const end = DateTime.utc().plus({ hours: 2 })
+    await Allocation.create({
+      userId: user.id,
+      machineId: machine.id,
+      startTime: DateTime.utc().plus({ hours: 1 }),
+      endTime: end,
+      status: 'approved',
+    })
+
+    const response = await client.post('/api/v1/allocations').loginAs(user).json({
+      machineId: machine.id,
+      startTime: end.plus({ minutes: 5 }).toISO(),
+      endTime: end.plus({ hours: 3 }).toISO(),
+    })
+
+    response.assertStatus(409)
+    response.assertBodyContains({ code: 'ALLOCATION_CONFLICT' })
+  })
+
+  test('usuário deve finalizar sessão antecipada', async ({ client, assert }) => {
+    const user = await User.create({
+      fullName: 'Finish Early',
+      email: 'finish@teste.com',
+      password: '123',
+      role: 'user',
+      systemUsername: 'lab.finish_user',
+    })
+    const machine = await Machine.create({
+      name: 'PC-FIN',
+      description: 'Lab',
+      status: 'available',
+    })
+
+    const allocation = await Allocation.create({
+      userId: user.id,
+      machineId: machine.id,
+      startTime: DateTime.utc().minus({ minutes: 30 }),
+      endTime: DateTime.utc().plus({ hours: 2 }),
+      status: 'approved',
+    })
+
+    const response = await client
+      .post(`/api/v1/allocations/${allocation.id}/finish`)
+      .loginAs(user)
+
+    response.assertStatus(200)
+    response.assertBodyContains({ lifecycleStatus: 'finished' })
+    await allocation.refresh()
+    assert.equal(allocation.status, 'finished')
+    assert.isTrue(allocation.endTime.toMillis() <= DateTime.utc().toMillis() + 5000)
   })
 
   // =========================================================================
@@ -353,6 +514,35 @@ test.group('Allocations', (group) => {
     response.assertStatus(200)
     await allocation.refresh()
     assert.equal(allocation.status, 'cancelled')
+  })
+
+  test('usuário NÃO pode cancelar após o início da alocação', async ({ client }) => {
+    const user = await User.create({
+      fullName: 'User',
+      email: 'cancel-late@teste.com',
+      password: '123',
+      role: 'user',
+    })
+    const machine = await Machine.create({
+      name: 'PC-CANCEL-LATE',
+      description: 'Lab',
+      status: 'available',
+    })
+    const allocation = await Allocation.create({
+      userId: user.id,
+      machineId: machine.id,
+      startTime: DateTime.utc().minus({ hours: 1 }),
+      endTime: DateTime.utc().plus({ hours: 2 }),
+      status: 'approved',
+    })
+
+    const response = await client
+      .patch(`/api/v1/allocations/${allocation.id}`)
+      .loginAs(user)
+      .json({ status: 'cancelled' })
+
+    response.assertStatus(400)
+    response.assertBodyContains({ code: 'CANNOT_CANCEL_AFTER_START' })
   })
 
   test('usuário deve fazer soft-delete (ocultar) de uma alocação terminada', async ({

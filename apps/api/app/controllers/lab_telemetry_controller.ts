@@ -1,6 +1,7 @@
 import type { HttpContext } from '@adonisjs/core/http'
 import {
   getLabTelemetryPresets,
+  normalizeLabTelemetryPresets,
   saveLabTelemetryPresets,
   type LabTelemetryPresets,
 } from '#services/telemetry_presets'
@@ -22,7 +23,9 @@ export default class LabTelemetryController {
    * PUT /api/v1/lab/telemetry-presets
    */
   async update({ request, response }: HttpContext) {
-    const data = (await request.validateUsing(updateLabTelemetryPresetsValidator)) as LabTelemetryPresets
+    const data = normalizeLabTelemetryPresets(
+      (await request.validateUsing(updateLabTelemetryPresetsValidator)) as LabTelemetryPresets
+    )
     saveLabTelemetryPresets(data)
     return response.ok(getLabTelemetryPresets())
   }

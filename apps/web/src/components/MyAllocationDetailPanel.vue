@@ -21,6 +21,7 @@ const emit = defineEmits<{
   extend: [];
   statistics: [];
   cancel: [];
+  finish: [];
   delete: [];
 }>();
 
@@ -44,13 +45,6 @@ function fmt(iso: string) {
   return fmtAllocationDateTime(iso, lab.timezone);
 }
 
-function sudoLabel(a: Allocation) {
-  if (!a.isSudo) return "Não solicitado";
-  if (a.status === "pending") return "Solicitado — aguarda aprovação do admin";
-  if (a.status === "approved") return "Aprovado para esta reserva";
-  return "Solicitado";
-}
-
 /** Descrição cadastral da máquina (sem sufixos de demo no seed, ex. "(semanas)"). */
 function machineDescription(desc?: string | null) {
   const t = desc?.trim();
@@ -66,8 +60,18 @@ function machineDescription(desc?: string | null) {
         <div class="modal-header">
           <div class="modal-header-text">
             <h2 class="modal-title">{{ machineLabel }}</h2>
-            <span :class="['badge', allocationStatusBadge(allocation.status)]">
-              {{ allocationStatusLabel(allocation.status) }}
+            <span
+              :class="[
+                'badge',
+                allocationStatusBadge(allocation.status, actions.lifecycle(allocation)),
+              ]"
+            >
+              {{
+                allocationStatusLabel(
+                  allocation.status,
+                  actions.lifecycle(allocation),
+                )
+              }}
             </span>
           </div>
           <button type="button" class="btn-close" @click="emit('close')">✕</button>
@@ -136,10 +140,6 @@ function machineDescription(desc?: string | null) {
                 </dd>
               </div>
               <div class="detail-row">
-                <dt>Sudo</dt>
-                <dd>{{ sudoLabel(allocation) }}</dd>
-              </div>
-              <div class="detail-row">
                 <dt>Criada em</dt>
                 <dd>{{ fmt(allocation.createdAt) }}</dd>
               </div>
@@ -150,6 +150,13 @@ function machineDescription(desc?: string | null) {
             </dl>
           </section>
 
+          <p
+            v-if="actions.connectPhaseNotice(allocation)"
+            class="detail-phase-notice"
+            role="status"
+          >
+            {{ actions.connectPhaseNotice(allocation) }}
+          </p>
         </div>
 
         <footer class="detail-footer">
@@ -162,6 +169,15 @@ function machineDescription(desc?: string | null) {
               @click="emit('extend')"
             >
               Estender
+            </button>
+            <button
+              v-if="actions.showFinishButton(allocation)"
+              type="button"
+              class="btn btn-ghost btn-sm detail-action-btn"
+              :disabled="updating"
+              @click="emit('finish')"
+            >
+              {{ updating ? "Finalizando…" : "Finalizar sessão" }}
             </button>
             <button
               v-if="actions.canCancel(allocation)"
@@ -363,6 +379,17 @@ function machineDescription(desc?: string | null) {
   margin: 0;
   font-size: 0.85rem;
   text-align: center;
+}
+
+.detail-phase-notice {
+  margin: 0;
+  padding: 0.65rem 0.85rem;
+  font-size: 0.82rem;
+  line-height: 1.45;
+  color: var(--text-secondary);
+  background: rgba(255, 193, 7, 0.08);
+  border: 1px solid rgba(255, 193, 7, 0.22);
+  border-radius: var(--radius-md);
 }
 
 .btn-action--waiting:disabled {

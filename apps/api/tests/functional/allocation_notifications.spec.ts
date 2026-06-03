@@ -38,43 +38,43 @@ test.group('Allocation notifications', (group) => {
     assert.lengthOf(notifications, 0)
   })
 
-  test('criação pendente (sudo) notifica admins', async ({ client, assert }) => {
+  test('criação pending notifica admins quando exige aprovação', async ({ client, assert }) => {
+    const prev = process.env.LAB_ALLOCATION_REQUIRE_ADMIN_APPROVAL
+    process.env.LAB_ALLOCATION_REQUIRE_ADMIN_APPROVAL = 'true'
+
     const admin = await User.create({
-      fullName: 'Admin Sudo',
-      email: 'admin-sudo-notif@teste.com',
+      fullName: 'Admin Pend',
+      email: 'admin-pend@teste.com',
       password: 'senha123',
       role: 'admin',
     })
     const user = await User.create({
-      fullName: 'Aluno Sudo',
-      email: 'notif-sudo@teste.com',
+      fullName: 'Aluno Pend',
+      email: 'notif-pend@teste.com',
       password: 'senha123',
       role: 'user',
     })
     const machine = await Machine.create({
-      name: 'PC-SUDO',
+      name: 'PC-PEND-NOTIF',
       description: 'Lab',
       status: 'available',
     })
 
-    const start = DateTime.utc().plus({ hours: 2 }).toISO()
-    const end = DateTime.utc().plus({ hours: 4 }).toISO()
-
     const response = await client.post('/api/v1/allocations').loginAs(user).json({
       machineId: machine.id,
-      startTime: start,
-      endTime: end,
-      isSudo: true,
+      startTime: DateTime.utc().plus({ hours: 2 }).toISO(),
+      endTime: DateTime.utc().plus({ hours: 4 }).toISO(),
     })
 
+    if (prev !== undefined) process.env.LAB_ALLOCATION_REQUIRE_ADMIN_APPROVAL = prev
+    else delete process.env.LAB_ALLOCATION_REQUIRE_ADMIN_APPROVAL
+
     response.assertStatus(201)
+    response.assertBodyContains({ status: 'pending' })
 
     const adminNotifs = await Notification.query().where('userId', admin.id)
     assert.lengthOf(adminNotifs, 1)
-    assert.equal(adminNotifs[0].title, 'Nova reserva pendente (sudo)')
-
-    const userNotifs = await Notification.query().where('userId', user.id)
-    assert.lengthOf(userNotifs, 0)
+    assert.equal(adminNotifs[0].title, 'Nova reserva pendente')
   })
 
   test('aprovação de pending notifica o usuário', async ({ client, assert }) => {
@@ -102,7 +102,6 @@ test.group('Allocation notifications', (group) => {
       startTime: DateTime.utc().plus({ hours: 1 }),
       endTime: DateTime.utc().plus({ hours: 3 }),
       status: 'pending',
-      isSudo: true,
     })
 
     const response = await client
@@ -117,7 +116,7 @@ test.group('Allocation notifications', (group) => {
     assert.equal(notifications[0].title, 'Reserva aprovada')
   })
 
-  test('negação de reserva notifica o usuário e admin (sudo)', async ({ client, assert }) => {
+  test('negação de reserva notifica o usuário', async ({ client, assert }) => {
     const admin = await User.create({
       fullName: 'Admin Neg',
       email: 'admin-neg@teste.com',
@@ -142,7 +141,6 @@ test.group('Allocation notifications', (group) => {
       startTime: DateTime.utc().plus({ hours: 1 }),
       endTime: DateTime.utc().plus({ hours: 3 }),
       status: 'pending',
-      isSudo: true,
     })
 
     const response = await client
@@ -155,9 +153,6 @@ test.group('Allocation notifications', (group) => {
     const userNotifs = await Notification.query().where('userId', user.id)
     assert.lengthOf(userNotifs, 1)
     assert.equal(userNotifs[0].title, 'Reserva negada')
-
-    const adminNotifs = await Notification.query().where('userId', admin.id)
-    assert.isTrue(adminNotifs.some((n) => n.title === 'Reserva sudo negada'))
   })
 
   test('cancelamento notifica o usuário', async ({ client, assert }) => {

@@ -89,21 +89,22 @@ O Heartbeat é o cérebro do laboratório. O Python diz à API "o que está acon
     {
       "systemUsername": "lab.aluno_t5",
       "sshPublicKey": "ssh-ed25519 AAAAC3...",
-      "accessState": "sftp_only",
-      "isSudo": false
+      "accessState": "sftp_only"
     },
     {
       "systemUsername": "lab.gabriel_weiand",
       "sshPublicKey": "ssh-ed25519 AAAAC3...",
-      "accessState": "full_shell",
-      "isSudo": true
+      "accessState": "full_shell"
     }
   ]
 }
 ```
 
-- `sftp_only`: Modo Preparação T-5 minutos ou bloqueio fora do horário.
-- `full_shell`: Alocação ativa — acesso total ao terminal SSH (Bash).
+- `sftp_only`: preparação T-N, janela SFTP pós-reserva, ou bloqueio sem bash.
+- `full_shell`: sessão ativa ou grace (bash até `graceEndsAt`).
+- `revokeSshKey: true` / `sshPublicKey` vazio: agente trunca `~/.ssh/authorized_keys` (fase `no_key`).
+
+Os instantes `graceEndsAt` e `sftpEndsAt` também vêm em `currentAllocation` quando há sessão “quente” (`active` ou `grace`).
 
 ### Ação do Agente com a Resposta
 
@@ -111,9 +112,10 @@ O Heartbeat é o cérebro do laboratório. O Python diz à API "o que está acon
 2. **Reconciliação (Drift):** Se a API não listou um usuário que estava em `provisionedOsUsers`, o agente roda `userdel` e `pkill` nele.
 3. **Execução de Políticas:** Para cada item em `provisioning`, o agente garante que:
    - A conta existe e a chave SSH bate com o arquivo local.
-   - Se `accessState == sftp_only`, o shell do usuário no `/etc/passwd` é alterado para SFTP.
-   - Se `accessState == full_shell`, o shell é alterado para `/bin/bash`.
-   - Se `isSudo == true`, coloca no grupo sudo/wheel; caso contrário, remove.
+   - Transição `full_shell` → `sftp_only`: `pkill -u` antes de `usermod -s`.
+   - Se `accessState == sftp_only`, shell → SFTP; se `full_shell`, shell → `/bin/bash`.
+   - Se `revokeSshKey` ou chave vazia, trunca `authorized_keys`.
+   - `provisioning: []` ainda executa drift (remove `lab.*` não listados).
 
 ---
 
@@ -207,3 +209,141 @@ Um processo só entra no array `processes` se satisfizer **ao menos um** dos cri
 │  - Acesso Ilegal: API corta acesso, Agente expulsa usuário.                     │
 └─────────────────────────────────────────────────────────────────────────────────┘
 ```
+
+---
+
+## Ciclo de vida completo de uma alocação (API → Agente)
+
+A API **não empurra eventos** para o agente. A cada heartbeat (~30s) ela recalcula, para cada máquina, quais alocações `approved` ou `finished` ainda exigem conta Linux e qual **fase de acesso** cada usuário está. O serviço `#services/allocation_access` define as fases; o `#services/heartbeat_service` monta o array `provisioning`; o `agentd.py` aplica no SO.
+
+Variáveis (padrões em `apps/api/.env.example`):
+
+| Variável | Padrão | Papel |
+|----------|--------|--------|
+| `LAB_ALLOCATION_PREPARE_MINUTES` | 5 | T-N: conta + chave, shell SFTP antes do `startTime` |
+| `LAB_ALLOCATION_GRACE_MINUTES` | 10 | Bash extra após `endTime` (só `approved`, não `finished`) |
+| `LAB_ALLOCATION_POST_SFTP_MINUTES` | 1440 | SFTP **com chave** após o grace (ou após `endTime` se finalizou cedo) |
+| `LAB_ALLOCATION_DELETE_USER_DAYS` | 7 | Conta some do `provisioning` → drift faz `userdel` |
+| *(via grace)* | — | Intervalo entre reservas = `LAB_ALLOCATION_GRACE_MINUTES` (API) |
+
+### Fases de acesso (`resolveAccessPhase`)
+
+Referência temporal: sempre o `endTime` gravado na alocação (UTC), exceto onde indicado.
+
+**Reserva `approved` (término natural no horário reservado):**
+
+```
+startTime - prepare          → prepare
+[startTime, endTime)         → active
+[endTime, endTime + grace)   → grace        (full_shell; botão estender)
+[endTime+grace, sftpEndsAt)  → post_sftp    (sftp_only + chave)
+[sftpEndsAt, endTime + 7d)   → no_key       (sftp_only, revokeSshKey)
+[≥ endTime + 7d]             → teardown     (fora do provisioning)
+```
+
+Com:
+
+- `graceEndsAt = endTime + graceMinutes`
+- `sftpEndsAt = endTime + graceMinutes + postSftpMinutes`
+
+**Reserva `finished` (POST `/allocations/:id/finish` — finalização antecipada):**
+
+- **Sem grace nem SFTP com chave:** bash encerra no `endTime` real; `sftpEndsAt = endTime`.
+- `graceEndsAt = endTime`
+- Depois: `no_key` até `endTime + 7 dias`, então `teardown`.
+
+**Fora da janela:** `none` (ex.: reserva futura além de T-N, ou após teardown).
+
+### Mapa fase → ordem no `provisioning`
+
+| Fase | `accessState` | Chave SSH | Efeito no agente |
+|------|---------------|-----------|------------------|
+| `prepare` | `sftp_only` | sim | `useradd` se preciso; shell SFTP; injeta `authorized_keys` |
+| `active` | `full_shell` | sim | `usermod -s /bin/bash`; chave ativa |
+| `grace` | `full_shell` | sim | Igual `active` (sessão “quente” para telemetria) |
+| `post_sftp` | `sftp_only` | sim | `pkill -u` se vinha de bash; shell SFTP; chave mantida |
+| `no_key` | `sftp_only` | revogada | `revokeSshKey` → esvazia `authorized_keys`; shell continua SFTP |
+| `teardown` | — | — | Usuário **não** entra em `provisioning` |
+
+Apenas chaves `ssh-ed25519` são aceitas no agente; demais formatos são ignorados na escrita.
+
+### Permissões e o que o agente **não** faz
+
+- **Não há sudo:** o grupo `sudo` não é gerenciado; acesso é **shell** (bash vs SFTP), não privilégio root.
+- **Conta POSIX:** prefixo `lab.` + `systemUsername` do usuário no banco; grupo `lab`; home `700`, `.ssh` `700`, `authorized_keys` `600`.
+- **Senha:** o agente nunca define senha de login — só chave pública.
+- **Bloqueio global:** `accessControl.shouldBlock` permanece `false`; o bloqueio é por `accessState` e revogação de chave.
+
+### Criação e manutenção de usuário no Linux
+
+1. **Primeira necessidade** (fase `prepare` ou posterior): API inclui o usuário em `provisioning` → agente `useradd -m -s /bin/bash -G lab` (shell inicial bash; política ajusta em seguida).
+2. **Chave:** escrita em `/home/lab.<user>/.ssh/authorized_keys` se mudou ou se ainda não existia.
+3. **Shell:** `usermod -s` para `/bin/bash` ou `SFTP_SHELL` conforme `accessState`.
+4. **Transição bash → SFTP:** se o último estado foi `full_shell` e a ordem passa a `sftp_only`, o agente roda **`pkill -u`** antes do `usermod -s` (encerra sessões e processos órfãos).
+5. **Inventário API:** `machine_users` é atualizado no heartbeat (`updateOrCreate`); `lastActiveAt` só em `full_shell`.
+
+### Finalização de sessão
+
+| Evento | Quem | Efeito no ciclo |
+|--------|------|-----------------|
+| Relógio atinge `endTime` (`approved`) | Tempo | API passa `active` → `grace` → `post_sftp` → `no_key` → `teardown` |
+| POST `finish` | Usuário/admin | `status = finished`, `endTime = now`; pula grace; entra direto em SFTP com chave |
+| POST `extend` | Usuário (no grace) | Aumenta `endTime`; prolonga bash e adia fases seguintes |
+| `pkill` no agente | Heartbeat | Ao sair de `full_shell` para `sftp_only` (fim natural ou pós-grace) |
+
+O front pode exibir `currentAllocation.phase`, `graceEndsAt` e `sftpEndsAt` retornados no heartbeat quando a máquina está em fase quente.
+
+### SFTP pós-reserva
+
+- **Objetivo:** permitir copiar artefatos da home após o bash, sem terminal interativo.
+- **Com chave (`post_sftp`):** mesmo usuário `lab.*`, shell restrito a SFTP, `authorized_keys` válido.
+- **Sem chave (`no_key`):** shell ainda SFTP, mas `revokeSshKey: true` — login por chave deixa de funcionar; conta POSIX pode permanecer até o teardown.
+
+Duração padrão da janela com chave: **24 h** (`postSftpMinutes = 1440`), somada ao grace em reservas `approved`.
+
+### Remoção de usuário (`userdel`)
+
+Dois mecanismos complementares:
+
+1. **Drift (agente):** após cada heartbeat, o agente remove do SO todo `lab.*` que **não** apareceu em `provisioning` na resposta (FASE 1 de `apply_provisioning`: `pkill -u`, `userdel -r -f`). `provisioning: []` ainda executa essa limpeza.
+2. **Inventário (API):** se o SO não lista mais o usuário em `provisionedOsUsers` e a API não precisa dele (`phasesByUserId` vazio), a linha em `machine_users` é apagada.
+
+A remoção física ocorre quando a fase vira **`teardown`**: `now >= endTime + LAB_ALLOCATION_DELETE_USER_DAYS` para aquela alocação. Até lá, fases `post_sftp` / `no_key` ainda mantêm o usuário na lista de provisionamento (sem bash útil após revogação).
+
+### Várias alocações do mesmo usuário na mesma máquina
+
+O heartbeat escolhe **uma fase dominante por `userId`** (maior “rank”: `active`/`grace` > `prepare`/`post_sftp` > `no_key`). Ex.: reserva nova em `prepare` enquanto uma antiga `finished` ainda está em `no_key` → a nova fase prevalece e o usuário volta a ter chave/bash conforme a reserva nova.
+
+### Countdown de 7 dias — reserva nova antes do fim?
+
+**Não há “reset” de um único timer global.** Cada alocação define seu próprio marco:
+
+```text
+deleteUserAt = allocation.endTime + deleteUserDays   (padrão: +7 dias)
+```
+
+- A alocação **antiga**, ao atingir `endTime + 7d`, entra em `teardown` e **deixa de pedir** provisionamento por aquela reserva.
+- Se o mesmo usuário tiver uma **reserva nova** ainda em `prepare` / `active` / `grace` / `post_sftp` / `no_key`, ele **continua** em `provisioning` por causa da alocação nova → o agente **não** remove a conta no drift.
+- Quando a reserva nova terminar, o prazo de remoção passa a ser **`endTime` da nova reserva + 7 dias**, independentemente do prazo que a reserva antiga já teria cumprido.
+
+Ou seja: uma reserva subsequente **não reinicia** o relógio da reserva anterior; ela **impede a exclusão** enquanto durar e estabelece um **novo** `endTime + 7d` quando for a única (ou dominante) ainda relevante.
+
+### Diagrama resumido (reserva `approved`, padrões 5 / 10 / 1440 / 7)
+
+```text
+        prepare   active      grace      post_sftp        no_key          teardown
+          │────────│──────────│──────────│────────────────│───────────────│
+T-5m      │  SFTP  │   BASH   │   BASH   │  SFTP+chave    │ SFTP sem chave │ (fora do
+          │ +chave │  +chave  │  +chave  │                │                │  provisioning)
+          ▼        ▼          ▼          ▼                ▼                ▼
+      startTime  endTime   +10min    +24h após grace   até end+7d      ≥ end+7d
+```
+
+### Telemetria ligada à alocação
+
+- Com fase `active` ou `grace`, a API marca a máquina como “ocupada” para preset de telemetria e preenche `currentAllocation`.
+- POST `/agent/telemetry` persiste amostras no banco só se houver alocação `approved` no instante da coleta; sem alocação, só atualiza buffer realtime no dashboard.
+
+### Gap entre reservas (contexto API)
+
+`LAB_ALLOCATION_GRACE_MINUTES` define também o espaço mínimo entre reservas no calendário; o agente não implementa gap — só obedece ao `provisioning` atual.

@@ -172,11 +172,27 @@ export function isNowBeforeUtc(iso: string, nowMs = Date.now()): boolean {
   return nowMs < parseApiUtcMs(iso);
 }
 
-/** Até `graceMinutes` após o fim (extensão). */
+/** Entre `endTime` e `endTime + grace` (período de grace / extensão). */
 export function isNowWithinGraceAfterEnd(
   endIso: string,
   graceMinutes: number,
   nowMs = Date.now(),
 ): boolean {
-  return nowMs <= parseApiUtcMs(endIso) + graceMinutes * 60_000;
+  const endMs = parseApiUtcMs(endIso);
+  const graceEndMs = endMs + graceMinutes * 60_000;
+  return nowMs >= endMs && nowMs <= graceEndMs;
+}
+
+/** Sessão já começou e ainda dentro da janela ativa ou do grace pós-fim. */
+export function canFinishApprovedAllocation(
+  startIso: string,
+  endIso: string,
+  graceMinutes: number,
+  nowMs = Date.now(),
+): boolean {
+  if (isNowBeforeUtc(startIso, nowMs)) return false;
+  return (
+    isNowInUtcRange(startIso, endIso, nowMs) ||
+    isNowWithinGraceAfterEnd(endIso, graceMinutes, nowMs)
+  );
 }

@@ -14,9 +14,19 @@ import {
   assertAllocationEndWithinLimit,
   assertAllocationMinDuration,
   canSeeAllocationOwnerNames,
+  resolveInitialAllocationStatus,
 } from '#services/lab_config'
+import { resolveAccessPhase } from '#services/allocation_access'
+import { findAllocationConflict } from '#services/allocation_conflict'
 import {
-  notifyAdminsPendingSudoAllocation,
+  isLifecycleFilter,
+  resolveLifecycleStatus,
+  serializeAllocation,
+  serializeAllocationPage,
+} from '#services/allocation_lifecycle'
+import {
+  notifyAdminsPendingAllocation,
+  notifyAllocationFinishedByUser,
   notifyAllocationStatusChange,
   notifySessionSummaryReady,
 } from '#services/notification_service'
@@ -30,8 +40,8 @@ export default class AllocationsController {
   async myAllocations({ auth, request, response }: HttpContext) {
     const user = auth.user!
 
-    // Podemos reaproveitar o listAllocationsValidator para a paginação e status
-    const { status, page = 1, limit = 20 } = await request.validateUsing(listAllocationsValidator)
+    const { status, lifecycleStatus, page = 1, limit = 20 } =
+      await request.validateUsing(listAllocationsValidator)
 
     let query = Allocation.query()
       .where('userId', user.id)
@@ -43,9 +53,24 @@ export default class AllocationsController {
       query = query.where('status', status)
     }
 
-    const allocations = await query.paginate(page, limit)
+    if (lifecycleStatus && isLifecycleFilter(lifecycleStatus)) {
+      const rows = await query
+      const filtered = rows.filter((a) => resolveLifecycleStatus(a) === lifecycleStatus)
+      const start = (page - 1) * limit
+      const slice = filtered.slice(start, start + limit)
+      return response.ok({
+        meta: {
+          total: filtered.length,
+          perPage: limit,
+          currentPage: page,
+          lastPage: Math.max(1, Math.ceil(filtered.length / limit)),
+        },
+        data: slice.map((a) => serializeAllocation(a)),
+      })
+    }
 
-    return response.ok(allocations)
+    const allocations = await query.paginate(page, limit)
+    return response.ok(serializeAllocationPage(allocations))
   }
 
   /**
@@ -61,6 +86,7 @@ export default class AllocationsController {
       userId,
       machineId,
       status,
+      lifecycleStatus,
       userHidden,
       page = 1,
       limit = 20,
@@ -84,14 +110,29 @@ export default class AllocationsController {
     if (machineId) query = query.where('machineId', machineId)
     if (status) query = query.where('status', status)
 
-    const allocations = await query.paginate(page, limit)
+    if (lifecycleStatus && isLifecycleFilter(lifecycleStatus)) {
+      const rows = await query
+      const filtered = rows.filter((a) => resolveLifecycleStatus(a) === lifecycleStatus)
+      const start = (page - 1) * limit
+      const slice = filtered.slice(start, start + limit)
+      return response.ok({
+        meta: {
+          total: filtered.length,
+          perPage: limit,
+          currentPage: page,
+          lastPage: Math.max(1, Math.ceil(filtered.length / limit)),
+        },
+        data: slice.map((a) => serializeAllocation(a)),
+      })
+    }
 
-    return response.ok(allocations)
+    const allocations = await query.paginate(page, limit)
+    return response.ok(serializeAllocationPage(allocations))
   }
 
   /**
    * Cria uma nova alocação.
-   * Realiza validações de manutenção, conflito de horário (UTC) e regras de Sudo.
+   * Realiza validações de manutenção e conflito de horário (UTC).
    * * POST /api/v1/allocations
    */
   async store({ auth, request, response }: HttpContext) {
@@ -134,15 +175,7 @@ export default class AllocationsController {
       })
     }
 
-    // 2. Verificação de Conflito de Horário (Overlap Algorithm)
-    // Há conflito se (NovoInicio < FimExistente) E (NovoFim > InicioExistente)
-    // Apenas para status 'approved' ou 'pending'
-    const conflict = await Allocation.query()
-      .where('machineId', data.machineId)
-      .whereIn('status', ['approved', 'pending'])
-      .where('startTime', '<', data.endTime.toSQL()!)
-      .where('endTime', '>', data.startTime.toSQL()!)
-      .first()
+    const conflict = await findAllocationConflict(data.machineId, data.startTime, data.endTime)
 
     if (conflict) {
       return response.conflict({
@@ -151,26 +184,24 @@ export default class AllocationsController {
       })
     }
 
-    // 3. Regras de Permissão e Sudo
     if (user.role !== 'admin') {
-      data.userId = user.id // Trava o ID do usuário para ele mesmo
-      data.status = data.isSudo ? 'pending' : 'approved'
+      data.userId = user.id
+      data.status = resolveInitialAllocationStatus('user')
     } else {
-      // Admin pode criar para outros usuários e status é default 'approved'
       if (!data.userId) data.userId = user.id
-      if (!data.status) data.status = 'approved'
+      data.status = resolveInitialAllocationStatus('admin', data.status)
     }
 
     const allocation = await Allocation.create(data)
     await allocation.load('machine')
-    await notifyAdminsPendingSudoAllocation(allocation, machine)
+    await notifyAdminsPendingAllocation(allocation, machine)
 
-    return response.created(allocation)
+    return response.created(serializeAllocation(allocation))
   }
 
   /**
-   * Estende o tempo de uma alocação ativa (Grace Period).
-   * * POST /api/v1/allocations/:id/extend
+   * Estende o fim da reserva: antes do início, em sessão ativa ou no grace (não em SFTP).
+   * POST /api/v1/allocations/:id/extend
    */
   async extend({ auth, params, request, response }: HttpContext) {
     const user = auth.user!
@@ -191,13 +222,14 @@ export default class AllocationsController {
       return response.badRequest({ message: 'Apenas alocações ativas podem ser estendidas.' })
     }
 
-    const now = DateTime.now()
+    const now = DateTime.utc()
     const end = allocation.endTime
+    const phase = resolveAccessPhase(allocation, now)
 
-    // Permite estender apenas se estiver durante a alocação ou no grace period (ex: até 5 min após o fim teórico)
-    if (now > end.plus({ minutes: 5 })) {
+    if (!['none', 'prepare', 'active', 'grace'].includes(phase)) {
       return response.badRequest({
-        message: 'O tempo limite para extensão expirou (Grace Period encerrado).',
+        message:
+          'Não é possível estender nesta fase. Estenda antes do início, durante a sessão ou no grace.',
       })
     }
 
@@ -228,13 +260,12 @@ export default class AllocationsController {
       })
     }
 
-    const conflict = await Allocation.query()
-      .where('machineId', allocation.machineId)
-      .whereIn('status', ['approved', 'pending'])
-      .whereNot('id', allocation.id)
-      .where('startTime', '<', newEnd.toSQL()!)
-      .where('endTime', '>', allocation.startTime.toSQL()!)
-      .first()
+    const conflict = await findAllocationConflict(
+      allocation.machineId,
+      allocation.startTime,
+      newEnd,
+      allocation.id
+    )
 
     if (conflict) {
       return response.conflict({
@@ -247,7 +278,40 @@ export default class AllocationsController {
     await allocation.save()
     await allocation.load('machine')
 
-    return response.ok(allocation)
+    return response.ok(serializeAllocation(allocation))
+  }
+
+  /**
+   * Finaliza antecipadamente uma sessão aprovada (pula grace e SFTP pós-sessão).
+   * POST /api/v1/allocations/:id/finish
+   */
+  async finish({ auth, params, response }: HttpContext) {
+    const user = auth.user!
+    const allocation = await Allocation.findOrFail(params.id)
+
+    if (user.role !== 'admin' && allocation.userId !== user.id) {
+      return response.forbidden({ message: 'Apenas o dono pode finalizar a alocação.' })
+    }
+
+    if (allocation.status !== 'approved') {
+      return response.badRequest({ message: 'Apenas alocações aprovadas podem ser finalizadas.' })
+    }
+
+    const now = DateTime.utc()
+    if (now.toMillis() < allocation.startTime.toMillis()) {
+      return response.badRequest({
+        message: 'A alocação ainda não começou. Use cancelar em vez de finalizar.',
+      })
+    }
+
+    allocation.endTime = now
+    allocation.status = 'finished'
+    await allocation.save()
+    await allocation.load('machine')
+    await allocation.load('user')
+    await notifyAllocationFinishedByUser(allocation, allocation.machine)
+
+    return response.ok(serializeAllocation(allocation))
   }
 
   /**
@@ -288,6 +352,16 @@ export default class AllocationsController {
         })
       }
 
+      if (data.status === 'cancelled') {
+        const now = DateTime.utc()
+        if (now.toMillis() >= allocation.startTime.toMillis()) {
+          return response.badRequest({
+            code: 'CANNOT_CANCEL_AFTER_START',
+            message: 'Não é possível cancelar após o início. Use finalizar a sessão.',
+          })
+        }
+      }
+
       // User normal não pode alterar horários
       if (data.startTime || data.endTime) {
         return response.forbidden({
@@ -305,7 +379,7 @@ export default class AllocationsController {
     await allocation.load('machine')
     await notifyAllocationStatusChange(allocation, allocation.machine, previousStatus)
 
-    return response.ok(allocation)
+    return response.ok(serializeAllocation(allocation))
   }
 
   /**

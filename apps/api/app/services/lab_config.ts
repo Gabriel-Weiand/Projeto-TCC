@@ -72,6 +72,17 @@ export const labConfig = {
     scheduleEndHour: envInt('LAB_SCHEDULE_END_HOUR', 24),
     /** true = calendário/histórico da máquina exibe quem reservou; false = só admin */
     publicNames: isAllocationPublicNamesEnabled(),
+    /**
+     * Minutos de bash após endTime (somente `approved`; finish manual não usa grace).
+     * Também define o intervalo mínimo entre reservas na mesma máquina (conflito de calendário).
+     */
+    graceMinutes: envInt('LAB_ALLOCATION_GRACE_MINUTES', 10),
+    /** SFTP com chave após fim (+ grace se natural) */
+    postSftpMinutes: envInt('LAB_ALLOCATION_POST_SFTP_MINUTES', 1440),
+    /** Dias após endTime até remover conta no SO (via drift) */
+    deleteUserDays: envInt('LAB_ALLOCATION_DELETE_USER_DAYS', 7),
+    /** Provisionamento antecipado (T-5) antes do início */
+    prepareMinutes: envInt('LAB_ALLOCATION_PREPARE_MINUTES', 5),
   },
 
   schedulers: {
@@ -121,6 +132,13 @@ export function labPublicConfig() {
     allocation: {
       ...labConfig.allocation,
       publicNames: isAllocationPublicNamesEnabled(),
+      access: {
+        graceMinutes: labConfig.allocation.graceMinutes,
+        postSftpMinutes: labConfig.allocation.postSftpMinutes,
+        deleteUserDays: labConfig.allocation.deleteUserDays,
+        prepareMinutes: labConfig.allocation.prepareMinutes,
+      },
+      requireAdminApproval: isAllocationRequireAdminApproval(),
     },
     auth: {
       tokenExpiresIn: labConfig.auth.tokenExpiresIn,
@@ -153,4 +171,37 @@ export function assertAllocationMinDuration(
     return `A reserva deve ter pelo menos ${labConfig.allocation.minDurationMinutes} minutos de duração.`
   }
   return null
+}
+
+/** Ponto único para evoluir para config em DB/API depois. */
+export function getLabAccessConfig() {
+  const graceMinutes = labConfig.allocation.graceMinutes
+  return {
+    graceMinutes,
+    /** Igual a grace — intervalo mínimo entre reservas (calendário). */
+    gapMinutes: graceMinutes,
+    postSftpMinutes: labConfig.allocation.postSftpMinutes,
+    deleteUserDays: labConfig.allocation.deleteUserDays,
+    prepareMinutes: labConfig.allocation.prepareMinutes,
+  }
+}
+
+export function isAllocationRequireAdminApproval(): boolean {
+  return envBool('LAB_ALLOCATION_REQUIRE_ADMIN_APPROVAL', false)
+}
+
+type AllocationStatus = 'pending' | 'approved' | 'denied' | 'cancelled' | 'finished'
+
+/** Status inicial ao criar reserva (usuário não pode forçar approved se exige aprovação). */
+export function resolveInitialAllocationStatus(
+  userRole: string,
+  requestedStatus?: AllocationStatus
+): 'pending' | 'approved' {
+  if (userRole === 'admin') {
+    if (requestedStatus === 'pending' || requestedStatus === 'approved') {
+      return requestedStatus
+    }
+    return 'approved'
+  }
+  return isAllocationRequireAdminApproval() ? 'pending' : 'approved'
 }

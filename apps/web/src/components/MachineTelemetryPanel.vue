@@ -4,7 +4,13 @@ import { useMachinesStore } from "@/stores/machines";
 import { useLabConfigStore } from "@/stores/labConfig";
 import NumberStepper from "@/components/NumberStepper.vue";
 import TelemetryMetricGrid from "@/components/TelemetryMetricGrid.vue";
-import { TELEMETRY_BATCH_MAX } from "@/utils/telemetryPresets";
+import {
+  TELEMETRY_BATCH_MAX,
+  TELEMETRY_INTERVAL_MAX,
+  TELEMETRY_INTERVAL_MIN,
+  clampTelemetryInterval,
+  enforceMandatoryTelemetrySet,
+} from "@/utils/telemetryPresets";
 import type { Machine, TelemetryPreset } from "@/types";
 
 const props = withDefaults(
@@ -73,7 +79,10 @@ function loadFromMachine(m: Machine) {
   const c = m.customAgentConfig || {};
   custom.intervalSeconds = c.intervalSeconds ?? 5;
   custom.batchSize = c.batchSize ?? 5;
-  custom.telemetrySet = { ...defaultTelemetrySet(), ...(c.telemetrySet || {}) };
+  custom.telemetrySet = enforceMandatoryTelemetrySet({
+    ...defaultTelemetrySet(),
+    ...(c.telemetrySet || {}),
+  });
 }
 
 watch(() => props.machine, loadFromMachine, { immediate: true });
@@ -98,8 +107,11 @@ async function handleSave() {
   try {
     const payload: Record<string, unknown> = { telemetryPreset: preset.value };
     if (preset.value === "custom") {
-      if (custom.intervalSeconds < 1) {
-        error.value = "Intervalo deve ser ≥ 1.";
+      if (
+        custom.intervalSeconds < TELEMETRY_INTERVAL_MIN ||
+        custom.intervalSeconds > TELEMETRY_INTERVAL_MAX
+      ) {
+        error.value = `Intervalo deve ser entre ${TELEMETRY_INTERVAL_MIN}s e ${TELEMETRY_INTERVAL_MAX}s.`;
         return;
       }
       if (custom.batchSize < 1 || custom.batchSize > TELEMETRY_BATCH_MAX) {
@@ -107,9 +119,9 @@ async function handleSave() {
         return;
       }
       payload.customAgentConfig = {
-        intervalSeconds: custom.intervalSeconds,
+        intervalSeconds: clampTelemetryInterval(custom.intervalSeconds),
         batchSize: custom.batchSize,
-        telemetrySet: { ...custom.telemetrySet },
+        telemetrySet: enforceMandatoryTelemetrySet(custom.telemetrySet),
       };
     }
     const updated = await store.updateMachine(props.machine.id, payload);

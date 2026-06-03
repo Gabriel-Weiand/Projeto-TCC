@@ -97,7 +97,6 @@ test.group('Agent API', (group) => {
         {
           systemUsername: 'lab.aluno_t5',
           accessState: 'sftp_only', // Impede o terminal antes da hora
-          isSudo: false,
         },
       ],
     })
@@ -120,7 +119,6 @@ test.group('Agent API', (group) => {
       startTime: DateTime.now().minus({ minutes: 10 }),
       endTime: DateTime.now().plus({ hours: 1 }),
       status: 'approved',
-      isSudo: true, // Vamos testar o sudo também
     })
 
     const response = await client
@@ -132,11 +130,193 @@ test.group('Agent API', (group) => {
       provisioning: [
         {
           systemUsername: 'lab.aluno_ativo',
-          accessState: 'full_shell', // Terminal liberado!
-          isSudo: true, // Sudo liberado!
+          accessState: 'full_shell',
         },
       ],
     })
+  })
+
+  test('grace: alocação após endTime ainda recebe full_shell', async ({ client }) => {
+    const machine = await Machine.create({ name: 'PC-GRACE', description: 'Lab', token: 'tg' })
+    const user = await User.create({
+      fullName: 'Grace User',
+      email: 'grace@teste.com',
+      password: '123',
+      role: 'user',
+      systemUsername: 'lab.grace_user',
+      sshPublicKey: 'ssh-ed25519 AAAA grace@test',
+    })
+
+    await Allocation.create({
+      userId: user.id,
+      machineId: machine.id,
+      startTime: DateTime.now().minus({ hours: 1 }),
+      endTime: DateTime.now().minus({ minutes: 5 }),
+      status: 'approved',
+    })
+
+    const response = await client
+      .post('/api/v1/agent/heartbeat')
+      .header('Authorization', `Bearer ${machine.token}`)
+
+    response.assertStatus(200)
+    response.assertBodyContains({
+      provisioning: [
+        {
+          systemUsername: 'lab.grace_user',
+          accessState: 'full_shell',
+        },
+      ],
+    })
+  })
+
+  test('finished antecipado: sem grace nem SFTP — revoga chave (no_key)', async ({ client, assert }) => {
+    const machine = await Machine.create({
+      name: 'PC-FIN-SFTP',
+      description: 'Lab',
+      token: 'tfs',
+    })
+    const user = await User.create({
+      fullName: 'Finish Sftp',
+      email: 'finish-sftp@teste.com',
+      password: '123',
+      role: 'user',
+      systemUsername: 'lab.finish_sftp',
+      sshPublicKey: 'ssh-ed25519 AAAA finishsftp@test',
+    })
+
+    await Allocation.create({
+      userId: user.id,
+      machineId: machine.id,
+      startTime: DateTime.now().minus({ hours: 1 }),
+      endTime: DateTime.now().minus({ minutes: 2 }),
+      status: 'finished',
+    })
+
+    const response = await client
+      .post('/api/v1/agent/heartbeat')
+      .header('Authorization', `Bearer ${machine.token}`)
+
+    response.assertStatus(200)
+    const prov = response.body().provisioning[0]
+    assert.equal(prov.systemUsername, 'lab.finish_sftp')
+    assert.equal(prov.accessState, 'sftp_only')
+    assert.isTrue(prov.revokeSshKey)
+  })
+
+  test('pós-SFTP: após grace recebe sftp_only com chave', async ({ client }) => {
+    const machine = await Machine.create({ name: 'PC-SFTP', description: 'Lab', token: 'ts' })
+    const user = await User.create({
+      fullName: 'Sftp User',
+      email: 'sftp@teste.com',
+      password: '123',
+      role: 'user',
+      systemUsername: 'lab.sftp_user',
+      sshPublicKey: 'ssh-ed25519 AAAA sftp@test',
+    })
+
+    await Allocation.create({
+      userId: user.id,
+      machineId: machine.id,
+      startTime: DateTime.now().minus({ hours: 2 }),
+      endTime: DateTime.now().minus({ minutes: 20 }),
+      status: 'approved',
+    })
+
+    const response = await client
+      .post('/api/v1/agent/heartbeat')
+      .header('Authorization', `Bearer ${machine.token}`)
+
+    response.assertStatus(200)
+    response.assertBodyContains({
+      provisioning: [
+        {
+          systemUsername: 'lab.sftp_user',
+          accessState: 'sftp_only',
+        },
+      ],
+    })
+  })
+
+  test('alocação ativa prevalece sobre pós-SFTP de reserva anterior do mesmo usuário', async ({
+    client,
+  }) => {
+    const machine = await Machine.create({
+      name: 'PC-BACK2BACK',
+      description: 'Lab',
+      token: 'tbb',
+    })
+    const user = await User.create({
+      fullName: 'Back To Back',
+      email: 'back2back@teste.com',
+      password: '123',
+      role: 'user',
+      systemUsername: 'lab.back2back',
+      sshPublicKey: 'ssh-ed25519 AAAA back2back@test',
+    })
+
+    const oldEnd = DateTime.utc().minus({ minutes: 30 })
+    await Allocation.create({
+      userId: user.id,
+      machineId: machine.id,
+      startTime: oldEnd.minus({ hours: 1 }),
+      endTime: oldEnd,
+      status: 'approved',
+    })
+
+    const newStart = oldEnd.plus({ minutes: 20 })
+    await Allocation.create({
+      userId: user.id,
+      machineId: machine.id,
+      startTime: newStart,
+      endTime: newStart.plus({ hours: 2 }),
+      status: 'approved',
+    })
+
+    const response = await client
+      .post('/api/v1/agent/heartbeat')
+      .header('Authorization', `Bearer ${machine.token}`)
+
+    response.assertStatus(200)
+    response.assertBodyContains({
+      provisioning: [
+        {
+          systemUsername: 'lab.back2back',
+          accessState: 'full_shell',
+          revokeSshKey: false,
+        },
+      ],
+    })
+  })
+
+  test('sem chave: após janela SFTP revoga authorized_keys', async ({ client, assert }) => {
+    const machine = await Machine.create({ name: 'PC-NOKEY', description: 'Lab', token: 'tn' })
+    const user = await User.create({
+      fullName: 'Nokey User',
+      email: 'nokey@teste.com',
+      password: '123',
+      role: 'user',
+      systemUsername: 'lab.nokey_user',
+      sshPublicKey: 'ssh-ed25519 AAAA nokey@test',
+    })
+
+    await Allocation.create({
+      userId: user.id,
+      machineId: machine.id,
+      startTime: DateTime.now().minus({ days: 3 }),
+      endTime: DateTime.now().minus({ days: 2 }),
+      status: 'approved',
+    })
+
+    const response = await client
+      .post('/api/v1/agent/heartbeat')
+      .header('Authorization', `Bearer ${machine.token}`)
+
+    response.assertStatus(200)
+    const prov = response.body().provisioning[0]
+    assert.equal(prov.systemUsername, 'lab.nokey_user')
+    assert.equal(prov.sshPublicKey, '')
+    assert.isTrue(prov.revokeSshKey)
   })
 
   // =========================================================================

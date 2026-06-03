@@ -27,7 +27,6 @@ export const useAllocationsStore = defineStore("allocations", () => {
     endTime: string;
     reason?: string;
     userId?: number;
-    isSudo?: boolean;
   }) {
     const { data } = await api.post<Allocation>("/api/v1/allocations", payload);
     allocations.value.unshift(data);
@@ -49,6 +48,15 @@ export const useAllocationsStore = defineStore("allocations", () => {
 
   async function cancelAllocation(id: number) {
     return updateAllocation(id, { status: "cancelled" });
+  }
+
+  async function finishAllocation(id: number) {
+    const { data } = await api.post<Allocation>(
+      `/api/v1/allocations/${id}/finish`,
+    );
+    const idx = allocations.value.findIndex((a) => a.id === id);
+    if (idx !== -1) allocations.value[idx] = data;
+    return data;
   }
 
   async function extendAllocation(
@@ -96,6 +104,7 @@ export const useAllocationsStore = defineStore("allocations", () => {
     createAllocation,
     updateAllocation,
     cancelAllocation,
+    finishAllocation,
     extendAllocation,
     fetchMyAllocations,
     fetchAllocationSummary,

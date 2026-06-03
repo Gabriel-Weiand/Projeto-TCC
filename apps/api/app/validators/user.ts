@@ -50,7 +50,7 @@ export const updateSshKeyValidator = vine.compile(
     sshPublicKey: vine
       .string()
       .trim()
-      .startsWith('ssh-') // Deve começar com ssh-rsa ou ssh-ed25519
+      .startsWith('ssh-ed25519 ')
       .minLength(50)
       .maxLength(2048),
   })

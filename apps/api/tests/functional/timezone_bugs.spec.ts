@@ -53,11 +53,10 @@ test.group('Bug: autoFinalizeExpired — comparação de datas', (group) => {
     assert.equal(count, 0, 'Nenhuma alocação deveria ter sido finalizada')
   })
 
-  test('DEVE finalizar alocação cujo endTime já passou', async ({ assert }) => {
-    const { user, machine } = await createUserAndMachine('finexp2')
+  test('NÃO deve finalizar alocação ainda na janela SFTP pós-reserva', async ({ assert }) => {
+    const { user, machine } = await createUserAndMachine('finexp2a')
 
-    // Alocação aprovada que terminou 1 hora atrás — DEVE ser finalizada
-    const expired = await Allocation.create({
+    const inSftpWindow = await Allocation.create({
       userId: user.id,
       machineId: machine.id,
       startTime: DateTime.now().minus({ hours: 3 }),
@@ -67,20 +66,37 @@ test.group('Bug: autoFinalizeExpired — comparação de datas', (group) => {
 
     const count = await autoFinalizeExpired()
 
+    await inSftpWindow.refresh()
+    assert.equal(inSftpWindow.status, 'approved')
+    assert.equal(count, 0)
+  })
+
+  test('DEVE finalizar alocação após grace + janela SFTP', async ({ assert }) => {
+    const { user, machine } = await createUserAndMachine('finexp2')
+
+    const expired = await Allocation.create({
+      userId: user.id,
+      machineId: machine.id,
+      startTime: DateTime.now().minus({ days: 3 }),
+      endTime: DateTime.now().minus({ days: 2 }),
+      status: 'approved',
+    })
+
+    const count = await autoFinalizeExpired()
+
     await expired.refresh()
-    assert.equal(expired.status, 'finished', 'Alocação expirada deveria ser finalizada')
+    assert.equal(expired.status, 'finished')
     assert.equal(count, 1)
   })
 
   test('deve finalizar SOMENTE alocações expiradas, não futuras', async ({ assert }) => {
     const { user, machine } = await createUserAndMachine('finexp3')
 
-    // Expirada (endTime -1h)
     const expired = await Allocation.create({
       userId: user.id,
       machineId: machine.id,
-      startTime: DateTime.now().minus({ hours: 4 }),
-      endTime: DateTime.now().minus({ hours: 1 }),
+      startTime: DateTime.now().minus({ days: 3 }),
+      endTime: DateTime.now().minus({ days: 2 }),
       status: 'approved',
     })
 
