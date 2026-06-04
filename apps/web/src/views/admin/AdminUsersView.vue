@@ -35,6 +35,10 @@ const filtered = computed(() => {
   );
 });
 
+const isEditingOther = computed(
+  () => !!editing.value && auth.user?.id !== editing.value.id,
+);
+
 function openCreate() {
   editing.value = null;
   form.fullName = "";
@@ -57,34 +61,55 @@ function openEdit(u: User) {
 
 async function handleSave() {
   error.value = "";
-  if (!form.fullName || !form.email) {
-    error.value = "Nome e email são obrigatórios.";
-    return;
-  }
-  if (!editing.value && !form.password) {
-    error.value = "Senha é obrigatória para novos usuários.";
-    return;
-  }
 
-  saving.value = true;
-  try {
-    if (editing.value) {
-      const payload: Record<string, unknown> = {
-        fullName: form.fullName,
-        email: form.email,
-      };
-      if (form.password) payload.password = form.password;
-      await store.updateUser(editing.value.id, payload);
-      if (auth.user?.id === editing.value.id) {
-        await auth.fetchMe();
-      }
-    } else {
+  if (!editing.value) {
+    if (!form.fullName || !form.email) {
+      error.value = "Nome e email são obrigatórios.";
+      return;
+    }
+    if (!form.password) {
+      error.value = "Senha é obrigatória para novos usuários.";
+      return;
+    }
+
+    saving.value = true;
+    try {
       await store.createUser({
         fullName: form.fullName,
         email: form.email,
         password: form.password,
         role: form.role,
       });
+      showModal.value = false;
+    } catch (err: any) {
+      const status = err.response?.status;
+      if (status === 422) error.value = "Dados inválidos. Verifique os campos.";
+      else if (status === 409) error.value = "Este email já está em uso.";
+      else error.value = "Erro ao salvar usuário.";
+    } finally {
+      saving.value = false;
+    }
+    return;
+  }
+
+  const payload: Record<string, unknown> = {};
+  if (form.password) payload.password = form.password;
+  if (isEditingOther.value && form.role !== editing.value.role) {
+    payload.role = form.role;
+  }
+
+  if (Object.keys(payload).length === 0) {
+    error.value = isEditingOther.value
+      ? "Informe uma nova senha ou altere o cargo."
+      : "Informe uma nova senha.";
+    return;
+  }
+
+  saving.value = true;
+  try {
+    await store.updateUser(editing.value.id, payload);
+    if (auth.user?.id === editing.value.id) {
+      await auth.fetchMe();
     }
     showModal.value = false;
   } catch (err: any) {
@@ -116,21 +141,14 @@ function fmtDate(iso: string) {
   <div class="fade-in">
     <div class="page-header">
       <h1 class="page-title">Usuários</h1>
-      <div
-        style="
-          display: flex;
-          gap: 0.75rem;
-          align-items: center;
-          flex-wrap: wrap;
-        "
-      >
+      <div class="page-toolbar">
         <input
           v-model="search"
           type="text"
+          class="search-input"
           placeholder="Buscar..."
-          style="max-width: 220px; padding: 0.5rem 0.85rem; font-size: 0.88rem"
         />
-        <button class="btn btn-primary" @click="openCreate">
+        <button class="btn btn-primary btn-new-user" @click="openCreate">
           + Novo Usuário
         </button>
       </div>
@@ -141,7 +159,7 @@ function fmtDate(iso: string) {
       Nenhum usuário encontrado.
     </div>
 
-    <div v-else class="table-wrap">
+    <div v-else class="table-wrap users-table">
       <table>
         <thead>
           <tr>
@@ -149,13 +167,13 @@ function fmtDate(iso: string) {
             <th>Email</th>
             <th>Tipo</th>
             <th>Cadastro</th>
-            <th style="width: 120px">Ações</th>
+            <th class="col-actions">Ações</th>
           </tr>
         </thead>
         <tbody>
           <tr v-for="u in filtered" :key="u.id">
             <td>
-              <span style="font-weight: 500">{{ u.fullName }}</span>
+              <span class="user-name">{{ u.fullName }}</span>
             </td>
             <td>{{ u.email }}</td>
             <td>
@@ -169,8 +187,8 @@ function fmtDate(iso: string) {
               </span>
             </td>
             <td class="text-secondary">{{ fmtDate(u.createdAt) }}</td>
-            <td>
-              <div style="display: flex; gap: 0.35rem">
+            <td class="col-actions">
+              <div class="actions-cell">
                 <button class="btn btn-ghost btn-sm" @click="openEdit(u)">
                   Editar
                 </button>
@@ -199,31 +217,57 @@ function fmtDate(iso: string) {
             <button class="btn-close" @click="showModal = false">✕</button>
           </div>
           <form class="modal-body" @submit.prevent="handleSave">
-            <div class="field">
-              <label class="field-label">Nome completo</label>
-              <input v-model="form.fullName" type="text" />
-            </div>
-            <div class="field">
-              <label class="field-label">Email</label>
-              <input v-model="form.email" type="email" />
-            </div>
-            <div class="field">
-              <label class="field-label"
-                >Senha {{ editing ? "(em branco = manter)" : "" }}</label
-              >
-              <input
-                v-model="form.password"
-                type="password"
-                autocomplete="new-password"
-              />
-            </div>
-            <div v-if="!editing" class="field">
-              <label class="field-label">Tipo</label>
-              <select v-model="form.role">
-                <option value="user">Usuário</option>
-                <option value="admin">Administrador</option>
-              </select>
-            </div>
+            <template v-if="!editing">
+              <div class="field">
+                <label class="field-label">Nome completo</label>
+                <input v-model="form.fullName" type="text" />
+              </div>
+              <div class="field">
+                <label class="field-label">Email</label>
+                <input v-model="form.email" type="email" />
+              </div>
+              <div class="field">
+                <label class="field-label">Senha</label>
+                <input
+                  v-model="form.password"
+                  type="password"
+                  autocomplete="new-password"
+                />
+              </div>
+              <div class="field">
+                <label class="field-label">Cargo</label>
+                <select v-model="form.role">
+                  <option value="user">Usuário</option>
+                  <option value="admin">Administrador</option>
+                </select>
+              </div>
+            </template>
+
+            <template v-else>
+              <div class="field">
+                <label class="field-label">Nome completo</label>
+                <input :value="form.fullName" type="text" disabled />
+              </div>
+              <div class="field">
+                <label class="field-label">Email</label>
+                <input :value="form.email" type="email" disabled />
+              </div>
+              <div class="field">
+                <label class="field-label">Senha (em branco = manter)</label>
+                <input
+                  v-model="form.password"
+                  type="password"
+                  autocomplete="new-password"
+                />
+              </div>
+              <div v-if="isEditingOther" class="field">
+                <label class="field-label">Cargo</label>
+                <select v-model="form.role">
+                  <option value="user">Usuário</option>
+                  <option value="admin">Administrador</option>
+                </select>
+              </div>
+            </template>
 
             <p v-if="error" class="error-text">{{ error }}</p>
 
@@ -247,6 +291,52 @@ function fmtDate(iso: string) {
 </template>
 
 <style scoped>
+.page-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  flex-wrap: nowrap;
+}
+
+.search-input {
+  width: 220px;
+  max-width: 100%;
+  padding: 0.5rem 0.85rem;
+  font-size: 0.88rem;
+  height: 38px;
+  box-sizing: border-box;
+}
+
+.btn-new-user {
+  height: 38px;
+  padding: 0 1rem;
+  font-size: 0.88rem;
+  white-space: nowrap;
+}
+
+.users-table th,
+.users-table td {
+  text-align: center;
+}
+
+.users-table .col-actions {
+  width: 190px;
+  min-width: 190px;
+}
+
+.users-table .user-name {
+  font-weight: 500;
+}
+
+.users-table .actions-cell {
+  display: inline-flex;
+  justify-content: center;
+  align-items: center;
+  gap: 0.35rem;
+  flex-wrap: nowrap;
+  white-space: nowrap;
+}
+
 .modal-overlay {
   position: fixed;
   inset: 0;

@@ -92,6 +92,17 @@ export const useAllocationsStore = defineStore("allocations", () => {
     return data;
   }
 
+  async function generateAllocationSummary(id: number) {
+    const { data } = await api.post<AllocationMetric>(
+      `/api/v1/allocations/${id}/summary`,
+    );
+    const idx = allocations.value.findIndex((a) => a.id === id);
+    if (idx !== -1) {
+      allocations.value[idx] = { ...allocations.value[idx]!, metric: data };
+    }
+    return data;
+  }
+
   async function softDeleteAllocation(id: number) {
     await api.delete(`/api/v1/allocations/${id}`);
     allocations.value = allocations.value.filter((a) => a.id !== id);
@@ -108,6 +119,7 @@ export const useAllocationsStore = defineStore("allocations", () => {
     extendAllocation,
     fetchMyAllocations,
     fetchAllocationSummary,
+    generateAllocationSummary,
     softDeleteAllocation,
   };
 });

@@ -1,11 +1,11 @@
 import { test } from '@japa/runner'
 import User from '#models/user'
-import Machine from '#models/machine'
 import Allocation from '#models/allocation'
 import Notification from '#models/notification'
 import testUtils from '@adonisjs/core/services/test_utils'
 import { DateTime } from 'luxon'
 import { runScheduledAllocationReminders } from '#services/notification_service'
+import { createTestMachine } from '../helpers/test_machine.js'
 
 test.group('Allocation notifications', (group) => {
   group.each.setup(() => testUtils.db().withGlobalTransaction())
@@ -17,7 +17,7 @@ test.group('Allocation notifications', (group) => {
       password: 'senha123',
       role: 'user',
     })
-    const machine = await Machine.create({
+    const machine = await createTestMachine({
       name: 'PC-NOTIF',
       description: 'Lab',
       status: 'available',
@@ -54,7 +54,7 @@ test.group('Allocation notifications', (group) => {
       password: 'senha123',
       role: 'user',
     })
-    const machine = await Machine.create({
+    const machine = await createTestMachine({
       name: 'PC-PEND-NOTIF',
       description: 'Lab',
       status: 'available',
@@ -90,7 +90,7 @@ test.group('Allocation notifications', (group) => {
       password: 'senha123',
       role: 'user',
     })
-    const machine = await Machine.create({
+    const machine = await createTestMachine({
       name: 'PC-APR',
       description: 'Lab',
       status: 'available',
@@ -129,7 +129,7 @@ test.group('Allocation notifications', (group) => {
       password: 'senha123',
       role: 'user',
     })
-    const machine = await Machine.create({
+    const machine = await createTestMachine({
       name: 'PC-DENY',
       description: 'Lab',
       status: 'available',
@@ -162,7 +162,7 @@ test.group('Allocation notifications', (group) => {
       password: 'senha123',
       role: 'user',
     })
-    const machine = await Machine.create({
+    const machine = await createTestMachine({
       name: 'PC-CANC',
       description: 'Lab',
       status: 'available',
@@ -201,7 +201,7 @@ test.group('Allocation notifications', (group) => {
       password: 'senha123',
       role: 'user',
     })
-    const machine = await Machine.create({
+    const machine = await createTestMachine({
       name: 'PC-MAINT',
       description: 'Lab',
       status: 'available',
@@ -245,7 +245,7 @@ test.group('Allocation notifications', (group) => {
       role: 'user',
       sshPublicKey: 'ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIHRlc3Q=',
     })
-    const machine = await Machine.create({
+    const machine = await createTestMachine({
       name: 'PC-BREVE',
       description: 'Lab',
       status: 'available',
@@ -276,7 +276,7 @@ test.group('Allocation notifications', (group) => {
       password: 'senha123',
       role: 'user',
     })
-    const machine = await Machine.create({
+    const machine = await createTestMachine({
       name: 'PC-SSH',
       description: 'Lab',
       status: 'available',
@@ -308,7 +308,7 @@ test.group('Allocation notifications', (group) => {
       role: 'user',
       sshPublicKey: 'ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIHRlc3Q=',
     })
-    const machine = await Machine.create({
+    const machine = await createTestMachine({
       name: 'PC-SSH2',
       description: 'Lab',
       status: 'available',

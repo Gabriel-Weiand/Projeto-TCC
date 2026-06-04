@@ -173,7 +173,111 @@ test.group('Machines', (group) => {
     response.assertBodyContains({
       name: 'PC-ATUALIZADO',
       status: 'maintenance',
+      operationalMode: 'maintenance',
     })
+  })
+
+  test('status efetivo: alocação ativa marca máquina como ocupada', async ({
+    client,
+    assert,
+  }) => {
+    const admin = await User.create({
+      fullName: 'Admin Status',
+      email: 'admin-status@teste.com',
+      password: 'senha123',
+      role: 'admin',
+    })
+    const user = await User.create({
+      fullName: 'Aluno Status',
+      email: 'aluno-status@teste.com',
+      password: 'senha123',
+      role: 'user',
+    })
+    const machine = await Machine.create({
+      name: 'PC-STATUS',
+      description: 'Lab',
+      status: 'available',
+      lastSeenAt: DateTime.utc(),
+    })
+
+    await Allocation.create({
+      userId: user.id,
+      machineId: machine.id,
+      startTime: DateTime.utc().minus({ minutes: 10 }),
+      endTime: DateTime.utc().plus({ minutes: 50 }),
+      status: 'approved',
+    })
+
+    const response = await client.get(`/api/v1/machines/${machine.id}`).loginAs(admin)
+
+    response.assertStatus(200)
+    assert.equal(response.body().status, 'occupied')
+    assert.equal(response.body().operationalMode, 'available')
+  })
+
+  test('status efetivo: sem heartbeat há 24 h marca offline', async ({ client, assert }) => {
+    const admin = await User.create({
+      fullName: 'Admin HB',
+      email: 'admin-hb@teste.com',
+      password: 'senha123',
+      role: 'admin',
+    })
+    const machine = await Machine.create({
+      name: 'PC-HB',
+      description: 'Lab',
+      status: 'available',
+      lastSeenAt: DateTime.utc().minus({ hours: 25 }),
+    })
+
+    const response = await client.get(`/api/v1/machines/${machine.id}`).loginAs(admin)
+
+    response.assertStatus(200)
+    assert.equal(response.body().status, 'offline')
+    assert.equal(response.body().operationalMode, 'available')
+  })
+
+  test('status efetivo: máquina desativada pelo admin retorna disabled', async ({
+    client,
+    assert,
+  }) => {
+    const admin = await User.create({
+      fullName: 'Admin Off',
+      email: 'admin-off@teste.com',
+      password: 'senha123',
+      role: 'admin',
+    })
+    const machine = await Machine.create({
+      name: 'PC-DISABLED',
+      description: 'Lab',
+      status: 'offline',
+      lastSeenAt: DateTime.utc(),
+    })
+
+    const response = await client.get(`/api/v1/machines/${machine.id}`).loginAs(admin)
+
+    response.assertStatus(200)
+    assert.equal(response.body().status, 'disabled')
+    assert.equal(response.body().operationalMode, 'offline')
+  })
+
+  test('admin NÃO pode definir status occupied via PUT', async ({ client }) => {
+    const admin = await User.create({
+      fullName: 'Admin PUT',
+      email: 'admin-put@teste.com',
+      password: 'senha123',
+      role: 'admin',
+    })
+    const machine = await Machine.create({
+      name: 'PC-PUT',
+      description: 'Lab',
+      status: 'available',
+    })
+
+    const response = await client.put(`/api/v1/machines/${machine.id}`).loginAs(admin).json({
+      status: 'occupied',
+    })
+
+    response.assertStatus(422)
   })
 
   test('admin deve deletar uma máquina', async ({ client, assert }) => {

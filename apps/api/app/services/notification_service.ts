@@ -364,7 +364,7 @@ export async function notifyOfflineAgents(): Promise<number> {
   const cutoff = DateTime.utc().minus({ minutes: offlineMinutes })
 
   const machines = await Machine.query()
-    .whereIn('status', ['available', 'occupied'])
+    .whereNotIn('status', ['maintenance', 'offline'])
     .where((q) => {
       q.whereNull('lastSeenAt').orWhere('lastSeenAt', '<', cutoff.toSQL()!)
     })

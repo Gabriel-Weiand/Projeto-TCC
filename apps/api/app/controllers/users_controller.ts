@@ -45,12 +45,15 @@ export default class UsersController {
   async update({ params, request, response }: HttpContext) {
     const targetUser = await User.findOrFail(params.id)
 
-    // Passa userId no meta para validação de unicidade do email
     const data = await request.validateUsing(updateUserValidator, {
       meta: { userId: targetUser.id },
     })
 
-    targetUser.merge(data)
+    const patch: Pick<typeof data, 'password' | 'role'> = {}
+    if (data.password) patch.password = data.password
+    if (data.role !== undefined) patch.role = data.role
+
+    targetUser.merge(patch)
     await targetUser.save()
 
     return response.ok(targetUser)

@@ -3,6 +3,7 @@ import { createPinia } from "pinia";
 import router from "./router";
 import App from "./App.vue";
 import "./assets/main.css";
+import "./assets/allocation-list.css";
 import { startTimeSync } from "./services/timeSync";
 import { useLabConfigStore } from "./stores/labConfig";
 import { useAuthStore } from "./stores/auth";

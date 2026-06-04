@@ -1,10 +1,10 @@
 import { test } from '@japa/runner'
 import User from '#models/user'
-import Machine from '#models/machine'
 import Allocation from '#models/allocation'
 import testUtils from '@adonisjs/core/services/test_utils'
 import { DateTime } from 'luxon'
 import { autoFinalizeExpired } from '#services/allocation_summarizer'
+import { createTestMachine } from '../helpers/test_machine.js'
 
 /**
  * Helpers reutilizáveis para os testes.
@@ -17,7 +17,7 @@ async function createUserAndMachine(suffix: string) {
     role: 'admin',
   })
 
-  const machine = await Machine.create({
+  const machine = await createTestMachine({
     name: `PC-${suffix}`,
     description: `Machine ${suffix}`,
     cpuModel: 'Intel i5',

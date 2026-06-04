@@ -21,7 +21,7 @@ export const createMachineValidator = vine.compile(
     sshPort: vine.number().withoutDecimals().min(1).max(65535).nullable().optional(),
 
     // Status inicial
-    status: vine.enum(['available', 'occupied', 'maintenance', 'offline'] as const).optional(),
+    status: vine.enum(['available', 'offline', 'maintenance'] as const).optional(),
     telemetryPreset: vine.enum(['fast', 'eco', 'custom'] as const).optional(),
   })
 )
@@ -45,7 +45,7 @@ export const updateMachineValidator = vine.compile(
     ipAddress: vine.string().trim().maxLength(45).nullable().optional(),
     sshPort: vine.number().withoutDecimals().min(1).max(65535).nullable().optional(),
 
-    status: vine.enum(['available', 'occupied', 'maintenance', 'offline'] as const).optional(),
+    status: vine.enum(['available', 'offline', 'maintenance'] as const).optional(),
 
     // Adicionado para permitir mudança de plano de telemetria
     telemetryPreset: vine.enum(['fast', 'eco', 'custom'] as const).optional(),

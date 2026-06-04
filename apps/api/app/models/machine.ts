@@ -13,6 +13,12 @@ import { randomBytes } from 'node:crypto'
 import Allocation from '#models/allocation'
 import MachineGroup from '#models/machine_group'
 import User from './user.js'
+import { dateTimeFromSqlUtc, dateTimeToSqlUtc } from '#utils/datetime'
+
+const utcDateTimeColumn = {
+  prepare: (value: DateTime | null) => (value ? dateTimeToSqlUtc(value) : null),
+  consume: (value: string | null) => (value ? dateTimeFromSqlUtc(value) : null),
+} as const
 
 export default class Machine extends BaseModel {
   @column({ isPrimary: true })
@@ -71,10 +77,10 @@ export default class Machine extends BaseModel {
   declare customAgentConfig: any | null
 
   // Campos de Segurança/Auditoria do Agente
-  @column.dateTime()
+  @column.dateTime(utcDateTimeColumn)
   declare lastSeenAt: DateTime | null
 
-  @column.dateTime()
+  @column.dateTime(utcDateTimeColumn)
   declare tokenRotatedAt: DateTime | null
 
   @column({

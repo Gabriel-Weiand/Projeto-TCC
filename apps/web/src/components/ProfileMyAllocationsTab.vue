@@ -8,12 +8,19 @@ import AllocationUsageStatsModal from "@/components/AllocationUsageStatsModal.vu
 import ProfileAllocationConnectModal from "@/components/ProfileAllocationConnectModal.vue";
 import ExtendAllocationOverlay from "@/components/ExtendAllocationOverlay.vue";
 import MyAllocationDetailPanel from "@/components/MyAllocationDetailPanel.vue";
+import AllocationListToolbar from "@/components/AllocationListToolbar.vue";
 import {
-  allocationStatusBadge,
-  allocationStatusLabel,
+  ALLOCATION_STATUS_FILTER_TABS,
+  allocationFilterParams,
+  refineApprovedFilterResults,
+} from "@/constants/allocationFilters";
+import {
+  allocationListStatusBadge,
+  allocationListStatusLabel,
   fmtAllocationDateTime,
 } from "@/utils/allocationLabels";
 import { useMyAllocationActions } from "@/composables/useMyAllocationActions";
+import { effectiveLifecycleStatus } from "@/utils/allocationLifecycle";
 
 const store = useAllocationsStore();
 const notifications = useNotificationsStore();
@@ -30,18 +37,6 @@ const extendTarget = ref<Allocation | null>(null);
 const usageStatsTarget = ref<Allocation | null>(null);
 const deleting = ref<number | null>(null);
 
-const filterTabs = [
-  { key: "all", label: "Todas" },
-  { key: "pending", label: "Pendentes" },
-  { key: "approved", label: "Aprovadas" },
-  { key: "active", label: "Ativas", lifecycle: true },
-  { key: "grace", label: "Grace", lifecycle: true },
-  { key: "sftp", label: "SFTP", lifecycle: true },
-  { key: "finished", label: "Finalizadas" },
-  { key: "denied", label: "Negadas" },
-  { key: "cancelled", label: "Canceladas" },
-] as const;
-
 function fmt(iso: string) {
   return fmtAllocationDateTime(iso, lab.timezone);
 }
@@ -57,8 +52,11 @@ const {
   canRemoveFromHistory,
   hasActions,
   finishConfirmMessage,
-  lifecycle,
 } = useMyAllocationActions();
+
+function lifecycle(a: Allocation) {
+  return effectiveLifecycleStatus(a, lab.allocationAccess);
+}
 
 onMounted(async () => {
   if (!lab.loaded) await lab.fetchConfig();
@@ -68,18 +66,8 @@ onMounted(async () => {
 async function loadList() {
   loading.value = true;
   try {
-    const tab = filterTabs.find((t) => t.key === statusFilter.value);
-    const params: Record<string, string> = {};
-    if (statusFilter.value !== "all") {
-      if (tab && "lifecycle" in tab && tab.lifecycle) {
-        params.lifecycleStatus = statusFilter.value;
-      } else {
-        params.status = statusFilter.value;
-      }
-    }
-    list.value = await store.fetchMyAllocations(
-      Object.keys(params).length ? params : undefined,
-    );
+    const params = allocationFilterParams(statusFilter.value);
+    list.value = await store.fetchMyAllocations(params);
   } finally {
     loading.value = false;
   }
@@ -91,9 +79,14 @@ async function onFilterChange(key: string) {
 }
 
 const filtered = computed(() => {
+  let rows = refineApprovedFilterResults(
+    list.value,
+    statusFilter.value,
+    lifecycle,
+  );
   const q = search.value.trim().toLowerCase();
-  if (!q) return list.value;
-  return list.value.filter((a) => machineName(a).toLowerCase().includes(q));
+  if (!q) return rows;
+  return rows.filter((a) => machineName(a).toLowerCase().includes(q));
 });
 
 function machineName(a: Allocation) {
@@ -180,27 +173,15 @@ async function handleDelete(a: Allocation) {
 </script>
 
 <template>
-  <div class="my-allocations">
-    <div class="my-allocations-toolbar">
-      <input
-        v-model="search"
-        type="search"
-        placeholder="Buscar por máquina..."
-        class="search-input"
-      />
-    </div>
-
-    <div class="filter-tabs">
-      <button
-        v-for="t in filterTabs"
-        :key="t.key"
-        type="button"
-        :class="['tab-btn', { active: statusFilter === t.key }]"
-        @click="onFilterChange(t.key)"
-      >
-        {{ t.label }}
-      </button>
-    </div>
+  <div class="allocation-list">
+    <AllocationListToolbar
+      :tabs="ALLOCATION_STATUS_FILTER_TABS"
+      :active-key="statusFilter"
+      :search="search"
+      search-placeholder="Buscar por máquina..."
+      @filter="onFilterChange"
+      @update:search="search = $event"
+    />
 
     <div v-if="loading" class="empty-state">Carregando suas reservas...</div>
     <div v-else-if="filtered.length === 0" class="empty-state">
@@ -236,19 +217,19 @@ async function handleDelete(a: Allocation) {
               <span
                 :class="[
                   'badge',
-                  allocationStatusBadge(a.status, lifecycle(a)),
+                  allocationListStatusBadge(a.status, lifecycle(a)),
                 ]"
               >
-                {{ allocationStatusLabel(a.status, lifecycle(a)) }}
+                {{ allocationListStatusLabel(a.status, lifecycle(a)) }}
               </span>
             </td>
-            <td class="alloc-actions" @click.stop>
+            <td class="alloc-actions">
               <div v-if="hasActions(a)" class="actions-row">
                 <button
                   v-if="showExtendButton(a)"
                   type="button"
                   class="btn btn-ghost btn-sm btn-action"
-                  @click="openExtend(a)"
+                  @click.stop="openExtend(a)"
                 >
                   Estender
                 </button>
@@ -257,7 +238,7 @@ async function handleDelete(a: Allocation) {
                   type="button"
                   class="btn btn-ghost btn-sm btn-action"
                   :disabled="updating === a.id"
-                  @click="handleFinish(a)"
+                  @click.stop="handleFinish(a)"
                 >
                   Finalizar
                 </button>
@@ -266,7 +247,7 @@ async function handleDelete(a: Allocation) {
                   type="button"
                   class="btn btn-danger btn-sm btn-action"
                   :disabled="updating === a.id"
-                  @click="handleCancel(a)"
+                  @click.stop="handleCancel(a)"
                 >
                   Cancelar
                 </button>
@@ -277,7 +258,7 @@ async function handleDelete(a: Allocation) {
                   :class="{ 'btn-action--waiting': !canConnectNow(a) }"
                   :disabled="!canConnectNow(a)"
                   :title="connectDisabledTitle(a)"
-                  @click="openConnect(a)"
+                  @click.stop="openConnect(a)"
                 >
                   Conectar
                 </button>
@@ -285,7 +266,7 @@ async function handleDelete(a: Allocation) {
                   v-if="showStatistics(a)"
                   type="button"
                   class="btn btn-ghost btn-sm btn-action"
-                  @click="openStatistics(a)"
+                  @click.stop="openStatistics(a)"
                 >
                   Estatísticas
                 </button>
@@ -294,7 +275,7 @@ async function handleDelete(a: Allocation) {
                   type="button"
                   class="btn btn-ghost btn-sm btn-action"
                   :disabled="deleting === a.id"
-                  @click="handleDelete(a)"
+                  @click.stop="handleDelete(a)"
                 >
                   Remover
                 </button>
@@ -339,121 +320,3 @@ async function handleDelete(a: Allocation) {
     />
   </div>
 </template>
-
-<style scoped>
-.my-allocations {
-  width: 100%;
-}
-
-.my-allocations-toolbar {
-  margin-bottom: 1rem;
-}
-
-.search-input {
-  width: 100%;
-  max-width: 320px;
-  padding: 0.5rem 0.85rem;
-  font-size: 0.88rem;
-  background: var(--bg-card-solid);
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
-  color: var(--text-primary);
-}
-
-.filter-tabs {
-  display: flex;
-  gap: 0.25rem;
-  margin-bottom: 1.25rem;
-  flex-wrap: wrap;
-}
-
-.tab-btn {
-  padding: 0.4rem 0.9rem;
-  border-radius: 8px;
-  font-size: 0.85rem;
-  font-weight: 500;
-  color: var(--text-secondary);
-  background: transparent;
-  border: 1px solid transparent;
-  transition: all var(--transition);
-  cursor: pointer;
-}
-
-.tab-btn:hover {
-  color: var(--text-primary);
-  background: var(--bg-hover);
-}
-
-.tab-btn.active {
-  color: var(--accent);
-  background: var(--accent-soft);
-  border-color: rgba(124, 108, 240, 0.15);
-}
-
-.alloc-table {
-  width: 100%;
-}
-
-.alloc-table thead th,
-.alloc-table tbody td {
-  text-align: center;
-}
-
-.alloc-row {
-  cursor: pointer;
-  transition: background 0.15s ease;
-}
-
-.alloc-row:hover,
-.alloc-row:focus-visible {
-  background: var(--bg-hover);
-  outline: none;
-}
-
-.alloc-machine {
-  font-weight: 500;
-}
-
-.alloc-datetime {
-  font-size: 0.88rem;
-  white-space: nowrap;
-}
-
-.col-actions {
-  width: 1%;
-  min-width: 15rem;
-  white-space: nowrap;
-}
-
-.alloc-actions {
-  vertical-align: middle;
-  text-align: center;
-}
-
-.actions-row {
-  display: inline-flex;
-  flex-wrap: nowrap;
-  gap: 0.35rem;
-  justify-content: center;
-  align-items: center;
-  max-width: 100%;
-}
-
-.btn-action {
-  padding: 0.3rem 0.55rem;
-  font-size: 0.78rem;
-  flex-shrink: 0;
-}
-
-.btn-action:disabled {
-  opacity: 0.4;
-  cursor: not-allowed;
-}
-
-.btn-action--waiting:disabled {
-  opacity: 0.35;
-  background: rgba(255, 255, 255, 0.04);
-  color: var(--text-muted);
-  box-shadow: none;
-}
-</style>

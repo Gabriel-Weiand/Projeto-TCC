@@ -2,9 +2,24 @@
 import { ref, onMounted, computed } from "vue";
 import { useAllocationsStore } from "@/stores/allocations";
 import { useMachinesStore } from "@/stores/machines";
-import type { Allocation } from "@/types";
 import { useLabConfigStore } from "@/stores/labConfig";
-import { formatLabDate, formatLabTime } from "@/utils/datetime";
+import type { Allocation } from "@/types";
+import MyAllocationDetailPanel from "@/components/MyAllocationDetailPanel.vue";
+import AllocationUsageStatsModal from "@/components/AllocationUsageStatsModal.vue";
+import AllocationListToolbar from "@/components/AllocationListToolbar.vue";
+import {
+  ADMIN_ALLOCATION_FILTER_TABS,
+  allocationFilterParams,
+  isHiddenAllocationsFilter,
+  refineApprovedFilterResults,
+} from "@/constants/allocationFilters";
+import {
+  adminAllocationStatusBadge,
+  adminAllocationStatusLabel,
+  fmtAllocationDateTime,
+} from "@/utils/allocationLabels";
+import { effectiveLifecycleStatus } from "@/utils/allocationLifecycle";
+import { useAdminAllocationActions } from "@/composables/useAdminAllocationActions";
 
 const store = useAllocationsStore();
 const machinesStore = useMachinesStore();
@@ -12,17 +27,26 @@ const lab = useLabConfigStore();
 
 const loading = ref(true);
 const statusFilter = ref("all");
-const listMode = ref<"active" | "hidden">("active");
 const search = ref("");
+const detailTarget = ref<Allocation | null>(null);
+const usageStatsTarget = ref<Allocation | null>(null);
+const updating = ref<number | null>(null);
+const deleting = ref<number | null>(null);
+const summarizing = ref<number | null>(null);
+
+const isHiddenList = computed(() => isHiddenAllocationsFilter(statusFilter.value));
+
+function lifecycle(a: Allocation) {
+  return effectiveLifecycleStatus(a, lab.allocationAccess);
+}
+
+const adminActions = useAdminAllocationActions(lifecycle);
 
 async function loadAllocations() {
   loading.value = true;
   try {
-    await store.fetchAllocations(
-      listMode.value === "hidden"
-        ? { userHidden: true, limit: 100 }
-        : { limit: 100 },
-    );
+    const params = allocationFilterParams(statusFilter.value) ?? { limit: 100 };
+    await store.fetchAllocations(params);
   } finally {
     loading.value = false;
   }
@@ -30,6 +54,7 @@ async function loadAllocations() {
 
 onMounted(async () => {
   try {
+    if (!lab.loaded) await lab.fetchConfig();
     await machinesStore.fetchMachines();
     await loadAllocations();
   } catch {
@@ -37,28 +62,26 @@ onMounted(async () => {
   }
 });
 
-async function setListMode(mode: "active" | "hidden") {
-  if (listMode.value === mode) return;
-  listMode.value = mode;
-  statusFilter.value = "all";
+async function onFilterChange(key: string) {
+  statusFilter.value = key;
+  detailTarget.value = null;
   await loadAllocations();
 }
 
 const filtered = computed(() => {
-  let list = store.allocations;
-  if (statusFilter.value !== "all") {
-    list = list.filter((a) => a.status === statusFilter.value);
-  }
-  const q = search.value.toLowerCase();
-  if (q) {
-    list = list.filter(
-      (a) =>
-        machineName(a).toLowerCase().includes(q) ||
-        (a.user?.fullName || "").toLowerCase().includes(q) ||
-        (a.reason || "").toLowerCase().includes(q),
-    );
-  }
-  return list;
+  let rows = refineApprovedFilterResults(
+    store.allocations,
+    statusFilter.value,
+    lifecycle,
+  );
+  const q = search.value.trim().toLowerCase();
+  if (!q) return rows;
+  return rows.filter(
+    (a) =>
+      machineName(a).toLowerCase().includes(q) ||
+      (a.user?.fullName || "").toLowerCase().includes(q) ||
+      (a.reason || "").toLowerCase().includes(q),
+  );
 });
 
 function machineName(a: Allocation) {
@@ -67,35 +90,37 @@ function machineName(a: Allocation) {
   return m ? m.name : `#${a.machineId}`;
 }
 
-function fmtDate(iso: string) {
-  return formatLabDate(iso, lab.timezone);
-}
-function fmtTime(iso: string) {
-  return formatLabTime(iso, lab.timezone);
+function enrichAllocation(a: Allocation): Allocation {
+  return {
+    ...a,
+    machine:
+      a.machine ??
+      machinesStore.machines.find((m) => m.id === a.machineId) ??
+      undefined,
+  };
 }
 
-function statusBadge(s: string) {
-  const map: Record<string, string> = {
-    pending: "badge-warning",
-    approved: "badge-success",
-    denied: "badge-danger",
-    cancelled: "badge-muted",
-    finished: "badge-info",
-  };
-  return map[s] || "badge-muted";
-}
-function statusLabel(s: string) {
-  const map: Record<string, string> = {
-    pending: "Pendente",
-    approved: "Aprovada",
-    denied: "Negada",
-    cancelled: "Cancelada",
-    finished: "Finalizada",
-  };
-  return map[s] || s;
+function fmt(iso: string) {
+  return fmtAllocationDateTime(iso, lab.timezone);
 }
 
-const updating = ref<number | null>(null);
+function openDetail(a: Allocation) {
+  detailTarget.value = enrichAllocation(a);
+}
+
+function closeDetail() {
+  detailTarget.value = null;
+}
+
+function syncDetailFromStore() {
+  if (!detailTarget.value) return;
+  const updated = store.allocations.find((a) => a.id === detailTarget.value!.id);
+  if (updated) {
+    detailTarget.value = enrichAllocation(updated);
+  } else {
+    detailTarget.value = null;
+  }
+}
 
 async function setStatus(a: Allocation, status: string) {
   const labelMap: Record<string, string> = {
@@ -107,6 +132,7 @@ async function setStatus(a: Allocation, status: string) {
   updating.value = a.id;
   try {
     await store.updateAllocation(a.id, { status });
+    syncDetailFromStore();
   } catch {
     alert("Erro ao atualizar status.");
   } finally {
@@ -114,200 +140,227 @@ async function setStatus(a: Allocation, status: string) {
   }
 }
 
-const statusTabs = [
-  { key: "all", label: "Todas" },
-  { key: "pending", label: "Pendentes" },
-  { key: "approved", label: "Aprovadas" },
-  { key: "denied", label: "Negadas" },
-  { key: "finished", label: "Finalizadas" },
-  { key: "cancelled", label: "Canceladas" },
-];
+async function handleGenerateSummary(a: Allocation) {
+  if (!confirm("Gerar resumo de telemetria desta sessão?")) return;
+  summarizing.value = a.id;
+  try {
+    await store.generateAllocationSummary(a.id);
+    syncDetailFromStore();
+  } catch (err: unknown) {
+    const code = (err as { response?: { data?: { code?: string } } })?.response
+      ?.data?.code;
+    if (code === "SUMMARY_EXISTS") alert("Esta alocação já possui um resumo.");
+    else if (code === "NO_TELEMETRY")
+      alert("Não há telemetria para gerar o resumo.");
+    else alert("Erro ao gerar resumo.");
+  } finally {
+    summarizing.value = null;
+  }
+}
+
+async function handleDelete(a: Allocation) {
+  if (
+    !confirm(
+      "Excluir esta alocação do histórico operacional? O registro ficará apenas em «Removidas pelo usuário».",
+    )
+  )
+    return;
+  deleting.value = a.id;
+  try {
+    await store.softDeleteAllocation(a.id);
+    if (detailTarget.value?.id === a.id) detailTarget.value = null;
+  } catch (err: unknown) {
+    const code = (err as { response?: { data?: { code?: string } } })?.response
+      ?.data?.code;
+    if (code === "ALLOCATION_IN_PROGRESS")
+      alert("Não é possível excluir uma alocação em andamento.");
+    else alert("Erro ao excluir alocação.");
+  } finally {
+    deleting.value = null;
+  }
+}
+
+function openStatistics(a: Allocation) {
+  usageStatsTarget.value = enrichAllocation(a);
+}
 </script>
 
 <template>
-  <div class="fade-in">
+  <div class="fade-in allocations-page">
     <div class="page-header">
       <h1 class="page-title">Alocações</h1>
-      <input
-        v-model="search"
-        type="text"
-        placeholder="Buscar por máquina, usuário..."
-        style="max-width: 260px; padding: 0.5rem 0.85rem; font-size: 0.88rem"
-      />
     </div>
 
-    <div class="list-mode-tabs">
-      <button
-        type="button"
-        :class="['tab-btn', { active: listMode === 'active' }]"
-        @click="setListMode('active')"
-      >
-        Alocações
-      </button>
-      <button
-        type="button"
-        :class="['tab-btn', { active: listMode === 'hidden' }]"
-        @click="setListMode('hidden')"
-      >
-        Ocultas pelo usuário
-      </button>
-    </div>
+    <div class="card allocations-card">
+      <div class="allocation-list">
+        <AllocationListToolbar
+          :tabs="ADMIN_ALLOCATION_FILTER_TABS"
+          :active-key="statusFilter"
+          :search="search"
+          search-placeholder="Buscar por máquina, usuário..."
+          @filter="onFilterChange"
+          @update:search="search = $event"
+        />
 
-    <div v-if="listMode === 'active'" class="filter-tabs">
-      <button
-        v-for="t in statusTabs"
-        :key="t.key"
-        type="button"
-        :class="['tab-btn', { active: statusFilter === t.key }]"
-        @click="statusFilter = t.key"
-      >
-        {{ t.label }}
-      </button>
-    </div>
-    <p v-else class="hidden-hint text-muted">
-      Alocações removidas do histórico do usuário (soft delete). Não aparecem na
-      lista operacional acima.
-    </p>
+        <p v-if="isHiddenList" class="hidden-hint text-muted">
+          Alocações removidas do histórico do usuário (soft delete). Não aparecem
+          na lista operacional.
+        </p>
 
-    <div v-if="loading" class="empty-state">Carregando...</div>
-    <div v-else-if="filtered.length === 0" class="empty-state">
-      Nenhuma alocação encontrada.
-    </div>
+        <div v-if="loading" class="empty-state">Carregando...</div>
+        <div v-else-if="filtered.length === 0" class="empty-state">
+          Nenhuma alocação encontrada.
+        </div>
 
-    <div v-else class="table-wrap">
-      <table>
-        <thead>
-          <tr>
-            <th>Máquina</th>
-            <th>Usuário</th>
-            <th>Data</th>
-            <th>Horário</th>
-            <th>Status</th>
-            <th>Motivo</th>
-            <th style="width: 160px">Ações</th>
-          </tr>
-        </thead>
-        <tbody>
-          <tr v-for="a in filtered" :key="a.id">
-            <td style="font-weight: 500">{{ machineName(a) }}</td>
-            <td>{{ a.user?.fullName || `Usuário #${a.userId}` }}</td>
-            <td class="text-secondary">{{ fmtDate(a.startTime) }}</td>
-            <td class="text-secondary">
-              {{ fmtTime(a.startTime) }} — {{ fmtTime(a.endTime) }}
-            </td>
-            <td>
-              <span :class="['badge', statusBadge(a.status)]">{{
-                statusLabel(a.status)
-              }}</span>
-              <span
-                v-if="a.userHidden"
-                class="badge badge-muted hidden-badge"
-                >Oculta</span
+        <div v-else class="table-wrap">
+          <table class="alloc-table">
+            <thead>
+              <tr>
+                <th>Máquina</th>
+                <th>Usuário</th>
+                <th>Início</th>
+                <th>Fim</th>
+                <th>Status</th>
+                <th class="col-actions col-actions--admin">Ações</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr
+                v-for="a in filtered"
+                :key="a.id"
+                class="alloc-row"
+                tabindex="0"
+                :aria-label="`Ver detalhes da reserva em ${machineName(a)}`"
+                @click="openDetail(a)"
+                @keydown.enter="openDetail(a)"
+                @keydown.space.prevent="openDetail(a)"
               >
-            </td>
-            <td
-              class="text-muted"
-              style="
-                max-width: 180px;
-                overflow: hidden;
-                text-overflow: ellipsis;
-                white-space: nowrap;
-              "
-            >
-              {{ a.reason || "—" }}
-            </td>
-            <td>
-              <div
-                v-if="listMode === 'hidden'"
-                class="text-muted"
-                style="font-size: 0.8rem; padding: 0.35rem"
-              >
-                Somente leitura
-              </div>
-              <div
-                v-else
-                style="display: flex; gap: 0.3rem; flex-wrap: wrap"
-              >
-                <template v-if="a.status === 'pending'">
-                  <button
-                    class="btn btn-success btn-sm"
-                    :disabled="updating === a.id"
-                    @click="setStatus(a, 'approved')"
+                <td class="alloc-machine">{{ machineName(a) }}</td>
+                <td>{{ a.user?.fullName || `Usuário #${a.userId}` }}</td>
+                <td class="text-secondary alloc-datetime">{{ fmt(a.startTime) }}</td>
+                <td class="text-secondary alloc-datetime">{{ fmt(a.endTime) }}</td>
+                <td>
+                  <span
+                    :class="[
+                      'badge',
+                      adminAllocationStatusBadge(
+                        a.status,
+                        lifecycle(a),
+                        a.userHidden,
+                      ),
+                    ]"
                   >
-                    Aprovar
-                  </button>
-                  <button
-                    class="btn btn-danger btn-sm"
-                    :disabled="updating === a.id"
-                    @click="setStatus(a, 'denied')"
+                    {{
+                      adminAllocationStatusLabel(
+                        a.status,
+                        lifecycle(a),
+                        a.userHidden,
+                      )
+                    }}
+                  </span>
+                </td>
+                <td class="alloc-actions">
+                  <div
+                    v-if="adminActions.hasActions(a, isHiddenList)"
+                    class="actions-row"
                   >
-                    Negar
-                  </button>
-                </template>
-                <button
-                  v-if="['pending', 'approved'].includes(a.status)"
-                  class="btn btn-ghost btn-sm"
-                  :disabled="updating === a.id"
-                  @click="setStatus(a, 'cancelled')"
-                >
-                  Cancelar
-                </button>
-                <span
-                  v-if="!['pending', 'approved'].includes(a.status)"
-                  class="text-muted"
-                  style="font-size: 0.8rem; padding: 0.35rem"
-                  >—</span
-                >
-              </div>
-            </td>
-          </tr>
-        </tbody>
-      </table>
+                    <button
+                      v-if="adminActions.canApproveDeny(a)"
+                      type="button"
+                      class="btn btn-sm btn-action btn-approve-outline"
+                      :disabled="updating === a.id"
+                      @click.stop="setStatus(a, 'approved')"
+                    >
+                      Aprovar
+                    </button>
+                    <button
+                      v-if="adminActions.canApproveDeny(a)"
+                      type="button"
+                      class="btn btn-danger btn-sm btn-action"
+                      :disabled="updating === a.id"
+                      @click.stop="setStatus(a, 'denied')"
+                    >
+                      Negar
+                    </button>
+                    <button
+                      v-if="adminActions.canCancel(a)"
+                      type="button"
+                      class="btn btn-ghost btn-sm btn-action"
+                      :disabled="updating === a.id"
+                      @click.stop="setStatus(a, 'cancelled')"
+                    >
+                      Cancelar
+                    </button>
+                    <button
+                      v-if="adminActions.canGenerateSummary(a)"
+                      type="button"
+                      class="btn btn-ghost btn-sm btn-action"
+                      :disabled="summarizing === a.id"
+                      @click.stop="handleGenerateSummary(a)"
+                    >
+                      {{ summarizing === a.id ? "Gerando…" : "Gerar resumo" }}
+                    </button>
+                    <button
+                      v-if="adminActions.canViewStatistics(a)"
+                      type="button"
+                      class="btn btn-ghost btn-sm btn-action"
+                      @click.stop="openStatistics(a)"
+                    >
+                      Estatísticas
+                    </button>
+                    <button
+                      v-if="adminActions.canDelete(a)"
+                      type="button"
+                      class="btn btn-danger btn-sm btn-action"
+                      :disabled="deleting === a.id"
+                      @click.stop="handleDelete(a)"
+                    >
+                      Excluir
+                    </button>
+                  </div>
+                  <span v-else class="text-muted">—</span>
+                </td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
     </div>
+
+    <MyAllocationDetailPanel
+      v-if="detailTarget"
+      admin-mode
+      :admin-readonly="isHiddenList"
+      :allocation="detailTarget"
+      :updating="updating === detailTarget.id"
+      :deleting="deleting === detailTarget.id"
+      :summarizing="summarizing === detailTarget.id"
+      @close="closeDetail"
+      @approve="setStatus(detailTarget, 'approved')"
+      @deny="setStatus(detailTarget, 'denied')"
+      @cancel="setStatus(detailTarget, 'cancelled')"
+      @generate-summary="handleGenerateSummary(detailTarget)"
+      @statistics="openStatistics(detailTarget)"
+      @delete="handleDelete(detailTarget)"
+    />
+
+    <AllocationUsageStatsModal
+      v-if="usageStatsTarget"
+      :allocation="usageStatsTarget"
+      :machine-label="machineName(usageStatsTarget)"
+      @close="usageStatsTarget = null"
+    />
   </div>
 </template>
 
 <style scoped>
-.list-mode-tabs {
-  display: flex;
-  gap: 0.35rem;
-  margin-bottom: 1rem;
-  flex-wrap: wrap;
+.allocations-page {
+  max-width: 1280px;
+  margin: 0 auto;
 }
 
-.hidden-hint {
-  font-size: 0.85rem;
-  margin: 0 0 1.25rem;
-}
-
-.hidden-badge {
-  margin-left: 0.35rem;
-  font-size: 0.72rem;
-}
-
-.filter-tabs {
-  display: flex;
-  gap: 0.25rem;
-  margin-bottom: 1.5rem;
-  flex-wrap: wrap;
-}
-.tab-btn {
-  padding: 0.4rem 0.9rem;
-  border-radius: 8px;
-  font-size: 0.85rem;
-  font-weight: 500;
-  color: var(--text-secondary);
-  background: transparent;
-  border: 1px solid transparent;
-  transition: all var(--transition);
-}
-.tab-btn:hover {
-  color: var(--text-primary);
-  background: var(--bg-hover);
-}
-.tab-btn.active {
-  color: var(--accent);
-  background: var(--accent-soft);
-  border-color: rgba(124, 108, 240, 0.15);
+.allocations-card {
+  padding: 1.25rem 1.5rem;
+  text-align: left;
 }
 </style>

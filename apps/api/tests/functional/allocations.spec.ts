@@ -1,9 +1,9 @@
 import { test } from '@japa/runner'
 import User from '#models/user'
-import Machine from '#models/machine'
 import Allocation from '#models/allocation'
 import testUtils from '@adonisjs/core/services/test_utils'
 import { DateTime } from 'luxon'
+import { createTestMachine } from '../helpers/test_machine.js'
 
 test.group('Allocations', (group) => {
   group.each.setup(() => testUtils.db().withGlobalTransaction())
@@ -19,7 +19,7 @@ test.group('Allocations', (group) => {
       password: '123',
       role: 'user',
     })
-    const machine = await Machine.create({ name: 'PC-01', description: 'Lab', status: 'available' })
+    const machine = await createTestMachine({ name: 'PC-01', description: 'Lab', status: 'available' })
 
     const response = await client
       .post('/api/v1/allocations')
@@ -46,7 +46,7 @@ test.group('Allocations', (group) => {
       password: '123',
       role: 'user',
     })
-    const machine = await Machine.create({ name: 'PC-PEND', description: 'Lab', status: 'available' })
+    const machine = await createTestMachine({ name: 'PC-PEND', description: 'Lab', status: 'available' })
 
     const response = await client
       .post('/api/v1/allocations')
@@ -72,7 +72,7 @@ test.group('Allocations', (group) => {
       password: '123',
       role: 'user',
     })
-    const machine = await Machine.create({
+    const machine = await createTestMachine({
       name: 'PC-MANU',
       description: 'Manutenção',
       status: 'maintenance',
@@ -98,7 +98,7 @@ test.group('Allocations', (group) => {
       password: '123',
       role: 'user',
     })
-    const machine = await Machine.create({ name: 'PC-01', description: 'Lab', status: 'available' })
+    const machine = await createTestMachine({ name: 'PC-01', description: 'Lab', status: 'available' })
 
     const baseStart = DateTime.utc().plus({ hours: 1 })
     const baseEnd = DateTime.utc().plus({ hours: 3 })
@@ -143,7 +143,7 @@ test.group('Allocations', (group) => {
       password: '123',
       role: 'user',
     })
-    const machine = await Machine.create({ name: 'PC-01', description: 'Lab', status: 'available' })
+    const machine = await createTestMachine({ name: 'PC-01', description: 'Lab', status: 'available' })
 
     await Allocation.create({
       userId: user1.id,
@@ -178,7 +178,7 @@ test.group('Allocations', (group) => {
       password: '123',
       role: 'user',
     })
-    const machine = await Machine.create({ name: 'PC-01', description: 'Lab', status: 'available' })
+    const machine = await createTestMachine({ name: 'PC-01', description: 'Lab', status: 'available' })
 
     const endTime = DateTime.utc().plus({ minutes: 30 }) // Acaba daqui a 30 mins
 
@@ -212,7 +212,7 @@ test.group('Allocations', (group) => {
       password: '123',
       role: 'user',
     })
-    const machine = await Machine.create({
+    const machine = await createTestMachine({
       name: 'PC-EXT-END',
       description: 'Lab',
       status: 'available',
@@ -250,7 +250,7 @@ test.group('Allocations', (group) => {
       password: '123',
       role: 'user',
     })
-    const machine = await Machine.create({
+    const machine = await createTestMachine({
       name: 'PC-EXT-FUT',
       description: 'Lab',
       status: 'available',
@@ -282,7 +282,7 @@ test.group('Allocations', (group) => {
       password: '123',
       role: 'user',
     })
-    const machine = await Machine.create({ name: 'PC-01', description: 'Lab', status: 'available' })
+    const machine = await createTestMachine({ name: 'PC-01', description: 'Lab', status: 'available' })
 
     const allocation = await Allocation.create({
       userId: user.id,
@@ -313,7 +313,7 @@ test.group('Allocations', (group) => {
       password: '123',
       role: 'user',
     })
-    const machine = await Machine.create({ name: 'PC-01', description: 'Lab', status: 'available' })
+    const machine = await createTestMachine({ name: 'PC-01', description: 'Lab', status: 'available' })
 
     const endTime = DateTime.utc().plus({ minutes: 20 })
 
@@ -349,7 +349,7 @@ test.group('Allocations', (group) => {
       password: '123',
       role: 'user',
     })
-    const machine = await Machine.create({ name: 'PC-GAP', description: 'Lab', status: 'available' })
+    const machine = await createTestMachine({ name: 'PC-GAP', description: 'Lab', status: 'available' })
 
     const end = DateTime.utc().plus({ hours: 2 })
     await Allocation.create({
@@ -376,7 +376,7 @@ test.group('Allocations', (group) => {
       password: '123',
       role: 'user',
     })
-    const machine = await Machine.create({
+    const machine = await createTestMachine({
       name: 'PC-GRACE-CONF',
       description: 'Lab',
       status: 'available',
@@ -408,7 +408,7 @@ test.group('Allocations', (group) => {
       password: '123',
       role: 'user',
     })
-    const machine = await Machine.create({
+    const machine = await createTestMachine({
       name: 'PC-GAP2',
       description: 'Lab',
       status: 'available',
@@ -441,7 +441,7 @@ test.group('Allocations', (group) => {
       role: 'user',
       systemUsername: 'lab.finish_user',
     })
-    const machine = await Machine.create({
+    const machine = await createTestMachine({
       name: 'PC-FIN',
       description: 'Lab',
       status: 'available',
@@ -493,7 +493,7 @@ test.group('Allocations', (group) => {
       password: '123',
       role: 'user',
     })
-    const machine = await Machine.create({
+    const machine = await createTestMachine({
       name: 'PC-CANCEL',
       description: 'Lab',
       status: 'available',
@@ -523,7 +523,7 @@ test.group('Allocations', (group) => {
       password: '123',
       role: 'user',
     })
-    const machine = await Machine.create({
+    const machine = await createTestMachine({
       name: 'PC-CANCEL-LATE',
       description: 'Lab',
       status: 'available',
@@ -555,7 +555,7 @@ test.group('Allocations', (group) => {
       password: '123',
       role: 'user',
     })
-    const machine = await Machine.create({
+    const machine = await createTestMachine({
       name: 'PC-HIDE',
       description: 'Lab',
       status: 'available',
@@ -588,7 +588,7 @@ test.group('Allocations', (group) => {
       password: '123',
       role: 'user',
     })
-    const machine = await Machine.create({
+    const machine = await createTestMachine({
       name: 'PC-HIDE-ADM',
       description: 'Lab',
       status: 'available',

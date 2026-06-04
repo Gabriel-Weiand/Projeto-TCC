@@ -4,7 +4,7 @@ import { normalizeApiUtcIso, parseApiUtcMs } from "@/utils/datetime";
 const BLOCKING_STATUSES = new Set<Allocation["status"]>(["approved", "pending"]);
 
 export function isMachineStatusBlocked(status: Machine["status"]): boolean {
-  return status === "offline" || status === "maintenance";
+  return status === "offline" || status === "disabled" || status === "maintenance";
 }
 
 /** Conflito com reserva aprovada ou pendente na mesma máquina. */

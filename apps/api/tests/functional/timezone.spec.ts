@@ -1,10 +1,10 @@
 import { test } from '@japa/runner'
 import User from '#models/user'
-import Machine from '#models/machine'
 import Allocation from '#models/allocation'
 import testUtils from '@adonisjs/core/services/test_utils'
 import { DateTime, Settings } from 'luxon'
 import { labConfig } from '#services/lab_config'
+import { createTestMachine } from '../helpers/test_machine.js'
 
 test.group('Timezone — processo e persistência', (group) => {
   group.each.setup(() => testUtils.db().withGlobalTransaction())
@@ -36,7 +36,7 @@ test.group('Timezone — Alocações em UTC', (group) => {
       role: 'user',
     })
 
-    const machine = await Machine.create({
+    const machine = await createTestMachine({
       name: 'PC-TZ-01',
       description: 'Teste timezone',
       cpuModel: 'Intel i5',
@@ -79,7 +79,7 @@ test.group('Timezone — Alocações em UTC', (group) => {
       role: 'user',
     })
 
-    const machine = await Machine.create({
+    const machine = await createTestMachine({
       name: 'PC-TZ-02',
       description: 'Teste timezone 2',
       cpuModel: 'Intel i5',
@@ -115,7 +115,7 @@ test.group('Timezone — Alocações em UTC', (group) => {
       role: 'user',
     })
 
-    const machine = await Machine.create({
+    const machine = await createTestMachine({
       name: 'PC-TZ-03',
       description: 'Teste conflito timezone',
       cpuModel: 'Intel i5',
@@ -153,7 +153,7 @@ test.group('Timezone — Alocações em UTC', (group) => {
       role: 'user',
     })
 
-    const machine = await Machine.create({
+    const machine = await createTestMachine({
       name: 'PC-TZ-FRONT',
       description: 'Teste frontend sem offset',
       cpuModel: 'Intel i5',
@@ -189,7 +189,7 @@ test.group('Timezone — Alocações em UTC', (group) => {
       role: 'user',
     })
 
-    const machine = await Machine.create({
+    const machine = await createTestMachine({
       name: 'PC-RT',
       description: 'Roundtrip',
       cpuModel: 'Intel i5',
@@ -230,7 +230,7 @@ test.group('Timezone — Alocações em UTC', (group) => {
       role: 'user',
     })
 
-    const machine = await Machine.create({
+    const machine = await createTestMachine({
       name: 'PC-TZ-FIX',
       description: 'Teste frontend corrigido',
       cpuModel: 'Intel i5',

@@ -1,3 +1,4 @@
+import type { AllocationLifecycleStatus } from "@/types";
 import {
   formatLabDate,
   formatLabDateTime,
@@ -42,6 +43,92 @@ export function allocationApiErrorMessage(
     if (msg) return msg;
   }
   return fallback;
+}
+
+/** Fases operacionais exibidas como «Aprovada» na listagem do usuário. */
+const OPERATIONAL_APPROVED_LIFECYCLES = new Set([
+  "approved",
+  "active",
+  "grace",
+  "sftp",
+]);
+
+/**
+ * Chave de exibição na listagem: agrupa aprovada, ativa, grace e SFTP.
+ * Sessões encerradas (lifecycle finished) aparecem como finalizada.
+ */
+export function allocationListStatusKey(
+  status: string,
+  lifecycleStatus?: AllocationLifecycleStatus,
+): string {
+  if (status === "finished" || lifecycleStatus === "finished") return "finished";
+  if (
+    status === "approved" ||
+    (lifecycleStatus && OPERATIONAL_APPROVED_LIFECYCLES.has(lifecycleStatus))
+  ) {
+    return "approved";
+  }
+  return status;
+}
+
+export function allocationListStatusBadge(
+  status: string,
+  lifecycleStatus?: AllocationLifecycleStatus,
+): string {
+  return allocationStatusBadge(
+    allocationListStatusKey(status, lifecycleStatus),
+  );
+}
+
+export function allocationListStatusLabel(
+  status: string,
+  lifecycleStatus?: AllocationLifecycleStatus,
+): string {
+  return allocationStatusLabel(
+    allocationListStatusKey(status, lifecycleStatus),
+  );
+}
+
+/** Chave de exibição no painel admin (sub-estados operacionais + removidas). */
+export function adminAllocationStatusKey(
+  status: string,
+  lifecycleStatus?: AllocationLifecycleStatus,
+  userHidden?: boolean,
+): string {
+  if (userHidden) return "removed";
+  if (status === "approved") {
+    const lc = lifecycleStatus ?? "approved";
+    if (lc === "active" || lc === "grace" || lc === "sftp") return lc;
+    if (lc === "finished") return "finished";
+    return "approved";
+  }
+  return status;
+}
+
+export function adminAllocationStatusBadge(
+  status: string,
+  lifecycleStatus?: AllocationLifecycleStatus,
+  userHidden?: boolean,
+): string {
+  const key = adminAllocationStatusKey(status, lifecycleStatus, userHidden);
+  if (key === "removed") return "badge-muted";
+  return allocationStatusBadge(
+    status,
+    key !== status ? key : undefined,
+  );
+}
+
+export function adminAllocationStatusLabel(
+  status: string,
+  lifecycleStatus?: AllocationLifecycleStatus,
+  userHidden?: boolean,
+): string {
+  const key = adminAllocationStatusKey(status, lifecycleStatus, userHidden);
+  if (key === "removed") return "Removida";
+  return allocationStatusLabel(
+    status,
+    key !== status ? key : undefined,
+  );
 }
 
 export function allocationStatusBadge(

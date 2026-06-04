@@ -5,6 +5,7 @@ import { useMachinesStore } from "@/stores/machines";
 import { useAllocationsStore } from "@/stores/allocations";
 import { useUsersStore } from "@/stores/users";
 import type { Machine, RealtimeTelemetry } from "@/types";
+import { isNowBeforeUtc } from "@/utils/datetime";
 
 const router = useRouter();
 
@@ -51,16 +52,24 @@ onUnmounted(() => {
 
 const totalMachines = computed(() => machinesStore.machines.length);
 const onlineMachines = computed(
-  () => machinesStore.machines.filter((m) => m.status !== "offline").length,
+  () => machinesStore.machines.filter((m) => m.status !== "offline" && m.status !== "disabled").length,
 );
 const totalUsers = computed(() => usersStore.users.length);
 const pendingAllocations = computed(
   () =>
     allocationsStore.allocations.filter((a) => a.status === "pending").length,
 );
+const scheduledAllocations = computed(
+  () =>
+    allocationsStore.allocations.filter(
+      (a) => a.status === "approved" && isNowBeforeUtc(a.startTime),
+    ).length,
+);
 const activeAllocations = computed(
   () =>
-    allocationsStore.allocations.filter((a) => a.status === "approved").length,
+    allocationsStore.allocations.filter(
+      (a) => a.status === "approved" && !isNowBeforeUtc(a.startTime),
+    ).length,
 );
 
 function statusColor(m: Machine) {
@@ -113,21 +122,26 @@ function primarySessionLabel(m: Machine): string | null {
         <div class="stat-card">
           <span class="stat-label">Máquinas</span>
           <span class="stat-value">{{ totalMachines }}</span>
-          <span class="stat-sub">{{ onlineMachines }} online</span>
+          <span class="stat-sub">{{ onlineMachines }} Online</span>
         </div>
         <div class="stat-card">
           <span class="stat-label">Usuários</span>
           <span class="stat-value">{{ totalUsers }}</span>
         </div>
         <div class="stat-card">
-          <span class="stat-label">Pendentes</span>
-          <span class="stat-value">{{ pendingAllocations }}</span>
-          <span class="stat-sub">aguardando aprovação</span>
-        </div>
-        <div class="stat-card">
           <span class="stat-label">Ativas</span>
           <span class="stat-value">{{ activeAllocations }}</span>
-          <span class="stat-sub">reservas aprovadas</span>
+          <span class="stat-sub">Reservas Aprovadas</span>
+        </div>
+        <div class="stat-card">
+          <span class="stat-label">Agendadas</span>
+          <span class="stat-value">{{ scheduledAllocations }}</span>
+          <span class="stat-sub">Próximas Reservas</span>
+        </div>
+        <div class="stat-card">
+          <span class="stat-label">Pendentes</span>
+          <span class="stat-value">{{ pendingAllocations }}</span>
+          <span class="stat-sub">Aguardando Aprovação</span>
         </div>
       </div>
 
@@ -139,7 +153,7 @@ function primarySessionLabel(m: Machine): string | null {
           :key="m.id"
           class="card machine-status-card clickable"
           @click="
-            router.push({ name: 'admin-machine-detail', params: { id: m.id } })
+            router.push({ name: 'machine-detail', params: { id: m.id } })
           "
         >
           <div class="ms-top">
@@ -199,11 +213,22 @@ function primarySessionLabel(m: Machine): string | null {
 </template>
 
 <style scoped>
+.stats-row .stat-label {
+  text-transform: none;
+  letter-spacing: normal;
+}
+
 .stats-row {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+  grid-template-columns: repeat(5, minmax(0, 1fr));
   gap: 1rem;
   margin-bottom: 2rem;
+}
+
+@media (max-width: 1100px) {
+  .stats-row {
+    grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+  }
 }
 
 .section-title {

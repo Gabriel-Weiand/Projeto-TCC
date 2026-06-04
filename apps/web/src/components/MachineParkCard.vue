@@ -39,6 +39,7 @@ function statusBadge(s: string) {
     occupied: "badge-warning",
     maintenance: "badge-info",
     offline: "badge-danger",
+    disabled: "badge-danger",
   };
   return map[s] || "badge-muted";
 }
@@ -49,6 +50,7 @@ function statusLabel(s: string) {
     occupied: "Ocupada",
     maintenance: "Manutenção",
     offline: "Offline",
+    disabled: "Desativada",
   };
   return map[s] || s;
 }

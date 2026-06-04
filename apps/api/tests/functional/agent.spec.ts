@@ -40,15 +40,20 @@ test.group('Agent API', (group) => {
     })
 
     await machine.refresh()
-    assert.equal(machine.status, 'available')
+    assert.equal(machine.status, 'offline')
     assert.isNotNull(machine.lastSeenAt)
   })
 
-  test('heartbeat deve atualizar currentSessions e mudar status para occupied', async ({
+  test('heartbeat deve atualizar currentSessions sem alterar status persistido', async ({
     client,
     assert,
   }) => {
-    const machine = await Machine.create({ name: 'PC-01', description: 'Lab', token: 'token123' })
+    const machine = await Machine.create({
+      name: 'PC-01',
+      description: 'Lab',
+      token: 'token123',
+      status: 'available',
+    })
 
     const response = await client
       .post('/api/v1/agent/heartbeat')
@@ -58,8 +63,8 @@ test.group('Agent API', (group) => {
     response.assertStatus(200)
 
     await machine.refresh()
-    assert.equal(machine.status, 'occupied') // Mudou porque há alguém conectado
-    assert.deepEqual(machine.currentSessions, ['lab.aluno_silva']) // Registrou a sessão na máquina
+    assert.equal(machine.status, 'available')
+    assert.deepEqual(machine.currentSessions, ['lab.aluno_silva'])
   })
 
   // =========================================================================
@@ -529,7 +534,12 @@ test.group('Agent API', (group) => {
     client,
     assert,
   }) => {
-    const machine = await Machine.create({ name: 'PC-01', description: 'Lab', token: 't7' })
+    const machine = await Machine.create({
+      name: 'PC-01',
+      description: 'Lab',
+      token: 't7',
+      status: 'available',
+    })
 
     const response = await client
       .post('/api/v1/agent/telemetry')

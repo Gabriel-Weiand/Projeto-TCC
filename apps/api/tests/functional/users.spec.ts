@@ -128,7 +128,7 @@ test.group('Users', (group) => {
     response.assertBodyContains({ fullName: 'User Ver' })
   })
 
-  test('admin deve atualizar um usuário', async ({ client, assert }) => {
+  test('admin deve atualizar senha e cargo de um usuário', async ({ client, assert }) => {
     const admin = await User.create({
       fullName: 'Admin',
       email: 'admin@teste.com',
@@ -143,12 +143,42 @@ test.group('Users', (group) => {
     })
 
     const response = await client.put(`/api/v1/users/${user.id}`).loginAs(admin).json({
-      fullName: 'New Name',
+      password: 'novaSenha123',
+      role: 'admin',
     })
 
     response.assertStatus(200)
     await user.refresh()
-    assert.equal(user.fullName, 'New Name')
+    assert.equal(user.fullName, 'Old Name')
+    assert.equal(user.email, 'old@teste.com')
+    assert.equal(user.role, 'admin')
+    const verified = await User.verifyCredentials('old@teste.com', 'novaSenha123')
+    assert.equal(verified.email, 'old@teste.com')
+  })
+
+  test('admin NÃO pode alterar nome ou email via PUT /users/:id', async ({ client, assert }) => {
+    const admin = await User.create({
+      fullName: 'Admin',
+      email: 'admin@teste.com',
+      password: 'senha123',
+      role: 'admin',
+    })
+    const user = await User.create({
+      fullName: 'Nome Original',
+      email: 'original@teste.com',
+      password: 'senha123',
+      role: 'user',
+    })
+
+    const response = await client.put(`/api/v1/users/${user.id}`).loginAs(admin).json({
+      fullName: 'Nome Alterado',
+      email: 'alterado@teste.com',
+    })
+
+    response.assertStatus(200)
+    await user.refresh()
+    assert.equal(user.fullName, 'Nome Original')
+    assert.equal(user.email, 'original@teste.com')
   })
 
   test('admin deve excluir um usuário', async ({ client, assert }) => {

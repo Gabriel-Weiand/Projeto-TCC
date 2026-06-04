@@ -3,16 +3,25 @@ import { computed } from "vue";
 import { useLabConfigStore } from "@/stores/labConfig";
 import type { Allocation } from "@/types";
 import {
+  adminAllocationStatusBadge,
+  adminAllocationStatusLabel,
   allocationStatusBadge,
   allocationStatusLabel,
   fmtAllocationDateTime,
 } from "@/utils/allocationLabels";
 import { useMyAllocationActions } from "@/composables/useMyAllocationActions";
+import { useAdminAllocationActions } from "@/composables/useAdminAllocationActions";
+import { effectiveLifecycleStatus } from "@/utils/allocationLifecycle";
 
 const props = defineProps<{
   allocation: Allocation;
   updating?: boolean;
   deleting?: boolean;
+  /** Painel aberto pelo admin (ações de moderação no rodapé). */
+  adminMode?: boolean;
+  /** Lista oculta — somente leitura. */
+  adminReadonly?: boolean;
+  summarizing?: boolean;
 }>();
 
 const emit = defineEmits<{
@@ -23,15 +32,51 @@ const emit = defineEmits<{
   cancel: [];
   finish: [];
   delete: [];
+  approve: [];
+  deny: [];
+  generateSummary: [];
 }>();
 
 const lab = useLabConfigStore();
 const actions = useMyAllocationActions();
+const adminActions = useAdminAllocationActions((a) =>
+  effectiveLifecycleStatus(a, lab.allocationAccess),
+);
 
 const machine = computed(() => props.allocation.machine);
 
 const machineLabel = computed(
   () => machine.value?.name ?? `Máquina #${props.allocation.machineId}`,
+);
+
+const allocationLifecycle = computed(() =>
+  effectiveLifecycleStatus(props.allocation, lab.allocationAccess),
+);
+
+const statusBadgeClass = computed(() =>
+  props.adminMode
+    ? adminAllocationStatusBadge(
+        props.allocation.status,
+        allocationLifecycle.value,
+        props.allocation.userHidden,
+      )
+    : allocationStatusBadge(
+        props.allocation.status,
+        actions.lifecycle(props.allocation),
+      ),
+);
+
+const statusLabelText = computed(() =>
+  props.adminMode
+    ? adminAllocationStatusLabel(
+        props.allocation.status,
+        allocationLifecycle.value,
+        props.allocation.userHidden,
+      )
+    : allocationStatusLabel(
+        props.allocation.status,
+        actions.lifecycle(props.allocation),
+      ),
 );
 
 const MACHINE_STATUS_LABELS: Record<string, string> = {
@@ -60,18 +105,8 @@ function machineDescription(desc?: string | null) {
         <div class="modal-header">
           <div class="modal-header-text">
             <h2 class="modal-title">{{ machineLabel }}</h2>
-            <span
-              :class="[
-                'badge',
-                allocationStatusBadge(allocation.status, actions.lifecycle(allocation)),
-              ]"
-            >
-              {{
-                allocationStatusLabel(
-                  allocation.status,
-                  actions.lifecycle(allocation),
-                )
-              }}
+            <span :class="['badge', statusBadgeClass]">
+              {{ statusLabelText }}
             </span>
           </div>
           <button type="button" class="btn-close" @click="emit('close')">✕</button>
@@ -88,6 +123,23 @@ function machineDescription(desc?: string | null) {
               <div class="detail-row">
                 <dt>Fim</dt>
                 <dd>{{ fmt(allocation.endTime) }}</dd>
+              </div>
+            </dl>
+          </section>
+
+          <section
+            v-if="adminMode && allocation.user"
+            class="detail-section card"
+          >
+            <h3 class="detail-section-title">Usuário</h3>
+            <dl class="detail-dl">
+              <div class="detail-row">
+                <dt>Nome</dt>
+                <dd>{{ allocation.user.fullName }}</dd>
+              </div>
+              <div class="detail-row">
+                <dt>Email</dt>
+                <dd>{{ allocation.user.email }}</dd>
               </div>
             </dl>
           </section>
@@ -161,6 +213,70 @@ function machineDescription(desc?: string | null) {
 
         <footer class="detail-footer">
           <h3 class="detail-footer-title">Ações</h3>
+          <template v-if="adminMode">
+            <div
+              v-if="adminActions.hasActions(allocation, adminReadonly)"
+              class="detail-actions"
+            >
+              <template v-if="adminActions.canApproveDeny(allocation)">
+                <button
+                  type="button"
+                  class="btn btn-sm detail-action-btn btn-approve-outline"
+                  :disabled="updating"
+                  @click="emit('approve')"
+                >
+                  {{ updating ? "Salvando…" : "Aprovar" }}
+                </button>
+                <button
+                  type="button"
+                  class="btn btn-danger btn-sm detail-action-btn"
+                  :disabled="updating"
+                  @click="emit('deny')"
+                >
+                  {{ updating ? "Salvando…" : "Negar" }}
+                </button>
+              </template>
+              <button
+                v-if="adminActions.canCancel(allocation)"
+                type="button"
+                class="btn btn-ghost btn-sm detail-action-btn"
+                :disabled="updating"
+                @click="emit('cancel')"
+              >
+                {{ updating ? "Salvando…" : "Cancelar" }}
+              </button>
+              <button
+                v-if="adminActions.canGenerateSummary(allocation)"
+                type="button"
+                class="btn btn-ghost btn-sm detail-action-btn"
+                :disabled="summarizing"
+                @click="emit('generateSummary')"
+              >
+                {{ summarizing ? "Gerando…" : "Gerar resumo" }}
+              </button>
+              <button
+                v-if="adminActions.canViewStatistics(allocation)"
+                type="button"
+                class="btn btn-ghost btn-sm detail-action-btn"
+                @click="emit('statistics')"
+              >
+                Estatísticas
+              </button>
+              <button
+                v-if="adminActions.canDelete(allocation)"
+                type="button"
+                class="btn btn-danger btn-sm detail-action-btn"
+                :disabled="deleting"
+                @click="emit('delete')"
+              >
+                {{ deleting ? "Excluindo…" : "Excluir" }}
+              </button>
+            </div>
+            <p v-else class="detail-no-actions text-muted">
+              Nenhuma ação disponível para esta reserva.
+            </p>
+          </template>
+          <template v-else>
           <div v-if="actions.hasActions(allocation)" class="detail-actions">
             <button
               v-if="actions.showExtendButton(allocation)"
@@ -222,6 +338,7 @@ function machineDescription(desc?: string | null) {
           <p v-else class="detail-no-actions text-muted">
             Nenhuma ação disponível para esta reserva.
           </p>
+          </template>
         </footer>
       </div>
     </div>
@@ -397,5 +514,17 @@ function machineDescription(desc?: string | null) {
   background: rgba(255, 255, 255, 0.04);
   color: var(--text-muted);
   box-shadow: none;
+}
+
+.btn-approve-outline {
+  color: var(--success);
+  background: transparent;
+  border: 1px solid rgba(52, 211, 153, 0.55);
+}
+
+.btn-approve-outline:hover:not(:disabled) {
+  background: var(--success-soft);
+  border-color: var(--success);
+  color: var(--success);
 }
 </style>

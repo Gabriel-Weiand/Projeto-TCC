@@ -16,20 +16,11 @@ export default class AgentController {
     const heartbeatService = new HeartbeatService()
     const responseData = await heartbeatService.processHeartbeat(machine, payload)
 
-    // Atualiza status básico da máquina
+    // Atualiza presença do agente; status efetivo é calculado na leitura (alocações + heartbeat).
     machine.lastSeenAt = DateTime.now()
-
-    const newStatus =
-      payload.connectedUsers && payload.connectedUsers.length > 0 ? 'occupied' : 'available'
-
-    if (machine.status !== 'maintenance' && machine.status !== newStatus) {
-      machine.status = newStatus
-      machine.currentSessions = payload.connectedUsers || []
-      await machine.save()
-      machineCache.invalidate(machine.token)
-    } else {
-      await machine.save()
-    }
+    machine.currentSessions = payload.connectedUsers || []
+    await machine.save()
+    machineCache.invalidate(machine.token)
 
     return response.ok(responseData)
   }
@@ -94,9 +85,8 @@ export default class AgentController {
 
     telemetryBuffer.recordBatch(machine.id, batchPayload)
 
-    // 3. Atualiza o status de atividade da máquina
+    // 3. Atualiza presença do agente
     machine.lastSeenAt = DateTime.now()
-    if (machine.status === 'offline') machine.status = 'available'
     await machine.save()
 
     return response.noContent()

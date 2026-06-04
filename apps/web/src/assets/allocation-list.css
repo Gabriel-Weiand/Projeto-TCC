@@ -1,0 +1,148 @@
+/* Layout compartilhado: Minhas alocações + Admin alocações */
+
+.allocation-list {
+  width: 100%;
+}
+
+.allocation-list-toolbar {
+  margin-bottom: 1rem;
+}
+
+.allocation-list .search-input {
+  width: 100%;
+  max-width: 320px;
+  padding: 0.5rem 0.85rem;
+  font-size: 0.88rem;
+  background: var(--bg-card-solid);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  color: var(--text-primary);
+}
+
+.allocation-list .filter-tabs {
+  display: flex;
+  gap: 0.25rem;
+  margin-bottom: 1.25rem;
+  flex-wrap: wrap;
+}
+
+.allocation-list .tab-btn {
+  padding: 0.4rem 0.9rem;
+  border-radius: 8px;
+  font-size: 0.85rem;
+  font-weight: 500;
+  color: var(--text-secondary);
+  background: transparent;
+  border: 1px solid transparent;
+  transition: all var(--transition);
+  cursor: pointer;
+}
+
+.allocation-list .tab-btn:hover {
+  color: var(--text-primary);
+  background: var(--bg-hover);
+}
+
+.allocation-list .tab-btn.active {
+  color: var(--accent);
+  background: var(--accent-soft);
+  border-color: rgba(124, 108, 240, 0.15);
+}
+
+.allocation-list .alloc-table {
+  width: 100%;
+}
+
+.allocation-list .alloc-table thead th,
+.allocation-list .alloc-table tbody td {
+  text-align: center;
+}
+
+.allocation-list .alloc-row {
+  cursor: pointer;
+  transition: background 0.15s ease;
+}
+
+.allocation-list .alloc-row:hover,
+.allocation-list .alloc-row:focus-visible {
+  background: var(--bg-hover);
+  outline: none;
+}
+
+.allocation-list .alloc-machine {
+  font-weight: 500;
+}
+
+.allocation-list .alloc-datetime {
+  font-size: 0.88rem;
+  white-space: nowrap;
+}
+
+.allocation-list .col-actions {
+  width: 1%;
+  min-width: 15rem;
+  white-space: nowrap;
+}
+
+.allocation-list .col-actions--admin {
+  min-width: 16rem;
+}
+
+.allocation-list .alloc-actions {
+  vertical-align: middle;
+  text-align: center;
+}
+
+.allocation-list .actions-row {
+  display: inline-flex;
+  flex-wrap: nowrap;
+  gap: 0.35rem;
+  justify-content: center;
+  align-items: center;
+  max-width: 100%;
+}
+
+.allocation-list .actions-readonly {
+  font-size: 0.8rem;
+  padding: 0.35rem;
+}
+
+.allocation-list .btn-action {
+  padding: 0.3rem 0.55rem;
+  font-size: 0.78rem;
+  flex-shrink: 0;
+}
+
+.allocation-list .btn-action:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.allocation-list .btn-action--waiting:disabled {
+  opacity: 0.35;
+  background: rgba(255, 255, 255, 0.04);
+  color: var(--text-muted);
+  box-shadow: none;
+}
+
+.allocation-list .btn-approve-outline {
+  color: var(--success);
+  background: transparent;
+  border: 1px solid rgba(52, 211, 153, 0.55);
+}
+
+.allocation-list .btn-approve-outline:hover:not(:disabled) {
+  background: var(--success-soft);
+  border-color: var(--success);
+  color: var(--success);
+}
+
+.allocation-list .hidden-badge {
+  margin-left: 0.35rem;
+  font-size: 0.72rem;
+}
+
+.allocation-list .hidden-hint {
+  font-size: 0.85rem;
+  margin: 0 0 1.25rem;
+}

@@ -948,7 +948,7 @@ test.group('Fluxo End-to-End via API do Agente', (group) => {
     assert.equal(flushed, 0)
 
     await machine.refresh()
-    assert.equal(machine.status, 'available')
+    assert.equal(machine.status, 'offline')
     assert.isNotNull(machine.lastSeenAt)
   })
 })
@@ -1101,9 +1101,9 @@ test.group('Ring Buffer de Telemetria', (group) => {
     const recent5 = telemetryBuffer.getRecent(machine.id, 5)
     assert.equal(recent5.length, 5)
 
-    // Pede mais do que tem → retorna tudo
+    // Pede mais do que tem → retorna tudo (ring cap = 15)
     const recentAll = telemetryBuffer.getRecent(machine.id, 100)
-    assert.equal(recentAll.length, 20)
+    assert.equal(recentAll.length, 15)
   })
 
   test('getRecent retorna array vazio para máquina sem dados', async ({ assert }) => {

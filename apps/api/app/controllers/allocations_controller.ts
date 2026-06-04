@@ -31,6 +31,10 @@ import {
   notifySessionSummaryReady,
 } from '#services/notification_service'
 import { parseUtcFromIso } from '#utils/datetime'
+import {
+  buildOccupiedMachineIds,
+  resolveEffectiveMachineStatus,
+} from '#services/machine_effective_status'
 
 export default class AllocationsController {
   /**
@@ -92,7 +96,11 @@ export default class AllocationsController {
       limit = 20,
     } = await request.validateUsing(listAllocationsValidator)
 
-    let query = Allocation.query().preload('user').preload('machine').orderBy('startTime', 'desc')
+    let query = Allocation.query()
+      .preload('user')
+      .preload('machine')
+      .preload('metric')
+      .orderBy('startTime', 'desc')
 
     // User normal só vê suas próprias alocações (excluindo as ocultas)
     if (user.role !== 'admin') {
@@ -166,9 +174,11 @@ export default class AllocationsController {
       })
     }
 
-    // 1. Verificação de Status da Máquina
+    // 1. Verificação de Status da Máquina (modo admin + status efetivo)
     const machine = await Machine.findOrFail(data.machineId)
-    if (machine.status === 'maintenance' || machine.status === 'offline') {
+    const occupiedMachineIds = await buildOccupiedMachineIds()
+    const effectiveStatus = resolveEffectiveMachineStatus(machine, occupiedMachineIds)
+    if (effectiveStatus === 'maintenance' || effectiveStatus === 'offline' || effectiveStatus === 'disabled') {
       return response.badRequest({
         code: 'MACHINE_IN_MAINTENANCE',
         message: 'A máquina selecionada está em manutenção ou offline.',

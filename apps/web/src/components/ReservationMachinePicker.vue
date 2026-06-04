@@ -42,7 +42,7 @@ function usePeriodToneFor(machine: Machine) {
 }
 
 function statusTone(machine: Machine) {
-  if (machine.status === "offline") return "tone-offline";
+  if (machine.status === "offline" || machine.status === "disabled") return "tone-offline";
   if (machine.status === "maintenance") return "tone-maintenance";
   if (machine.status === "occupied") return "tone-occupied";
   return "tone-available";

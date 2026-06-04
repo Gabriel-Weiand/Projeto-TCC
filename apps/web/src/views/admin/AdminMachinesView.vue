@@ -1,13 +1,12 @@
 <script setup lang="ts">
 import { ref, reactive, onMounted, computed } from "vue";
 import { useMachinesStore } from "@/stores/machines";
-import type { Machine } from "@/types";
+import type { Machine, MachineOperationalMode } from "@/types";
 
 const store = useMachinesStore();
 const loading = ref(true);
 const search = ref("");
 
-// Modal state
 const showModal = ref(false);
 const editing = ref<Machine | null>(null);
 const form = reactive({
@@ -15,12 +14,11 @@ const form = reactive({
   description: "",
   ipAddress: "",
   sshPort: "" as string,
-  status: "offline" as string,
+  operationalMode: "available" as MachineOperationalMode,
 });
 const saving = ref(false);
 const error = ref("");
 
-// Token state
 const tokenModal = ref(false);
 const tokenValue = ref("");
 const tokenMachine = ref("");
@@ -51,15 +49,25 @@ function parseSshPortInput(raw: string): number | null {
   return Number.isFinite(n) ? n : null;
 }
 
+function resolveOperationalMode(m: Machine): MachineOperationalMode {
+  if (m.operationalMode) return m.operationalMode;
+  if (m.status === "maintenance") return "maintenance";
+  if (m.status === "disabled") return "offline";
+  return "available";
+}
+
 function machinePayload() {
   const ip = form.ipAddress.trim();
-  return {
+  const payload: Record<string, unknown> = {
     name: form.name,
     description: form.description,
-    status: form.status,
     ipAddress: ip || null,
     sshPort: parseSshPortInput(form.sshPort),
   };
+  if (editing.value) {
+    payload.status = form.operationalMode;
+  }
+  return payload;
 }
 
 function openCreate() {
@@ -68,7 +76,7 @@ function openCreate() {
   form.description = "";
   form.ipAddress = "";
   form.sshPort = "";
-  form.status = "offline";
+  form.operationalMode = "available";
   error.value = "";
   showModal.value = true;
 }
@@ -79,7 +87,7 @@ function openEdit(m: Machine) {
   form.description = m.description || "";
   form.ipAddress = m.ipAddress || "";
   form.sshPort = m.sshPort != null ? String(m.sshPort) : "";
-  form.status = m.status;
+  form.operationalMode = resolveOperationalMode(m);
   error.value = "";
   showModal.value = true;
 }
@@ -98,12 +106,11 @@ async function handleSave() {
     } else {
       const { status, ...createBody } = machinePayload();
       const created = await store.createMachine({
-        name: createBody.name,
-        description: createBody.description,
-        ipAddress: createBody.ipAddress ?? undefined,
-        sshPort: createBody.sshPort,
+        name: createBody.name as string,
+        description: createBody.description as string,
+        ipAddress: (createBody.ipAddress as string | null) ?? undefined,
+        sshPort: createBody.sshPort as number | null,
       });
-      // Show token for newly created machine
       if (created.token) {
         tokenValue.value = created.token;
         tokenMachine.value = created.name;
@@ -150,6 +157,7 @@ function statusBadge(s: string) {
     occupied: "badge-warning",
     maintenance: "badge-info",
     offline: "badge-danger",
+    disabled: "badge-danger",
   };
   return map[s] || "badge-muted";
 }
@@ -160,6 +168,7 @@ function statusLabel(s: string) {
     occupied: "Ocupada",
     maintenance: "Manutenção",
     offline: "Offline",
+    disabled: "Desativada",
   };
   return map[s] || s;
 }
@@ -173,21 +182,14 @@ function copyToken() {
   <div class="fade-in">
     <div class="page-header">
       <h1 class="page-title">Gerenciar Máquinas</h1>
-      <div
-        style="
-          display: flex;
-          gap: 0.75rem;
-          align-items: center;
-          flex-wrap: wrap;
-        "
-      >
+      <div class="page-toolbar">
         <input
           v-model="search"
           type="text"
+          class="search-input"
           placeholder="Buscar..."
-          style="max-width: 220px; padding: 0.5rem 0.85rem; font-size: 0.88rem"
         />
-        <button class="btn btn-primary" @click="openCreate">
+        <button class="btn btn-primary btn-new-machine" @click="openCreate">
           + Nova Máquina
         </button>
       </div>
@@ -198,7 +200,7 @@ function copyToken() {
       Nenhuma máquina encontrada.
     </div>
 
-    <div v-else class="table-wrap">
+    <div v-else class="table-wrap machines-table">
       <table>
         <thead>
           <tr>
@@ -206,16 +208,13 @@ function copyToken() {
             <th>Status</th>
             <th>IP</th>
             <th>Último Report</th>
-            <th style="width: 180px">Ações</th>
+            <th class="col-actions">Ações</th>
           </tr>
         </thead>
         <tbody>
           <tr v-for="m in filtered" :key="m.id">
-            <td style="font-weight: 500">{{ m.name }}</td>
-            <td
-              class="text-secondary"
-              style="font-size: 0.82rem; font-family: monospace"
-            >
+            <td>
+              <span class="machine-name">{{ m.name }}</span>
             </td>
             <td>
               <span :class="['badge', statusBadge(m.status)]">{{
@@ -223,20 +222,20 @@ function copyToken() {
               }}</span>
             </td>
             <td class="text-secondary">{{ m.ipAddress || "—" }}</td>
-            <td class="text-muted" style="font-size: 0.82rem">
+            <td class="text-muted report-cell">
               {{
                 m.lastSeenAt
                   ? new Date(m.lastSeenAt).toLocaleString("pt-BR")
                   : "Nunca"
               }}
             </td>
-            <td>
-              <div style="display: flex; gap: 0.35rem; flex-wrap: wrap">
+            <td class="col-actions">
+              <div class="actions-cell">
                 <button
                   class="btn btn-ghost btn-sm text-accent"
                   @click="
                     $router.push({
-                      name: 'admin-machine-detail',
+                      name: 'machine-detail',
                       params: { id: m.id },
                     })
                   "
@@ -262,7 +261,6 @@ function copyToken() {
       </table>
     </div>
 
-    <!-- Create/Edit Modal -->
     <Teleport to="body">
       <div
         v-if="showModal"
@@ -308,20 +306,24 @@ function copyToken() {
               >
               <input
                 v-model="form.sshPort"
-                type="number"
-                min="1"
-                max="65535"
+                type="text"
+                inputmode="numeric"
+                pattern="[0-9]*"
+                class="port-input"
                 placeholder="22"
               />
             </div>
             <div v-if="editing" class="field">
               <label class="field-label">Status</label>
-              <select v-model="form.status">
+              <select v-model="form.operationalMode">
                 <option value="available">Disponível</option>
-                <option value="occupied">Ocupada</option>
+                <option value="offline">Desativada</option>
                 <option value="maintenance">Manutenção</option>
-                <option value="offline">Offline</option>
               </select>
+              <p v-if="form.operationalMode === 'available'" class="field-hint text-muted">
+                Em modo disponível, o status exibido é calculado automaticamente
+                (alocações, grace e heartbeat de 24 h).
+              </p>
             </div>
 
             <p v-if="error" class="error-text">{{ error }}</p>
@@ -343,7 +345,6 @@ function copyToken() {
       </div>
     </Teleport>
 
-    <!-- Token Modal -->
     <Teleport to="body">
       <div
         v-if="tokenModal"
@@ -377,6 +378,67 @@ function copyToken() {
 </template>
 
 <style scoped>
+.page-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  flex-wrap: nowrap;
+}
+
+.search-input {
+  width: 220px;
+  max-width: 100%;
+  padding: 0.5rem 0.85rem;
+  font-size: 0.88rem;
+  height: 38px;
+  box-sizing: border-box;
+}
+
+.btn-new-machine {
+  height: 38px;
+  padding: 0 1rem;
+  font-size: 0.88rem;
+  white-space: nowrap;
+}
+
+.machines-table th,
+.machines-table td {
+  text-align: center;
+}
+
+.machines-table .machine-name {
+  font-weight: 500;
+}
+
+.machines-table .report-cell {
+  font-size: 0.82rem;
+}
+
+.machines-table .col-actions {
+  width: 280px;
+  min-width: 280px;
+}
+
+.machines-table .actions-cell {
+  display: inline-flex;
+  justify-content: center;
+  align-items: center;
+  gap: 0.35rem;
+  flex-wrap: nowrap;
+  white-space: nowrap;
+}
+
+.port-input {
+  appearance: textfield;
+  -moz-appearance: textfield;
+}
+
+.port-input::-webkit-outer-spin-button,
+.port-input::-webkit-inner-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
+}
+
 .modal-overlay {
   position: fixed;
   inset: 0;

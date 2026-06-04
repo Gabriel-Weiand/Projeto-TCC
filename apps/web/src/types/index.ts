@@ -47,6 +47,8 @@ export interface MachineGroupSummary {
   description: string | null;
 }
 
+export type MachineOperationalMode = "available" | "offline" | "maintenance";
+
 export interface Machine {
   id: number;
   name: string;
@@ -61,7 +63,9 @@ export interface Machine {
   ipAddress: string | null;
   /** null = porta SSH 22 */
   sshPort: number | null;
-  status: "available" | "occupied" | "maintenance" | "offline";
+  status: "available" | "occupied" | "maintenance" | "offline" | "disabled";
+  /** Modo definido pelo admin: disponível (auto), desativada ou manutenção. */
+  operationalMode?: "available" | "offline" | "maintenance";
   lastSeenAt: string | null;
   activeUsers: any[] | null;
   currentSessions?: string[] | null;

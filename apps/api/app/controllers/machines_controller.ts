@@ -11,6 +11,11 @@ import { machineCache } from '#services/machine_cache'
 import { DateTime } from 'luxon'
 import { cancelAllocationsForMaintenance } from '#services/notification_service'
 import { normalizeCustomAgentConfig } from '#services/telemetry_presets'
+import {
+  buildOccupiedMachineIds,
+  normalizeOperationalMode,
+  resolveEffectiveMachineStatus,
+} from '#services/machine_effective_status'
 
 export default class MachinesController {
   /** Agente envia GB×10; respostas HTTP ao front em GB (1 decimal). */
@@ -73,12 +78,20 @@ export default class MachinesController {
     }))
   }
 
-  private serializeMachineForApi(machine: Machine, rawTelemetry: unknown) {
+  private serializeMachineForApi(
+    machine: Machine,
+    rawTelemetry: unknown,
+    occupiedMachineIds: Set<number>
+  ) {
     const serialized = machine.serialize() as Record<string, unknown>
     const group = machine.group
+    const operationalMode = normalizeOperationalMode(machine.status)
+    const status = resolveEffectiveMachineStatus(machine, occupiedMachineIds)
 
     return {
       ...serialized,
+      status,
+      operationalMode,
       totalVramGb: this.agentGbToApi(machine.totalVramGb),
       totalRamGb: this.agentGbToApi(machine.totalRamGb),
       totalDiskGb: machine.totalDiskGb,
@@ -100,12 +113,16 @@ export default class MachinesController {
    *
    * GET /api/v1/machines
    */
-  async index({ auth, response }: HttpContext) {
-    const user = auth.user!
+  async index({ response }: HttpContext) {
     const machines = await Machine.query().preload('group').orderBy('name', 'asc')
+    const occupiedMachineIds = await buildOccupiedMachineIds()
 
     const machinesWithTelemetry = machines.map((machine) =>
-      this.serializeMachineForApi(machine, telemetryBuffer.getLatest(machine.id))
+      this.serializeMachineForApi(
+        machine,
+        telemetryBuffer.getLatest(machine.id),
+        occupiedMachineIds
+      )
     )
 
     return response.ok(machinesWithTelemetry)
@@ -123,8 +140,11 @@ export default class MachinesController {
 
     const machine = await Machine.create(createData)
 
-    // Retorna com o token (apenas na criação!)
-    const presented = this.serializeMachineForApi(machine, null) as Record<string, unknown>
+    const occupiedMachineIds = await buildOccupiedMachineIds()
+    const presented = this.serializeMachineForApi(machine, null, occupiedMachineIds) as Record<
+      string,
+      unknown
+    >
     return response.created({
       ...presented,
       token: machine.token,
@@ -140,9 +160,14 @@ export default class MachinesController {
   async show({ params, response }: HttpContext) {
     const machine = await Machine.findOrFail(params.id)
     await machine.load('group')
+    const occupiedMachineIds = await buildOccupiedMachineIds()
 
     return response.ok(
-      this.serializeMachineForApi(machine, telemetryBuffer.getLatest(machine.id))
+      this.serializeMachineForApi(
+        machine,
+        telemetryBuffer.getLatest(machine.id),
+        occupiedMachineIds
+      )
     )
   }
 
@@ -160,6 +185,9 @@ export default class MachinesController {
     const isEnteringMaintenance = data.status === 'maintenance'
 
     const { totalDiskGb, ...updateData } = data
+    if (updateData.status !== undefined) {
+      updateData.status = normalizeOperationalMode(updateData.status)
+    }
     if (updateData.customAgentConfig !== undefined) {
       updateData.customAgentConfig = normalizeCustomAgentConfig(updateData.customAgentConfig)
     }
@@ -174,9 +202,11 @@ export default class MachinesController {
 
     machineCache.invalidateById(machine.id)
 
+    const occupiedMachineIds = await buildOccupiedMachineIds()
     const presented = this.serializeMachineForApi(
       machine,
-      telemetryBuffer.getLatest(machine.id)
+      telemetryBuffer.getLatest(machine.id),
+      occupiedMachineIds
     ) as Record<string, unknown>
 
     return response.ok({
