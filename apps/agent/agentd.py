@@ -2,7 +2,6 @@
 # Configurar o handshake ssh para funcionar sempre encima de ed25519.
 
 import time
-import getpass
 import socket
 import platform
 import subprocess
@@ -47,7 +46,6 @@ SERVER_URL = _env("SERVER_URL", "http://localhost:3333").rstrip("/")
 API_BASE = f"{SERVER_URL}/api/v1/agent"
 TOKEN = _env("MACHINE_TOKEN")
 MACHINE = _env("MACHINE_NAME") or socket.gethostname()
-SYSTEM_USER = getpass.getuser()
 
 # Heartbeat: intervalo fixo de controle (provisionamento SSH). Não é configurável pelo admin.
 HEARTBEAT_INTERVAL = 30
@@ -363,10 +361,11 @@ def _swap_wire() -> tuple[int, int]:
 # ==============================================================================
 
 def _active_users() -> list[dict]:
+    """Sessões TTY/SSH — apenas contas provisionadas pelo lab (prefixo lab.)."""
     users = []
     try:
         for u in psutil.users():
-            if u.name == SYSTEM_USER:
+            if not u.name.startswith("lab."):
                 continue
             is_ssh = bool(u.host and u.host not in ('localhost', ':0'))
             users.append({

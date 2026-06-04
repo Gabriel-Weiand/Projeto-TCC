@@ -17,7 +17,7 @@ const PROVISIONING_STATUSES = ['approved', 'finished'] as const
 
 /** Fim do bash com grace. `finished` (finalização antecipada) não recebe grace — só `endTime`. */
 export function graceEndsAt(allocation: Allocation, access: LabAccessConfig = getLabAccessConfig()) {
-  if (allocation.status === 'finished') {
+  if (allocation.status === 'finished' || access.graceMinutes <= 0) {
     return allocation.endTime
   }
   return allocation.endTime.plus({ minutes: access.graceMinutes })
@@ -27,6 +27,9 @@ export function graceEndsAt(allocation: Allocation, access: LabAccessConfig = ge
 export function sftpEndsAt(allocation: Allocation, access: LabAccessConfig = getLabAccessConfig()) {
   if (allocation.status === 'finished') {
     return allocation.endTime
+  }
+  if (access.postSftpMinutes <= 0) {
+    return graceEndsAt(allocation, access)
   }
   return allocation.endTime.plus({
     minutes: access.graceMinutes + access.postSftpMinutes,
@@ -74,10 +77,15 @@ export function resolveAccessPhase(
   if (nowMs >= sftpEndMs) {
     return 'no_key'
   }
-  if (nowMs >= graceEndMs) {
+  if (access.postSftpMinutes > 0 && nowMs >= graceEndMs && nowMs < sftpEndMs) {
     return 'post_sftp'
   }
-  if (allocation.status === 'approved' && nowMs >= endMs && nowMs < graceEndMs) {
+  if (
+    access.graceMinutes > 0 &&
+    allocation.status === 'approved' &&
+    nowMs >= endMs &&
+    nowMs < graceEndMs
+  ) {
     return 'grace'
   }
   if (nowMs >= startMs && nowMs < endMs) {

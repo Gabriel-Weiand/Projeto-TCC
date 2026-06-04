@@ -32,6 +32,8 @@ export interface LabPublicConfig {
     access?: {
       graceMinutes: number;
       postSftpMinutes: number;
+      graceEnabled?: boolean;
+      postSftpEnabled?: boolean;
       deleteUserDays: number;
       prepareMinutes: number;
     };
@@ -69,6 +71,8 @@ const DEFAULT_CONFIG: LabPublicConfig = {
     access: {
       graceMinutes: 10,
       postSftpMinutes: 1440,
+      graceEnabled: true,
+      postSftpEnabled: true,
       deleteUserDays: 7,
       prepareMinutes: 5,
     },
@@ -102,6 +106,16 @@ export const useLabConfigStore = defineStore("labConfig", () => {
   const allocationAccess = computed(
     () =>
       config.value.allocation.access ?? DEFAULT_CONFIG.allocation.access!,
+  );
+  const graceEnabled = computed(
+    () =>
+      allocationAccess.value.graceEnabled ??
+      allocationAccess.value.graceMinutes > 0,
+  );
+  const postSftpEnabled = computed(
+    () =>
+      allocationAccess.value.postSftpEnabled ??
+      allocationAccess.value.postSftpMinutes > 0,
   );
   const telemetryPresets = computed(
     () => config.value.telemetry?.presets ?? DEFAULT_LAB_TELEMETRY_PRESETS,
@@ -180,6 +194,8 @@ export const useLabConfigStore = defineStore("labConfig", () => {
     timezone,
     publicAllocationNames,
     allocationAccess,
+    graceEnabled,
+    postSftpEnabled,
     telemetryPresets,
     fetchConfig,
     refreshToday,

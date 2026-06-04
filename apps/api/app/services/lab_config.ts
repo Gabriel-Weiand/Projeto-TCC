@@ -8,6 +8,14 @@ function envInt(key: string, fallback: number): number {
   return Number.isFinite(n) && n > 0 ? n : fallback
 }
 
+/** Inteiro ≥ 0; `0` desativa a feature (ex.: grace ou SFTP pós-sessão). */
+function envIntAllowZero(key: string, fallback: number): number {
+  const raw = process.env[key]
+  if (!raw) return fallback
+  const n = Number.parseInt(raw, 10)
+  return Number.isFinite(n) && n >= 0 ? n : fallback
+}
+
 function envString(key: string, fallback: string): string {
   const raw = process.env[key]?.trim()
   return raw && raw.length > 0 ? raw : fallback
@@ -76,9 +84,9 @@ export const labConfig = {
      * Minutos de bash após endTime (somente `approved`; finish manual não usa grace).
      * Também define o intervalo mínimo entre reservas na mesma máquina (conflito de calendário).
      */
-    graceMinutes: envInt('LAB_ALLOCATION_GRACE_MINUTES', 10),
-    /** SFTP com chave após fim (+ grace se natural) */
-    postSftpMinutes: envInt('LAB_ALLOCATION_POST_SFTP_MINUTES', 1440),
+    graceMinutes: envIntAllowZero('LAB_ALLOCATION_GRACE_MINUTES', 10),
+    /** SFTP com chave após fim (+ grace se natural); 0 = desativado */
+    postSftpMinutes: envIntAllowZero('LAB_ALLOCATION_POST_SFTP_MINUTES', 1440),
     /** Dias após endTime até remover conta no SO (via drift) */
     deleteUserDays: envInt('LAB_ALLOCATION_DELETE_USER_DAYS', 7),
     /** Provisionamento antecipado (T-5) antes do início */
@@ -135,6 +143,8 @@ export function labPublicConfig() {
       access: {
         graceMinutes: labConfig.allocation.graceMinutes,
         postSftpMinutes: labConfig.allocation.postSftpMinutes,
+        graceEnabled: labConfig.allocation.graceMinutes > 0,
+        postSftpEnabled: labConfig.allocation.postSftpMinutes > 0,
         deleteUserDays: labConfig.allocation.deleteUserDays,
         prepareMinutes: labConfig.allocation.prepareMinutes,
       },

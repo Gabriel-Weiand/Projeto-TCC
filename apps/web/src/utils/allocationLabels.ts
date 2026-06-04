@@ -45,27 +45,22 @@ export function allocationApiErrorMessage(
   return fallback;
 }
 
-/** Fases operacionais exibidas como «Aprovada» na listagem do usuário. */
-const OPERATIONAL_APPROVED_LIFECYCLES = new Set([
-  "approved",
-  "active",
-  "grace",
-  "sftp",
-]);
-
 /**
- * Chave de exibição na listagem: agrupa aprovada, ativa, grace e SFTP.
- * Sessões encerradas (lifecycle finished) aparecem como finalizada.
+ * Chave de exibição na listagem do usuário: sub-estados operacionais (ativa, grace, SFTP)
+ * quando `status === approved`; demais status inalterados.
  */
 export function allocationListStatusKey(
   status: string,
   lifecycleStatus?: AllocationLifecycleStatus,
+  options?: { graceEnabled?: boolean; postSftpEnabled?: boolean },
 ): string {
   if (status === "finished" || lifecycleStatus === "finished") return "finished";
-  if (
-    status === "approved" ||
-    (lifecycleStatus && OPERATIONAL_APPROVED_LIFECYCLES.has(lifecycleStatus))
-  ) {
+  if (status === "approved") {
+    let lc: AllocationLifecycleStatus = lifecycleStatus ?? "approved";
+    if (lc === "grace" && options?.graceEnabled === false) lc = "active";
+    if (lc === "sftp" && options?.postSftpEnabled === false) lc = "finished";
+    if (lc === "active" || lc === "grace" || lc === "sftp") return lc;
+    if (lc === "finished") return "finished";
     return "approved";
   }
   return status;
@@ -74,19 +69,19 @@ export function allocationListStatusKey(
 export function allocationListStatusBadge(
   status: string,
   lifecycleStatus?: AllocationLifecycleStatus,
+  options?: { graceEnabled?: boolean; postSftpEnabled?: boolean },
 ): string {
-  return allocationStatusBadge(
-    allocationListStatusKey(status, lifecycleStatus),
-  );
+  const key = allocationListStatusKey(status, lifecycleStatus, options);
+  return allocationStatusBadge(status, key !== status ? key : undefined);
 }
 
 export function allocationListStatusLabel(
   status: string,
   lifecycleStatus?: AllocationLifecycleStatus,
+  options?: { graceEnabled?: boolean; postSftpEnabled?: boolean },
 ): string {
-  return allocationStatusLabel(
-    allocationListStatusKey(status, lifecycleStatus),
-  );
+  const key = allocationListStatusKey(status, lifecycleStatus, options);
+  return allocationStatusLabel(status, key !== status ? key : undefined);
 }
 
 /** Chave de exibição no painel admin (sub-estados operacionais + removidas). */
@@ -94,10 +89,13 @@ export function adminAllocationStatusKey(
   status: string,
   lifecycleStatus?: AllocationLifecycleStatus,
   userHidden?: boolean,
+  options?: { graceEnabled?: boolean; postSftpEnabled?: boolean },
 ): string {
   if (userHidden) return "removed";
   if (status === "approved") {
-    const lc = lifecycleStatus ?? "approved";
+    let lc: AllocationLifecycleStatus = lifecycleStatus ?? "approved";
+    if (lc === "grace" && options?.graceEnabled === false) lc = "active";
+    if (lc === "sftp" && options?.postSftpEnabled === false) lc = "finished";
     if (lc === "active" || lc === "grace" || lc === "sftp") return lc;
     if (lc === "finished") return "finished";
     return "approved";
@@ -109,8 +107,9 @@ export function adminAllocationStatusBadge(
   status: string,
   lifecycleStatus?: AllocationLifecycleStatus,
   userHidden?: boolean,
+  options?: { graceEnabled?: boolean; postSftpEnabled?: boolean },
 ): string {
-  const key = adminAllocationStatusKey(status, lifecycleStatus, userHidden);
+  const key = adminAllocationStatusKey(status, lifecycleStatus, userHidden, options);
   if (key === "removed") return "badge-muted";
   return allocationStatusBadge(
     status,
@@ -122,8 +121,9 @@ export function adminAllocationStatusLabel(
   status: string,
   lifecycleStatus?: AllocationLifecycleStatus,
   userHidden?: boolean,
+  options?: { graceEnabled?: boolean; postSftpEnabled?: boolean },
 ): string {
-  const key = adminAllocationStatusKey(status, lifecycleStatus, userHidden);
+  const key = adminAllocationStatusKey(status, lifecycleStatus, userHidden, options);
   if (key === "removed") return "Removida";
   return allocationStatusLabel(
     status,

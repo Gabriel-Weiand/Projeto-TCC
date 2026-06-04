@@ -5,8 +5,8 @@ import type { Allocation } from "@/types";
 import {
   adminAllocationStatusBadge,
   adminAllocationStatusLabel,
-  allocationStatusBadge,
-  allocationStatusLabel,
+  allocationListStatusBadge,
+  allocationListStatusLabel,
   fmtAllocationDateTime,
 } from "@/utils/allocationLabels";
 import { useMyAllocationActions } from "@/composables/useMyAllocationActions";
@@ -53,16 +53,28 @@ const allocationLifecycle = computed(() =>
   effectiveLifecycleStatus(props.allocation, lab.allocationAccess),
 );
 
+const adminStatusOptions = computed(() => ({
+  graceEnabled: lab.graceEnabled,
+  postSftpEnabled: lab.postSftpEnabled,
+}));
+
+const listStatusOptions = computed(() => ({
+  graceEnabled: lab.graceEnabled,
+  postSftpEnabled: lab.postSftpEnabled,
+}));
+
 const statusBadgeClass = computed(() =>
   props.adminMode
     ? adminAllocationStatusBadge(
         props.allocation.status,
         allocationLifecycle.value,
         props.allocation.userHidden,
+        adminStatusOptions.value,
       )
-    : allocationStatusBadge(
+    : allocationListStatusBadge(
         props.allocation.status,
         actions.lifecycle(props.allocation),
+        listStatusOptions.value,
       ),
 );
 
@@ -72,10 +84,12 @@ const statusLabelText = computed(() =>
         props.allocation.status,
         allocationLifecycle.value,
         props.allocation.userHidden,
+        adminStatusOptions.value,
       )
-    : allocationStatusLabel(
+    : allocationListStatusLabel(
         props.allocation.status,
         actions.lifecycle(props.allocation),
+        listStatusOptions.value,
       ),
 );
 

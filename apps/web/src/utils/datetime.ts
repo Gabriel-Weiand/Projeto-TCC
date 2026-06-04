@@ -172,15 +172,30 @@ export function isNowBeforeUtc(iso: string, nowMs = Date.now()): boolean {
   return nowMs < parseApiUtcMs(iso);
 }
 
-/** Entre `endTime` e `endTime + grace` (período de grace / extensão). */
+/** Entre `endTime` e `endTime + grace` — intervalo [end, graceEnd). */
 export function isNowWithinGraceAfterEnd(
   endIso: string,
   graceMinutes: number,
   nowMs = Date.now(),
 ): boolean {
+  if (graceMinutes <= 0) return false;
   const endMs = parseApiUtcMs(endIso);
   const graceEndMs = endMs + graceMinutes * 60_000;
-  return nowMs >= endMs && nowMs <= graceEndMs;
+  return nowMs >= endMs && nowMs < graceEndMs;
+}
+
+/** Entre fim do grace e fim da janela SFTP — intervalo [graceEnd, sftpEnd). */
+export function isNowWithinSftpAfterGrace(
+  endIso: string,
+  graceMinutes: number,
+  postSftpMinutes: number,
+  nowMs = Date.now(),
+): boolean {
+  if (postSftpMinutes <= 0) return false;
+  const endMs = parseApiUtcMs(endIso);
+  const graceEndMs = endMs + graceMinutes * 60_000;
+  const sftpEndMs = graceEndMs + postSftpMinutes * 60_000;
+  return nowMs >= graceEndMs && nowMs < sftpEndMs;
 }
 
 /** Sessão já começou e ainda dentro da janela ativa ou do grace pós-fim. */

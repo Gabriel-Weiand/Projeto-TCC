@@ -40,6 +40,11 @@ function lifecycle(a: Allocation) {
   return effectiveLifecycleStatus(a, lab.allocationAccess);
 }
 
+const adminStatusOptions = computed(() => ({
+  graceEnabled: lab.graceEnabled,
+  postSftpEnabled: lab.postSftpEnabled,
+}));
+
 const adminActions = useAdminAllocationActions(lifecycle);
 
 async function loadAllocations() {
@@ -247,6 +252,7 @@ function openStatistics(a: Allocation) {
                         a.status,
                         lifecycle(a),
                         a.userHidden,
+                        adminStatusOptions,
                       ),
                     ]"
                   >
@@ -255,6 +261,7 @@ function openStatistics(a: Allocation) {
                         a.status,
                         lifecycle(a),
                         a.userHidden,
+                        adminStatusOptions,
                       )
                     }}
                   </span>

@@ -36,7 +36,7 @@ Executada **apenas uma vez** quando o `agentd.py` inicia.
 Executada em ciclo contínuo a cada **30 segundos** (intervalo fixo, não alterável).
 
 - **O que envia (Agente → API):**
-  - `connectedUsers`: Lista de quem está logado ativamente via TTY ou SSH.
+  - `connectedUsers`: Contas `lab.*` logadas ativamente via TTY ou SSH (demais usuários do SO são ignorados).
   - `provisionedOsUsers`: Lista de contas `lab.*` que existem no `passwd` do Linux (base para o Drift Detection).
   - `sshAttempts`: Array de até **50** logs extraídos do `/var/log/auth.log` (invasões, falhas, etc). Enviado apenas quando acumula 20 tentativas ou bate meio-dia (12:00 UTC).
 

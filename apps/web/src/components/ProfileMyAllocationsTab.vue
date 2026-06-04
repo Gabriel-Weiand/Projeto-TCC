@@ -58,6 +58,11 @@ function lifecycle(a: Allocation) {
   return effectiveLifecycleStatus(a, lab.allocationAccess);
 }
 
+const listStatusOptions = computed(() => ({
+  graceEnabled: lab.graceEnabled,
+  postSftpEnabled: lab.postSftpEnabled,
+}));
+
 onMounted(async () => {
   if (!lab.loaded) await lab.fetchConfig();
   void loadList();
@@ -217,10 +222,10 @@ async function handleDelete(a: Allocation) {
               <span
                 :class="[
                   'badge',
-                  allocationListStatusBadge(a.status, lifecycle(a)),
+                  allocationListStatusBadge(a.status, lifecycle(a), listStatusOptions),
                 ]"
               >
-                {{ allocationListStatusLabel(a.status, lifecycle(a)) }}
+                {{ allocationListStatusLabel(a.status, lifecycle(a), listStatusOptions) }}
               </span>
             </td>
             <td class="alloc-actions">

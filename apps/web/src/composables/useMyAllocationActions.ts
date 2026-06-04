@@ -12,6 +12,8 @@ import { isNowBeforeUtc } from "@/utils/datetime";
 export function useMyAllocationActions() {
   const lab = useLabConfigStore();
   const access = computed(() => lab.allocationAccess);
+  const graceEnabled = computed(() => lab.graceEnabled);
+  const postSftpEnabled = computed(() => lab.postSftpEnabled);
 
   function lifecycle(a: Allocation) {
     return effectiveLifecycleStatus(a, access.value);
@@ -34,24 +36,27 @@ export function useMyAllocationActions() {
 
   function connectDisabledTitle(a: Allocation): string | undefined {
     if (!showConnectButton(a)) return undefined;
-    if (lifecycle(a) === "sftp") {
+    if (lifecycle(a) === "sftp" && postSftpEnabled.value) {
       return "Conectar via SFTP (somente transferência de arquivos)";
     }
-    if (lifecycle(a) === "grace") {
+    if (lifecycle(a) === "grace" && graceEnabled.value) {
       return "Conectar via SSH (período de encerramento)";
     }
     return "Conectar via SSH";
   }
 
   function connectPhaseNotice(a: Allocation): string | null {
-    if (lifecycle(a) === "sftp") {
+    if (lifecycle(a) === "sftp" && postSftpEnabled.value) {
       return "Neste período o acesso é apenas para transferência de arquivos via SFTP (sem terminal bash).";
     }
     return null;
   }
 
   function showExtendButton(a: Allocation) {
-    return a.status === "approved" && isExtendablePhase(lifecycle(a));
+    return (
+      a.status === "approved" &&
+      isExtendablePhase(lifecycle(a), access.value)
+    );
   }
 
   function showFinishButton(a: Allocation) {
@@ -59,9 +64,16 @@ export function useMyAllocationActions() {
   }
 
   function finishConfirmMessage(): string {
+    const extras: string[] = [];
+    if (graceEnabled.value) extras.push("grace");
+    if (postSftpEnabled.value) extras.push("SFTP pós-sessão");
+    const skipNote =
+      extras.length > 0
+        ? ` Os períodos de ${extras.join(" e ")} também serão pulados.`
+        : "";
     return (
       "Finalizar a sessão agora?\n\n" +
-      "O acesso bash encerra em seguida. Os períodos de grace e SFTP pós-sessão também serão pulados."
+      `O acesso bash encerra em seguida.${skipNote}`
     );
   }
 
