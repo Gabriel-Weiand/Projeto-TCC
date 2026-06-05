@@ -1,7 +1,6 @@
 import { BaseCommand } from '@adonisjs/core/ace'
 import { CommandOptions } from '@adonisjs/core/types/ace'
-import db from '@adonisjs/lucid/services/db'
-import { DateTime } from 'luxon'
+import { pruneExpiredTokens } from '#services/lab_maintenance'
 
 export default class PruneTokens extends BaseCommand {
   static commandName = 'prune:tokens'
@@ -12,15 +11,10 @@ export default class PruneTokens extends BaseCommand {
   }
 
   async run() {
-    const now = DateTime.now().toSQL()
+    const deleted = await pruneExpiredTokens()
 
-    const result = await db
-      .from('auth_access_tokens')
-      .where('expires_at', '<', now)
-      .delete()
-
-    if (result[0] > 0) {
-      this.logger.success(`Deleted ${result[0]} expired token(s)`)
+    if (deleted > 0) {
+      this.logger.success(`Deleted ${deleted} expired token(s)`)
     } else {
       this.logger.info('No expired tokens found')
     }

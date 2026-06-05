@@ -356,9 +356,95 @@ Variável única no `.env` com **dois papéis**:
 
 Exposto em `GET /api/config` em `allocation.access.graceMinutes`. Respostas de alocação incluem `lifecycleStatus` (`active`, `grace`, `sftp`, …) calculado no servidor.
 
-### Limite de antecedência (`LAB_MAX_ALLOCATION_DAYS_AHEAD`)
+### Limite de antecedência (`LAB_ALLOCATION_MAX_FUTURE_DAYS`)
 
-Reservas futuras não podem terminar além do horizonte configurado no `.env` (padrão em `.env.example`). Create e `POST /allocations/:id/extend` retornam `ALLOCATION_TOO_FAR` se violar. No laboratório de vídeo, alocações costumam durar **semanas** (treino CUDA, renders); o seed reflete sessões de 2–4 semanas.
+Reservas futuras não podem terminar além do horizonte configurado no `.env` (padrão: 365 dias). Create, `PATCH` (admin) e `POST /allocations/:id/extend` retornam `ALLOCATION_TOO_FAR` se violar.
+
+---
+
+## Manutenibilidade do sistema
+
+O laboratório combina **configuração central** (`.env` + overrides em runtime) com **rotas admin** para o front operar retenção, correções e políticas sem migrations.
+
+### Camadas de configuração
+
+| Camada | Onde | Efeito | Restart? |
+|--------|------|--------|----------|
+| `.env` | `apps/api/.env` | Defaults de retenção, cron, notificações, calendário | Sim (schedulers) |
+| Runtime settings | `storage/lab/runtime_settings.json` | `requireAdminApproval`, `publicNames` via `PUT /lab/settings` | Não |
+| Telemetria global | `storage/lab/telemetry_presets.json` | Perfis fast/eco via `PUT /lab/telemetry-presets` | Não |
+| Dados operacionais | SQLite | Alocações, grupos, máquinas — CRUD + prune | Não |
+
+`GET /api/config` reflete valores **efetivos** (env + runtime) para o front bootstrapar calendário e formulários.
+
+### Retenção automática (`LAB_SCHEDULER_MAINTENANCE_CRON`)
+
+Cron único (padrão `0 4 * * *`) executa, em sequência:
+
+1. Prune de tokens expirados
+2. Resumo TWA (`LAB_SUMMARIZE_AFTER_HOURS` após `endTime`)
+3. Prune de alocações terminais (`LAB_PRUNE_ALLOCATION_DAYS` após `endTime`; telemetria e métrica em **CASCADE**)
+4. Prune de notificações (`LAB_PRUNE_NOTIFICATION_DAYS` após `createdAt`)
+5. Prune de tentativas SSH (`LAB_PRUNE_SSH_ATTEMPTS_DAYS`)
+
+Disparo manual equivalente: `POST /api/v1/system/maintenance/run`.
+
+### Rotas admin para o front de manutenção
+
+| Área | Rotas | Uso no front |
+|------|-------|--------------|
+| **Manutenção em lote** | `DELETE /system/prune/{allocations,notifications,ssh-attempts}` | Painel de retenção; body opcional sobrescreve dias/data |
+| **Exclusão pontual** | `DELETE /system/{allocations,notifications,ssh-attempts,telemetries}/:id` | Correção cirúrgica |
+| **SSH por intervalo** | `DELETE /ssh-attempts/:keepDays` | Atalho: manter últimos N dias |
+| **Alocações alheias** | `PATCH /allocations/:id` (admin: `startTime`, `endTime`, `status`) | Corrigir horários com validação de conflito |
+| **Grupos** | CRUD `/machine-groups` + `machineIds` no body | Renomear, descrever, reassociar máquinas |
+| **Políticas runtime** | `GET`/`PUT /lab/settings` | Toggle aprovação obrigatória e nomes no calendário |
+| **Telemetria global** | `GET`/`PUT /lab/telemetry-presets` | Perfis fast/eco do parque |
+
+Métricas resumidas (`allocation_metrics`) **não** têm exclusão individual — removem-se com a alocação (prune ou `DELETE /system/allocations/:id`).
+
+### Flags alteráveis pela API (sem restart)
+
+- **`requireAdminApproval`** — novas reservas de usuário nascem `pending` quando `true`. Reservas existentes mantêm status.
+- **`publicNames`** — usuários normais passam a ver `user.fullName` no calendário/histórico (mesma visão do admin no hover). Só afeta respostas da API.
+
+Ambas persistem em `storage/lab/runtime_settings.json` e sobrescrevem o `.env` até o arquivo ser removido ou a API reiniciar com outro `.env`.
+
+---
+
+## Limites de variáveis de ambiente
+
+Valores fora da faixa são **clampados** ao intervalo ou caem no default (sem erro no boot). Fonte: `app/services/lab_env_limits.ts`.
+
+| Variável | Mín | Máx | Default | Notas |
+|----------|-----|-----|---------|-------|
+| `LAB_CALENDAR_PAST_DAYS` | 1 | 3650 | 30 | |
+| `LAB_CALENDAR_FUTURE_DAYS_OPTIONS` | 1 | 3650 | 90,180,365 | Máx 20 itens na lista |
+| `LAB_CALENDAR_DEFAULT_FUTURE_DAYS` | 1 | 3650 | 1ª opção | Normalizado para estar na lista |
+| `LAB_ALLOCATION_MAX_FUTURE_DAYS` | 1 | 3650 | 365 | |
+| `LAB_ALLOCATION_MIN_DURATION_MINUTES` | 1 | 1440 | 15 | |
+| `LAB_SCHEDULE_START_HOUR` | 0 | 24 | 0 | Exposto ao front; validação de faixa no create ainda não aplicada |
+| `LAB_SCHEDULE_END_HOUR` | 0 | 24 | 24 | Idem |
+| `LAB_ALLOCATION_GRACE_MINUTES` | 0 | 1440 | 10 | 0 = desativado |
+| `LAB_ALLOCATION_POST_SFTP_MINUTES` | 0 | 10080 | 1440 | 0 = desativado |
+| `LAB_ALLOCATION_DELETE_USER_DAYS` | 0 | 365 | 7 | |
+| `LAB_ALLOCATION_PREPARE_MINUTES` | 0 | 1440 | 5 | |
+| `LAB_SUMMARIZE_AFTER_HOURS` | 1 | 8760 | 168 | |
+| `LAB_PRUNE_ALLOCATION_DAYS` | 1 | 3650 | 30 | Conta desde `endTime` |
+| `LAB_PRUNE_NOTIFICATION_DAYS` | 1 | 3650 | 30 | Conta desde `createdAt` |
+| `LAB_PRUNE_SSH_ATTEMPTS_DAYS` | 1 | 3650 | 30 | Mantém últimos N dias |
+| `LAB_NOTIF_UPCOMING_MINUTES` | 1 | 1440 | 10 | |
+| `LAB_NOTIF_SSH_KEY_MINUTES` | 1 | 1440 | 5 | |
+| `LAB_NOTIF_SSH_FLOOD_WINDOW_MINUTES` | 1 | 1440 | 15 | |
+| `LAB_NOTIF_SSH_FLOOD_THRESHOLD` | 1 | 10000 | 20 | |
+| `LAB_NOTIF_SSH_FLOOD_COOLDOWN_HOURS` | 1 | 168 | 1 | |
+| `LAB_NOTIF_AGENT_OFFLINE_MINUTES` | 1 | 1440 | 10 | |
+| `LAB_NOTIF_AGENT_OFFLINE_COOLDOWN_HOURS` | 1 | 168 | 24 | |
+| `LAB_AUTH_TOKEN_EXPIRES_IN` | — | — | `6 hours` | String Adonis (`6 hours`, `1 day`, …) |
+| `TZ` | — | — | `America/Sao_Paulo` | IANA; inválido → fallback |
+| `LAB_SCHEDULER_*_CRON` | — | — | ver `.env.example` | Expressão cron node-cron |
+
+`LAB_ALLOCATION_REQUIRE_ADMIN_APPROVAL` e `LAB_ALLOCATION_PUBLIC_NAMES` são booleanos (`true`/`false`/`1`/`0`); efetivos via runtime settings quando definidos pela API.
 
 ---
 
@@ -1053,33 +1139,41 @@ Listar alocações com filtros.
 
 ##### `PATCH /api/v1/allocations/:id`
 
-Atualizar status de uma alocação.
+Atualizar alocação (status e, para admin, horários de alocações alheias).
 
-**Permissão:** Geral (usuário só pode cancelar suas próprias alocações aprovadas)
+**Permissão:** Geral — usuário só cancela as próprias; admin altera qualquer registro.
 
 **Request Body:**
 
 ```json
 {
-  "status": "cancelled"
+  "status": "approved",
+  "startTime": "2026-02-01T08:00:00Z",
+  "endTime": "2026-02-01T12:00:00Z",
+  "reason": "Ajuste pelo admin"
 }
 ```
 
-| Campo       | Tipo    | Obrigatório | Descrição                                                |
-| :---------- | :------ | :---------- | :------------------------------------------------------- |
-| `status`    | enum    | ❌          | `pending`, `approved`, `denied`, `cancelled`, `finished` |
-| `startTime` | ISO8601 | ❌          | Nova data/hora de início (Admin only)                    |
-| `endTime`   | ISO8601 | ❌          | Nova data/hora de término (Admin only)                   |
-| `reason`    | string  | ❌          | Novo motivo (Admin only)                                 |
+| Campo       | Tipo    | Admin | Usuário | Descrição |
+| :---------- | :------ | :---- | :------ | :-------- |
+| `status`    | enum    | ✅    | `cancelled` apenas | `pending`, `approved`, `denied`, `cancelled`, `finished` |
+| `startTime` | ISO8601 | ✅    | ❌      | UTC; valida conflito, duração mínima e limite futuro |
+| `endTime`   | ISO8601 | ✅    | ❌      | Idem |
+| `reason`    | string  | ✅    | ❌      | Máx 200 caracteres |
 
-**Response (200):** Alocação atualizada
+**Admin — alteração de horários:**
+
+- Bloqueado para `status: finished` (`CANNOT_CHANGE_FINISHED_TIMES`)
+- Mesmas regras de `POST /allocations` (conflito de calendário, `ALLOCATION_TOO_FAR`, `ALLOCATION_TOO_SHORT`)
+- Não altera `userId` nem `machineId` por esta rota
+
+**Response (200):** Alocação atualizada (`serializeAllocation`)
 
 **Erros:**
 
-- `403` `NOT_OWNER` - Não é o dono da alocação
-- `403` `INVALID_STATUS_CHANGE` - Usuário normal tentou status diferente de `cancelled`
-- `403` `CANNOT_CANCEL` - Só pode cancelar alocações aprovadas
-- `403` `CANNOT_CHANGE_TIME` - Usuário normal não pode alterar horários
+- `403` `NOT_OWNER` / `INVALID_STATUS_CHANGE` / `CANNOT_CANCEL` / `CANNOT_CHANGE_TIME`
+- `400` `CANNOT_CHANGE_FINISHED_TIMES` / `INVALID_RANGE` / `ALLOCATION_TOO_FAR` / `ALLOCATION_TOO_SHORT`
+- `409` `ALLOCATION_CONFLICT`
 
 ---
 
@@ -1162,132 +1256,104 @@ Ver resumo/métricas de uma sessão.
 
 ---
 
-#### 🧹 System — exclusão pontual e prune (Admin Only)
+#### 🗂️ Machine Groups (Admin Only)
+
+Prefixo: `/api/v1/machine-groups`
+
+| Método | Rota | Descrição |
+|--------|------|-----------|
+| `GET` | `/` | Lista grupos com `machines` embutidas |
+| `POST` | `/` | Cria grupo; body opcional `machineIds: number[]` |
+| `GET` | `/:id` | Detalhe + máquinas |
+| `PUT` | `/:id` | Atualiza `title`, `description` e/ou `machineIds` (substitui associação) |
+| `DELETE` | `/:id` | Remove grupo; máquinas ficam sem grupo (`SET NULL`) |
+
+**Body (create/update):**
+
+```json
+{
+  "title": "CUDA — Pesquisa em vídeo",
+  "description": "Máquinas de treino",
+  "machineIds": [1, 2, 5]
+}
+```
+
+`machineIds: []` remove todas as máquinas do grupo. Erro `400 MACHINES_NOT_FOUND` se algum ID não existir.
+
+---
+
+#### ⚙️ Lab Settings (Admin Only)
+
+| Método | Rota | Descrição |
+|--------|------|-----------|
+| `GET` | `/api/v1/lab/settings` | Valores efetivos + `sources` (`env` ou `runtime`) |
+| `PUT` | `/api/v1/lab/settings` | Persiste em `storage/lab/runtime_settings.json` |
+
+**Request (PUT):**
+
+```json
+{
+  "requireAdminApproval": true,
+  "publicNames": true
+}
+```
+
+Refletido imediatamente em `GET /api/config` → `allocation.requireAdminApproval` e `allocation.publicNames`.
+
+---
+
+#### 🧹 System — manutenção (Admin Only)
 
 Prefixo: `/api/v1/system`
 
-##### `DELETE /api/v1/system/telemetries/:id`
+##### `POST /api/v1/system/maintenance/run`
 
-Apagar um registro específico de telemetria.
+Executa o mesmo fluxo do cron de manutenção.
 
-**Permissão:** Admin
-
-**Response (200):**
-
-```json
-{
-  "message": "Telemetria removida com sucesso"
-}
-```
+**Response (200):** `{ message, tokens, summarized, allocations, notifications, sshAttempts }`
 
 ---
 
-##### `DELETE /api/v1/system/metrics/:id`
+##### Exclusão pontual
 
-Apagar um resumo de sessão específico.
-
-**Permissão:** Admin
-
-**Response (200):**
-
-```json
-{
-  "message": "Métrica removida com sucesso"
-}
-```
+| Método | Rota | Response |
+|--------|------|----------|
+| `DELETE` | `/telemetries/:id` | 204 |
+| `DELETE` | `/allocations/:id` | 204 (hard delete; CASCADE telemetria + métrica) |
+| `DELETE` | `/notifications/:id` | 204 |
+| `DELETE` | `/ssh-attempts/:id` | 204 |
 
 ---
 
-#### 🗑️ System Prune (Admin Only)
+##### Prune em lote
 
-##### `DELETE /api/v1/system/prune/telemetries`
+Sem body, usa defaults do `.env`. Body opcional sobrescreve o corte.
 
-Limpar telemetrias antigas em lote.
-
-**Permissão:** Admin
-
-**Request Body:**
+**`DELETE /api/v1/system/prune/allocations`**
 
 ```json
-{
-  "before": "2026-01-01T00:00:00Z",
-  "machineId": 1
-}
+{ "before": "2025-06-01T00:00:00Z", "status": ["finished", "cancelled", "denied"], "userId": 5, "machineId": 1 }
 ```
 
-| Campo       | Tipo    | Obrigatório | Descrição                               |
-| :---------- | :------ | :---------- | :-------------------------------------- |
-| `before`    | ISO8601 | ✅          | Remove registros anteriores a esta data |
-| `machineId` | number  | ❌          | Limitar a uma máquina específica        |
+Padrão: `before = agora − LAB_PRUNE_ALLOCATION_DAYS` comparado a **`endTime`**; status `finished`, `cancelled`, `denied`.
 
-**Response (200):**
+**`DELETE /api/v1/system/prune/notifications`**
 
 ```json
-{
-  "message": "1500 registros de telemetria removidos",
-  "deletedCount": 1500
-}
+{ "before": "2025-06-01T00:00:00Z", "userId": 3 }
 ```
 
----
+Padrão: `createdAt` anterior a `LAB_PRUNE_NOTIFICATION_DAYS`.
 
-##### `DELETE /api/v1/system/prune/allocations`
-
-Limpar alocações finalizadas/canceladas antigas.
-
-**Permissão:** Admin
-
-**Request Body:**
+**`DELETE /api/v1/system/prune/ssh-attempts`**
 
 ```json
-{
-  "before": "2025-01-01T00:00:00Z",
-  "status": ["finished", "cancelled", "denied"],
-  "userId": 5,
-  "machineId": 1
-}
+{ "keepDays": 30, "machineId": 1 }
 ```
 
-| Campo       | Tipo    | Obrigatório | Descrição                                          |
-| :---------- | :------ | :---------- | :------------------------------------------------- |
-| `before`    | ISO8601 | ✅          | Remove registros anteriores a esta data            |
-| `status`    | enum[]  | ❌          | Status a remover (padrão: `finished`, `cancelled`) |
-| `userId`    | number  | ❌          | Limitar a um usuário específico                    |
-| `machineId` | number  | ❌          | Limitar a uma máquina específica                   |
+Padrão: `LAB_PRUNE_SSH_ATTEMPTS_DAYS`.
 
-**Response (200):**
-
-```json
-{
-  "message": "200 alocações removidas",
-  "deletedCount": 200
-}
-```
-
----
-
-##### `DELETE /api/v1/system/prune/metrics`
-
-Limpar métricas de alocação antigas.
-
-**Permissão:** Admin
-
-**Request Body:**
-
-```json
-{
-  "before": "2025-01-01T00:00:00Z"
-}
-```
-
-**Response (200):**
-
-```json
-{
-  "message": "50 métricas removidas",
-  "deletedCount": 50
-}
-```
+**Atalho:** `DELETE /api/v1/ssh-attempts/:keepDays` — mesmo efeito (ex.: `/ssh-attempts/4` mantém 4 dias).
 
 ---
 
@@ -1326,9 +1392,9 @@ Autenticação: `Authorization: Bearer <MACHINE_TOKEN>` (middleware `machineAuth
 }
 ```
 
-**Telemetria global (admin):** `GET` / `PUT /api/v1/lab/telemetry-presets` — define fast/eco para todo o parque (persistido em `storage/lab/telemetry_presets.json`). Máquinas com `telemetry_preset: custom` usam só `custom_agent_config`.
+**Config global (admin):** `GET`/`PUT /api/v1/lab/telemetry-presets` (fast/eco) e `GET`/`PUT /api/v1/lab/settings` (aprovação e nomes no calendário).
 
-**Rotas de interface ainda não detalhadas neste doc** (ver `start/routes.ts`): `machine-groups`, `notifications`, `ssh-attempts`, `GET /allocations/my`, `POST /allocations/:id/extend`, `POST /allocations/:id/finish`, `GET /machines/:id/telemetry/stream`, `POST /machines/:id/request-processes`.
+**Rotas ainda resumidas neste doc** (ver `start/routes.ts`): `notifications`, `GET /allocations/my`, `POST /allocations/:id/extend`, `POST /allocations/:id/finish`, `GET /machines/:id/telemetry/stream`, `POST /machines/:id/request-processes`.
 
 ---
 

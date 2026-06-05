@@ -1,106 +1,144 @@
 import type { HttpContext } from '@adonisjs/core/http'
 import Telemetry from '#models/telemetry'
 import Allocation from '#models/allocation'
-import AllocationMetric from '#models/allocation_metric'
+import Notification from '#models/notification'
+import SshConnectionAttempt from '#models/ssh_connection_attempt'
 import { DateTime } from 'luxon'
 import {
-  pruneTelemetriesValidator,
   pruneAllocationsValidator,
-  pruneMetricsValidator,
+  pruneNotificationsValidator,
+  pruneSshAttemptsValidator,
 } from '#validators/system'
+import { labConfig } from '#services/lab_config'
+import {
+  pruneAllocations,
+  pruneNotifications,
+  pruneSshAttempts,
+  runLabMaintenance,
+} from '#services/lab_maintenance'
 
 export default class SystemController {
   /**
-   * Remove telemetrias de alocações antigas.
-   * Identifica alocações anteriores à data e remove suas telemetrias.
+   * Executa todas as tarefas de manutenção (mesmo fluxo do cron).
    *
-   * DELETE /api/v1/system/prune/telemetries
+   * POST /api/v1/system/maintenance/run
    */
-  async pruneTelemetries({ request, response }: HttpContext) {
-    const { before, machineId } = await request.validateUsing(pruneTelemetriesValidator)
-
-    // Converte JS Date para formato SQL compatível com o SQLite
-    const beforeDt = DateTime.fromJSDate(before)
-
-    // Busca alocações anteriores à data (finalizadas/canceladas)
-    let allocQuery = Allocation.query()
-      .where('endTime', '<', beforeDt.toSQL()!)
-      .whereIn('status', ['finished', 'cancelled'])
-
-    if (machineId) {
-      allocQuery = allocQuery.where('machineId', machineId)
-    }
-
-    const allocations = await allocQuery.select('id')
-    const allocationIds = allocations.map((a) => a.id)
-
-    if (allocationIds.length === 0) {
-      return response.ok({
-        message: 'Nenhuma telemetria para remover.',
-        deleted: 0,
-      })
-    }
-
-    const deleted = await Telemetry.query().whereIn('allocationId', allocationIds).delete()
+  async runMaintenance({ response }: HttpContext) {
+    const result = await runLabMaintenance()
 
     return response.ok({
-      message: 'Telemetrias removidas com sucesso.',
-      deleted: deleted[0] ?? 0,
+      message: 'Manutenção executada com sucesso.',
+      ...result,
     })
   }
 
   /**
-   * Remove alocações antigas (finalizadas/canceladas).
+   * Remove alocações terminais cuja endTime é anterior ao corte.
+   * Telemetrias e métricas são removidas em CASCADE.
    *
    * DELETE /api/v1/system/prune/allocations
    */
   async pruneAllocations({ request, response }: HttpContext) {
-    const {
+    const payload = await request.validateUsing(pruneAllocationsValidator)
+
+    const before = payload.before ? DateTime.fromJSDate(payload.before) : undefined
+
+    const deleted = await pruneAllocations({
       before,
-      status = ['finished', 'cancelled'],
-      userId,
-      machineId,
-    } = await request.validateUsing(pruneAllocationsValidator)
-
-    const beforeDt = DateTime.fromJSDate(before)
-
-    let query = Allocation.query()
-      .where('endTime', '<', beforeDt.toSQL()!)
-      .whereIn('status', status)
-
-    if (userId) {
-      query = query.where('userId', userId)
-    }
-
-    if (machineId) {
-      query = query.where('machineId', machineId)
-    }
-
-    const deleted = await query.delete()
+      status: payload.status,
+      userId: payload.userId,
+      machineId: payload.machineId,
+    })
 
     return response.ok({
       message: 'Alocações removidas com sucesso.',
-      deleted: deleted[0] ?? 0,
+      deleted,
     })
   }
 
   /**
-   * Remove métricas de alocações antigas.
+   * Remove notificações antigas (createdAt anterior ao corte).
    *
-   * DELETE /api/v1/system/prune/metrics
+   * DELETE /api/v1/system/prune/notifications
    */
-  async pruneMetrics({ request, response }: HttpContext) {
-    const { before } = await request.validateUsing(pruneMetricsValidator)
+  async pruneNotifications({ request, response }: HttpContext) {
+    const payload = await request.validateUsing(pruneNotificationsValidator)
 
-    const beforeDt = DateTime.fromJSDate(before)
+    const before = payload.before ? DateTime.fromJSDate(payload.before) : undefined
 
-    const deleted = await AllocationMetric.query()
-      .where('createdAt', '<', beforeDt.toSQL()!)
-      .delete()
+    const deleted = await pruneNotifications({
+      before,
+      userId: payload.userId,
+    })
 
     return response.ok({
-      message: 'Métricas removidas com sucesso.',
-      deleted: deleted[0] ?? 0,
+      message: 'Notificações removidas com sucesso.',
+      deleted,
     })
   }
+
+  /**
+   * Remove tentativas SSH mais antigas que o intervalo de retenção.
+   *
+   * DELETE /api/v1/system/prune/ssh-attempts
+   */
+  async pruneSshAttempts({ request, response }: HttpContext) {
+    const payload = await request.validateUsing(pruneSshAttemptsValidator)
+
+    const deleted = await pruneSshAttempts({
+      keepDays: payload.keepDays,
+      machineId: payload.machineId,
+    })
+
+    return response.ok({
+      message: 'Tentativas SSH removidas com sucesso.',
+      deleted,
+      keepDays: payload.keepDays ?? labConfig.maintenance.pruneSshAttemptsDays,
+    })
+  }
+
+  /**
+   * Remove uma alocação (hard delete). Telemetrias e métricas em CASCADE.
+   *
+   * DELETE /api/v1/system/allocations/:id
+   */
+  async destroyAllocation({ params, response }: HttpContext) {
+    const allocation = await Allocation.findOrFail(params.id)
+    await allocation.delete()
+    return response.noContent()
+  }
+
+  /**
+   * Remove uma notificação específica.
+   *
+   * DELETE /api/v1/system/notifications/:id
+   */
+  async destroyNotification({ params, response }: HttpContext) {
+    const notification = await Notification.findOrFail(params.id)
+    await notification.delete()
+    return response.noContent()
+  }
+
+  /**
+   * Remove uma tentativa SSH específica.
+   *
+   * DELETE /api/v1/system/ssh-attempts/:id
+   */
+  async destroySshAttempt({ params, response }: HttpContext) {
+    const attempt = await SshConnectionAttempt.findOrFail(params.id)
+    await attempt.delete()
+    return response.noContent()
+  }
+
+  /**
+   * Remove uma telemetria específica.
+   *
+   * DELETE /api/v1/system/telemetries/:id
+   */
+  async destroyTelemetry({ params, response }: HttpContext) {
+    const telemetry = await Telemetry.findOrFail(params.id)
+    await telemetry.delete()
+    return response.noContent()
+  }
+
 }

@@ -1,9 +1,12 @@
 import { test } from '@japa/runner'
+import db from '@adonisjs/lucid/services/db'
 import User from '#models/user'
 import Allocation from '#models/allocation'
 import testUtils from '@adonisjs/core/services/test_utils'
 import { DateTime } from 'luxon'
 import { autoFinalizeExpired } from '#services/allocation_summarizer'
+import { pruneExpiredTokens } from '#services/lab_maintenance'
+import { dateTimeToSqlUtc } from '#utils/datetime'
 import { createTestMachine } from '../helpers/test_machine.js'
 
 /**
@@ -177,7 +180,71 @@ test.group('Bug: prune — comparação de datas', (group) => {
 })
 
 // ─────────────────────────────────────────────────────────────────────────
-// Bug 3: Frontend envia data sem timezone (NewAllocationModal)
+// Bug 3: pruneExpiredTokens — corte em UTC, não no relógio local
+// ─────────────────────────────────────────────────────────────────────────
+test.group('Bug: pruneExpiredTokens — comparação UTC', (group) => {
+  group.each.setup(() => testUtils.db().withGlobalTransaction())
+
+  test('remove tokens expirados em UTC mesmo com TZ do lab ≠ UTC', async ({ assert }) => {
+    const prevTz = process.env.TZ
+    process.env.TZ = 'America/Sao_Paulo'
+
+    const user = await User.create({
+      fullName: 'Token User',
+      email: 'token@test.com',
+      password: 'senha123',
+      role: 'user',
+    })
+
+    const nowUtc = DateTime.utc()
+    const stamp = dateTimeToSqlUtc(nowUtc.minus({ days: 1 }))
+
+    await db.table('auth_access_tokens').insert({
+      tokenable_id: user.id,
+      type: 'auth_token',
+      name: 'expired',
+      hash: 'hash_expired_test',
+      abilities: '["*"]',
+      created_at: stamp,
+      updated_at: stamp,
+      expires_at: dateTimeToSqlUtc(nowUtc.minus({ hours: 2 })),
+    })
+
+    await db.table('auth_access_tokens').insert({
+      tokenable_id: user.id,
+      type: 'auth_token',
+      name: 'valid',
+      hash: 'hash_valid_test',
+      abilities: '["*"]',
+      created_at: stamp,
+      updated_at: stamp,
+      expires_at: dateTimeToSqlUtc(nowUtc.plus({ hours: 2 })),
+    })
+
+    assert.lengthOf(
+      await db.from('auth_access_tokens').where('hash', 'hash_expired_test'),
+      1
+    )
+
+    const deleted = await pruneExpiredTokens()
+
+    if (prevTz !== undefined) process.env.TZ = prevTz
+    else delete process.env.TZ
+
+    assert.isAtLeast(deleted, 1)
+    assert.lengthOf(
+      await db.from('auth_access_tokens').where('hash', 'hash_expired_test'),
+      0
+    )
+    assert.lengthOf(
+      await db.from('auth_access_tokens').where('hash', 'hash_valid_test'),
+      1
+    )
+  })
+})
+
+// ─────────────────────────────────────────────────────────────────────────
+// Bug 4: Frontend envia data sem timezone (NewAllocationModal)
 // ─────────────────────────────────────────────────────────────────────────
 test.group('Bug: data sem timezone do frontend', (group) => {
   group.each.setup(() => testUtils.db().withGlobalTransaction())

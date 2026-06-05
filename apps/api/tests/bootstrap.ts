@@ -5,6 +5,7 @@ import type { Config } from '@japa/runner/types'
 import { pluginAdonisJS } from '@japa/plugin-adonisjs'
 import testUtils from '@adonisjs/core/services/test_utils'
 import { authApiClient } from '@adonisjs/auth/plugins/api_client'
+import { telemetryBuffer } from '#services/telemetry_buffer'
 
 /**
  * This file is imported by the "bin/test.ts" entrypoint file
@@ -37,11 +38,21 @@ export const runnerHooks: Required<Pick<Config, 'setup' | 'teardown'>> = {
  * Configure suites by tapping into the test suite instance.
  * Learn more - https://japa.dev/docs/test-suites#lifecycle-hooks
  */
+let closeHttpServer: (() => Promise<void>) | undefined
+
 export const configureSuite: Config['configureSuite'] = (suite) => {
   if (['browser', 'functional', 'e2e'].includes(suite.name)) {
-    return suite.setup(async () => {
+    suite.setup(async () => {
       await testUtils.db().migrate()
-      await testUtils.httpServer().start()
+      closeHttpServer = await testUtils.httpServer().start()
+    })
+
+    suite.teardown(async () => {
+      await telemetryBuffer.shutdown()
+      if (closeHttpServer) {
+        await closeHttpServer()
+        closeHttpServer = undefined
+      }
     })
   }
 }

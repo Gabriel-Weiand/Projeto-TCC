@@ -11,11 +11,10 @@ import {
 } from '#validators/allocation'
 import { extendAllocationValidator } from '#validators/allocation'
 import {
-  assertAllocationEndWithinLimit,
-  assertAllocationMinDuration,
   canSeeAllocationOwnerNames,
   resolveInitialAllocationStatus,
 } from '#services/lab_config'
+import { validateAllocationSchedule } from '#services/allocation_schedule'
 import { resolveAccessPhase } from '#services/allocation_access'
 import { findAllocationConflict } from '#services/allocation_conflict'
 import {
@@ -151,27 +150,9 @@ export default class AllocationsController {
     data.startTime = data.startTime.toUTC()
     data.endTime = data.endTime.toUTC()
 
-    if (data.endTime <= data.startTime) {
-      return response.badRequest({
-        code: 'INVALID_RANGE',
-        message: 'O horário de término deve ser posterior ao de início.',
-      })
-    }
-
-    const futureLimitMsg = assertAllocationEndWithinLimit(data.endTime)
-    if (futureLimitMsg) {
-      return response.badRequest({
-        code: 'ALLOCATION_TOO_FAR',
-        message: futureLimitMsg,
-      })
-    }
-
-    const minDurationMsg = assertAllocationMinDuration(data.startTime, data.endTime)
-    if (minDurationMsg) {
-      return response.badRequest({
-        code: 'ALLOCATION_TOO_SHORT',
-        message: minDurationMsg,
-      })
+    const scheduleError = validateAllocationSchedule(data.startTime, data.endTime)
+    if (scheduleError) {
+      return response.badRequest(scheduleError)
     }
 
     // 1. Verificação de Status da Máquina (modo admin + status efetivo)
@@ -262,12 +243,9 @@ export default class AllocationsController {
     } else {
       newEnd = end.plus({ minutes: additionalMinutes! })
     }
-    const futureLimitMsg = assertAllocationEndWithinLimit(newEnd)
-    if (futureLimitMsg) {
-      return response.badRequest({
-        code: 'ALLOCATION_TOO_FAR',
-        message: futureLimitMsg,
-      })
+    const scheduleError = validateAllocationSchedule(allocation.startTime, newEnd)
+    if (scheduleError) {
+      return response.badRequest(scheduleError)
     }
 
     const conflict = await findAllocationConflict(
@@ -379,6 +357,41 @@ export default class AllocationsController {
           message: 'Você não pode alterar os horários da alocação.',
         })
       }
+    }
+
+    if (user.role === 'admin' && (data.startTime || data.endTime)) {
+      if (allocation.status === 'finished') {
+        return response.badRequest({
+          code: 'CANNOT_CHANGE_FINISHED_TIMES',
+          message: 'Não é possível alterar horários de alocações já finalizadas.',
+        })
+      }
+
+      const newStart = (data.startTime ?? allocation.startTime).toUTC()
+      const newEnd = (data.endTime ?? allocation.endTime).toUTC()
+
+      const scheduleError = validateAllocationSchedule(newStart, newEnd)
+      if (scheduleError) {
+        return response.badRequest(scheduleError)
+      }
+
+      const conflict = await findAllocationConflict(
+        allocation.machineId,
+        newStart,
+        newEnd,
+        allocation.id
+      )
+      if (conflict) {
+        return response.conflict({
+          code: 'ALLOCATION_CONFLICT',
+          message: 'O novo horário conflita com outra reserva nesta máquina.',
+        })
+      }
+
+      allocation.startTime = newStart
+      allocation.endTime = newEnd
+      delete data.startTime
+      delete data.endTime
     }
 
     const previousStatus = allocation.status

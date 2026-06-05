@@ -164,8 +164,6 @@ export async function autoFinalizeExpired(): Promise<number> {
       await allocation.save()
       await allocation.load('machine')
       await notifyAllocationAutoFinished(allocation, allocation.machine)
-
-      await summarizeAllocation(allocation)
       count++
     } catch (error) {
       logger.error(`[AutoFinalize] Failed for allocation ${allocation.id}:`, error)

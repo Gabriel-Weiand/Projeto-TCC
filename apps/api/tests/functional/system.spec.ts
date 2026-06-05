@@ -2,6 +2,7 @@ import { test } from '@japa/runner'
 import User from '#models/user'
 import Machine from '#models/machine'
 import Allocation from '#models/allocation'
+import Notification from '#models/notification'
 import testUtils from '@adonisjs/core/services/test_utils'
 import { DateTime } from 'luxon'
 
@@ -22,7 +23,7 @@ test.group('System Maintenance', (group) => {
     response.assertStatus(403)
   })
 
-  test('admin deve fazer prune de alocações antigas', async ({ client, assert }) => {
+  test('admin deve fazer prune de alocações antigas por endTime', async ({ client, assert }) => {
     const admin = await User.create({
       fullName: 'Admin',
       email: 'a@teste.com',
@@ -31,7 +32,6 @@ test.group('System Maintenance', (group) => {
     })
     const machine = await Machine.create({ name: 'PC-1', description: 'Lab', status: 'available' })
 
-    // Cria alocação antiga (acabou há 1 mês) e finalizada
     const antiga = await Allocation.create({
       userId: admin.id,
       machineId: machine.id,
@@ -40,7 +40,6 @@ test.group('System Maintenance', (group) => {
       status: 'finished',
     })
 
-    // Cria alocação recente
     const recente = await Allocation.create({
       userId: admin.id,
       machineId: machine.id,
@@ -57,8 +56,112 @@ test.group('System Maintenance', (group) => {
 
     response.assertStatus(200)
     assert.isAtLeast(response.body().deleted, 1)
-
     assert.isNull(await Allocation.find(antiga.id))
     assert.isNotNull(await Allocation.find(recente.id))
+  })
+
+  test('prune de alocações inclui denied e cancelled por padrão', async ({ client, assert }) => {
+    const admin = await User.create({
+      fullName: 'Admin 2',
+      email: 'a2@teste.com',
+      password: '123',
+      role: 'admin',
+    })
+    const machine = await Machine.create({ name: 'PC-2', description: 'Lab', status: 'available' })
+
+    const denied = await Allocation.create({
+      userId: admin.id,
+      machineId: machine.id,
+      startTime: DateTime.utc().minus({ days: 40 }),
+      endTime: DateTime.utc().minus({ days: 40 }),
+      status: 'denied',
+    })
+
+    const response = await client
+      .delete('/api/v1/system/prune/allocations')
+      .loginAs(admin)
+      .json({})
+
+    response.assertStatus(200)
+    assert.isAtLeast(response.body().deleted, 1)
+    assert.isNull(await Allocation.find(denied.id))
+  })
+
+  test('admin deve fazer prune de notificações antigas', async ({ client, assert }) => {
+    const admin = await User.create({
+      fullName: 'Admin 3',
+      email: 'a3@teste.com',
+      password: '123',
+      role: 'admin',
+    })
+
+    const antiga = await Notification.create({
+      userId: admin.id,
+      title: 'Antiga',
+      message: 'Msg antiga',
+      isRead: true,
+    })
+    await antiga.merge({ createdAt: DateTime.now().minus({ days: 60 }) }).save()
+
+    const recente = await Notification.create({
+      userId: admin.id,
+      title: 'Recente',
+      message: 'Msg recente',
+      isRead: false,
+    })
+
+    const response = await client
+      .delete('/api/v1/system/prune/notifications')
+      .loginAs(admin)
+      .json({ before: DateTime.now().minus({ days: 30 }).toISO() })
+
+    response.assertStatus(200)
+    assert.isAtLeast(response.body().deleted, 1)
+    assert.isNull(await Notification.find(antiga.id))
+    assert.isNotNull(await Notification.find(recente.id))
+  })
+
+  test('admin pode executar manutenção completa manualmente', async ({ client, assert }) => {
+    const admin = await User.create({
+      fullName: 'Admin 4',
+      email: 'a4@teste.com',
+      password: '123',
+      role: 'admin',
+    })
+
+    const response = await client.post('/api/v1/system/maintenance/run').loginAs(admin)
+
+    response.assertStatus(200)
+    const body = response.body()
+    assert.equal(body.message, 'Manutenção executada com sucesso.')
+    for (const key of ['tokens', 'summarized', 'allocations', 'notifications', 'sshAttempts']) {
+      assert.isNumber(body[key])
+      assert.isAtLeast(body[key], 0)
+    }
+  })
+
+  test('admin deve deletar alocação individual (hard delete)', async ({ client, assert }) => {
+    const admin = await User.create({
+      fullName: 'Admin 5',
+      email: 'a5@teste.com',
+      password: '123',
+      role: 'admin',
+    })
+    const machine = await Machine.create({ name: 'PC-5', description: 'Lab', status: 'available' })
+
+    const allocation = await Allocation.create({
+      userId: admin.id,
+      machineId: machine.id,
+      startTime: DateTime.utc().minus({ hours: 2 }),
+      endTime: DateTime.utc().minus({ hours: 1 }),
+      status: 'finished',
+    })
+
+    const response = await client
+      .delete(`/api/v1/system/allocations/${allocation.id}`)
+      .loginAs(admin)
+
+    response.assertStatus(204)
+    assert.isNull(await Allocation.find(allocation.id))
   })
 })

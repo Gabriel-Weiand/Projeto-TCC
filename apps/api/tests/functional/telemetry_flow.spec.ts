@@ -704,56 +704,6 @@ test.group('Manutenção - Exclusão de Telemetrias e Métricas', (group) => {
     assert.isFalse(remaining.some((t) => t.id === target.id))
   })
 
-  test('admin deve deletar métrica individual', async ({ client, assert }) => {
-    const admin = await User.create({
-      fullName: 'Admin DelMet',
-      email: 'admin.delmet@teste.com',
-      password: 'senha123',
-      role: 'admin',
-    })
-
-    const machine = await Machine.create({
-      name: 'PC-DELMET',
-      description: 'Máquina teste exclusão métrica',
-      status: 'available',
-    })
-
-    const allocation = await Allocation.create({
-      userId: admin.id,
-      machineId: machine.id,
-      startTime: DateTime.now().minus({ minutes: 10 }),
-      endTime: DateTime.now(),
-      status: 'finished',
-    })
-
-    await seedTelemetries(allocation.id, 30, 0.5)
-
-    // Gera resumo
-    const summaryResp = await client
-      .post(`/api/v1/allocations/${allocation.id}/summary`)
-      .loginAs(admin)
-    summaryResp.assertStatus(201)
-    const metricId = summaryResp.body().id
-
-    // Verifica que existe
-    const metric = await AllocationMetric.find(metricId)
-    assert.isNotNull(metric)
-
-    // Deleta a métrica
-    const delResp = await client.delete(`/api/v1/system/metrics/${metricId}`).loginAs(admin)
-    delResp.assertStatus(204)
-
-    // Verifica que sumiu
-    const deleted = await AllocationMetric.find(metricId)
-    assert.isNull(deleted)
-
-    // Telemetrias ainda existem (apenas a métrica foi deletada)
-    const telCount = await Telemetry.query()
-      .where('allocationId', allocation.id)
-      .count('* as total')
-    assert.equal(Number(telCount[0].$extras.total), 30)
-  })
-
   test('cascade: deletar alocação remove telemetrias e métrica', async ({ assert }) => {
     const user = await User.create({
       fullName: 'User Cascade',

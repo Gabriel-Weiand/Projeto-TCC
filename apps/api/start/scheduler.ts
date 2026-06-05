@@ -6,93 +6,76 @@
  */
 
 import cron from 'node-cron'
-import db from '@adonisjs/lucid/services/db'
-import { DateTime } from 'luxon'
 import logger from '@adonisjs/core/services/logger'
 import { autoFinalizeExpired } from '#services/allocation_summarizer'
 import { labConfig } from '#services/lab_config'
+import { runLabMaintenance } from '#services/lab_maintenance'
 import {
   runScheduledAllocationReminders,
   notifyOfflineAgents,
 } from '#services/notification_service'
 
 /**
- * Remove tokens de acesso expirados do banco de dados.
- * Roda todo dia às 3h da manhã.
+ * Manutenção sistemática: tokens, resumo TWA, prune de alocações/notificações/SSH.
+ * Roda conforme LAB_SCHEDULER_MAINTENANCE_CRON (padrão: todo dia às 4h).
  */
-function schedulePruneTokens() {
-  // Cron: minuto hora dia mês dia-da-semana
-  // '0 3 * * *' = todo dia às 3:00
-  cron.schedule(labConfig.schedulers.pruneTokensCron, async () => {
+function scheduleMaintenance() {
+  cron.schedule(labConfig.schedulers.maintenanceCron, async () => {
     try {
-      const now = DateTime.now().toSQL()
+      const result = await runLabMaintenance()
+      const total =
+        result.tokens +
+        result.summarized +
+        result.allocations +
+        result.notifications +
+        result.sshAttempts
 
-      const result = await db.from('auth_access_tokens').where('expires_at', '<', now).delete()
-
-      if (result[0] > 0) {
-        logger.info(`[Scheduler] Pruned ${result[0]} expired token(s)`)
+      if (total > 0) {
+        logger.info(
+          `[Scheduler] Maintenance: tokens=${result.tokens} summarized=${result.summarized} allocations=${result.allocations} notifications=${result.notifications} ssh=${result.sshAttempts}`
+        )
       }
     } catch (error) {
-      logger.error('[Scheduler] Failed to prune tokens:', error)
+      logger.error('[Scheduler] Failed maintenance run:', error)
     }
   })
 
-  logger.info(
-    `[Scheduler] Token pruning scheduled (${labConfig.schedulers.pruneTokensCron})`
-  )
+  logger.info(`[Scheduler] Maintenance scheduled (${labConfig.schedulers.maintenanceCron})`)
 }
 
 /**
- * Finaliza automaticamente alocações aprovadas cujo horário já expirou.
- * Roda a cada 5 minutos.
+ * Finalização automática, lembretes e alertas de agente offline.
+ * Roda conforme LAB_SCHEDULER_AUTO_FINALIZE_CRON (padrão: a cada 5 min).
  */
-function scheduleAutoFinalize() {
+function scheduleOperationalJobs() {
   cron.schedule(labConfig.schedulers.autoFinalizeCron, async () => {
     try {
       const count = await autoFinalizeExpired()
       if (count > 0) {
         logger.info(`[Scheduler] Auto-finalized ${count} expired allocation(s)`)
       }
+
+      const reminders = await runScheduledAllocationReminders()
+      const offline = await notifyOfflineAgents()
+      const notifTotal = reminders.upcoming + reminders.sshT5 + reminders.sshT0 + offline
+      if (notifTotal > 0) {
+        logger.info(
+          `[Scheduler] Notifications: upcoming=${reminders.upcoming} sshT5=${reminders.sshT5} sshT0=${reminders.sshT0} offline=${offline}`
+        )
+      }
     } catch (error) {
-      logger.error('[Scheduler] Failed to auto-finalize:', error)
+      logger.error('[Scheduler] Failed operational jobs:', error)
     }
   })
 
-  logger.info(
-    `[Scheduler] Auto-finalize scheduled (${labConfig.schedulers.autoFinalizeCron})`
-  )
+  logger.info(`[Scheduler] Operational jobs (${labConfig.schedulers.autoFinalizeCron})`)
 }
 
 /**
  * Inicializa todos os schedulers.
  * Chamado no boot do servidor.
  */
-/**
- * Lembretes T-10, chave SSH T-5/T-0 e alerta de agente offline.
- * Roda no mesmo intervalo do auto-finalize (padrão: a cada 5 min).
- * Agente offline: verifica a cada tick, mas renotifica no máximo 1×/24 h por máquina (LAB_NOTIF_AGENT_OFFLINE_COOLDOWN_HOURS).
- */
-function scheduleNotificationJobs() {
-  cron.schedule(labConfig.schedulers.autoFinalizeCron, async () => {
-    try {
-      const reminders = await runScheduledAllocationReminders()
-      const offline = await notifyOfflineAgents()
-      const total = reminders.upcoming + reminders.sshT5 + reminders.sshT0 + offline
-      if (total > 0) {
-        logger.info(
-          `[Scheduler] Notifications: upcoming=${reminders.upcoming} sshT5=${reminders.sshT5} sshT0=${reminders.sshT0} offline=${offline}`
-        )
-      }
-    } catch (error) {
-      logger.error('[Scheduler] Failed notification jobs:', error)
-    }
-  })
-
-  logger.info(`[Scheduler] Notification jobs (${labConfig.schedulers.autoFinalizeCron})`)
-}
-
 export function initScheduler() {
-  schedulePruneTokens()
-  scheduleAutoFinalize()
-  scheduleNotificationJobs()
+  scheduleMaintenance()
+  scheduleOperationalJobs()
 }

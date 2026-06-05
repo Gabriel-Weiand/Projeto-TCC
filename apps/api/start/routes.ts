@@ -8,13 +8,12 @@ const AgentController = () => import('#controllers/agent_controller')
 const MachinesController = () => import('#controllers/machines_controller')
 const MachineGroupsController = () => import('#controllers/machine_groups_controller') // NOVO
 const AllocationsController = () => import('#controllers/allocations_controller')
-const TelemetriesController = () => import('#controllers/telemetries_controller')
-const AllocationMetricsController = () => import('#controllers/allocation_metrics_controller')
 const SystemController = () => import('#controllers/system_controller')
 const UtilsController = () => import('#controllers/utils_controller')
 const NotificationsController = () => import('#controllers/notifications_controller') // NOVO
 const SshAttemptsController = () => import('#controllers/ssh_attempts_controller') // NOVO (Substitui o antigo SshSessionsController)
 const LabTelemetryController = () => import('#controllers/lab_telemetry_controller')
+const LabSettingsController = () => import('#controllers/lab_settings_controller')
 
 /**
  * Public Utils Routes (no auth required)
@@ -76,7 +75,7 @@ router
             .where('id', router.matchers.number())
             .use(middleware.isAdmin()) // Admin Only
 
-          // --- Lab telemetry presets fast/eco (Admin Only) ---
+          // --- Lab config (Admin Only) ---
           router
             .group(() => {
               router
@@ -85,6 +84,8 @@ router
               router
                 .put('telemetry-presets', [LabTelemetryController, 'update'])
                 .as('lab.telemetryPresets.update')
+              router.get('settings', [LabSettingsController, 'show']).as('lab.settings.show')
+              router.put('settings', [LabSettingsController, 'update']).as('lab.settings.update')
             })
             .prefix('lab')
             .use(middleware.isAdmin())
@@ -137,11 +138,13 @@ router
           router
             .group(() => {
               router.get('/', [SshAttemptsController, 'index']).as('sshAttempts.index')
-              router.delete('/:id', [SshAttemptsController, 'destroy']).as('sshAttempts.destroy')
+              router
+                .delete('/:keepDays', [SshAttemptsController, 'destroy'])
+                .as('sshAttempts.destroy')
             })
             .prefix('ssh-attempts')
             .use(middleware.isAdmin())
-            .where('id', router.matchers.number())
+            .where('keepDays', router.matchers.number())
 
           // --- Machines Allocations (General - anonimizado para users) ---
           router
@@ -179,20 +182,29 @@ router
           router
             .group(() => {
               router
-                .delete('telemetries/:id', [TelemetriesController, 'destroy'])
+                .post('maintenance/run', [SystemController, 'runMaintenance'])
+                .as('system.maintenance.run')
+              router
+                .delete('telemetries/:id', [SystemController, 'destroyTelemetry'])
                 .as('telemetries.destroy')
               router
-                .delete('metrics/:id', [AllocationMetricsController, 'destroy'])
-                .as('metrics.destroy')
+                .delete('allocations/:id', [SystemController, 'destroyAllocation'])
+                .as('system.allocations.destroy')
               router
-                .delete('prune/telemetries', [SystemController, 'pruneTelemetries'])
-                .as('system.prune.telemetries')
+                .delete('notifications/:id', [SystemController, 'destroyNotification'])
+                .as('system.notifications.destroy')
+              router
+                .delete('ssh-attempts/:id', [SystemController, 'destroySshAttempt'])
+                .as('system.sshAttempts.destroy')
               router
                 .delete('prune/allocations', [SystemController, 'pruneAllocations'])
                 .as('system.prune.allocations')
               router
-                .delete('prune/metrics', [SystemController, 'pruneMetrics'])
-                .as('system.prune.metrics')
+                .delete('prune/notifications', [SystemController, 'pruneNotifications'])
+                .as('system.prune.notifications')
+              router
+                .delete('prune/ssh-attempts', [SystemController, 'pruneSshAttempts'])
+                .as('system.prune.sshAttempts')
             })
             .prefix('system')
             .use(middleware.isAdmin()) // Admin Only

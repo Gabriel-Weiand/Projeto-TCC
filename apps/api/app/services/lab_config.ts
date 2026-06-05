@@ -1,19 +1,30 @@
 import { DateTime } from 'luxon'
 import { labTelemetryPublicConfig } from '#services/telemetry_presets'
+import { LAB_ENV_LIMITS } from '#services/lab_env_limits'
+import {
+  isRuntimePublicNamesEnabled,
+  isRuntimeRequireAdminApproval,
+} from '#services/lab_runtime_settings'
 
-function envInt(key: string, fallback: number): number {
-  const raw = process.env[key]
-  if (!raw) return fallback
-  const n = Number.parseInt(raw, 10)
-  return Number.isFinite(n) && n > 0 ? n : fallback
+function clampInt(n: number, min: number, max: number): number {
+  return Math.min(max, Math.max(min, Math.round(n)))
 }
 
-/** Inteiro ≥ 0; `0` desativa a feature (ex.: grace ou SFTP pós-sessão). */
-function envIntAllowZero(key: string, fallback: number): number {
+function envIntClamped(key: string, fallback: number, min: number, max: number): number {
   const raw = process.env[key]
   if (!raw) return fallback
   const n = Number.parseInt(raw, 10)
-  return Number.isFinite(n) && n >= 0 ? n : fallback
+  if (!Number.isFinite(n)) return fallback
+  return clampInt(n, min, max)
+}
+
+/** Inteiro ≥ min; valores inválidos usam fallback. */
+function envIntAllowZero(key: string, fallback: number, min = 0, max = 999_999): number {
+  const raw = process.env[key]
+  if (!raw) return fallback
+  const n = Number.parseInt(raw, 10)
+  if (!Number.isFinite(n)) return fallback
+  return clampInt(n, min, max)
 }
 
 function envString(key: string, fallback: string): string {
@@ -29,35 +40,59 @@ function envBool(key: string, fallback: boolean): boolean {
 
 /** Nomes dos responsáveis visíveis no calendário para usuários não-admin. */
 export function isAllocationPublicNamesEnabled(): boolean {
-  return envBool('LAB_ALLOCATION_PUBLIC_NAMES', false)
+  return isRuntimePublicNamesEnabled()
 }
 
-/** Admin sempre vê; demais usuários conforme LAB_ALLOCATION_PUBLIC_NAMES. */
+/** Admin sempre vê; demais usuários conforme publicNames (runtime ou env). */
 export function canSeeAllocationOwnerNames(userRole: string): boolean {
   return userRole === 'admin' || isAllocationPublicNamesEnabled()
 }
 
-function envIntList(key: string, fallback: number[]): number[] {
+function envIntList(key: string, fallback: number[], min: number, max: number): number[] {
   const raw = process.env[key]
   if (!raw) return fallback
   const parsed = raw
     .split(',')
     .map((s) => Number.parseInt(s.trim(), 10))
     .filter((n) => Number.isFinite(n) && n > 0)
-  return parsed.length > 0 ? parsed : fallback
+    .map((n) => clampInt(n, min, max))
+    .slice(0, LAB_ENV_LIMITS.calendar.futureDaysOptionsMaxItems)
+  return parsed.length > 0 ? [...new Set(parsed)].sort((a, b) => a - b) : fallback
 }
 
-const FUTURE_OPTIONS = envIntList('LAB_CALENDAR_FUTURE_DAYS_OPTIONS', [90, 180, 365])
-const DEFAULT_FUTURE = envInt('LAB_CALENDAR_DEFAULT_FUTURE_DAYS', FUTURE_OPTIONS[0] ?? 90)
+function envScheduleHour(key: string, fallback: number): number {
+  return envIntClamped(
+    key,
+    fallback,
+    LAB_ENV_LIMITS.allocation.scheduleHour.min,
+    LAB_ENV_LIMITS.allocation.scheduleHour.max
+  )
+}
+
+const FUTURE_OPTIONS = envIntList(
+  'LAB_CALENDAR_FUTURE_DAYS_OPTIONS',
+  [90, 180, 365],
+  LAB_ENV_LIMITS.calendar.futureDaysOption.min,
+  LAB_ENV_LIMITS.calendar.futureDaysOption.max
+)
+const DEFAULT_FUTURE = envIntClamped(
+  'LAB_CALENDAR_DEFAULT_FUTURE_DAYS',
+  FUTURE_OPTIONS[0] ?? 90,
+  LAB_ENV_LIMITS.calendar.defaultFutureDays.min,
+  LAB_ENV_LIMITS.calendar.defaultFutureDays.max
+)
 
 function normalizeDefaultFuture(): number {
   if (FUTURE_OPTIONS.includes(DEFAULT_FUTURE)) return DEFAULT_FUTURE
   return FUTURE_OPTIONS[0] ?? 90
 }
 
+const scheduleStartHour = envScheduleHour('LAB_SCHEDULE_START_HOUR', 0)
+const scheduleEndHour = envScheduleHour('LAB_SCHEDULE_END_HOUR', 24)
+
 /**
- * Configuração operacional do laboratório (env + defaults).
- * Variáveis documentadas em apps/api/.env.example
+ * Configuração operacional do laboratório (env + defaults + runtime settings).
+ * Variáveis documentadas em apps/api/.env.example e MODULE.md.
  */
 export const labConfig = {
   timezone: envString('TZ', 'America/Sao_Paulo'),
@@ -67,52 +102,136 @@ export const labConfig = {
   },
 
   calendar: {
-    pastDays: envInt('LAB_CALENDAR_PAST_DAYS', 30),
+    pastDays: envIntClamped(
+      'LAB_CALENDAR_PAST_DAYS',
+      30,
+      LAB_ENV_LIMITS.calendar.pastDays.min,
+      LAB_ENV_LIMITS.calendar.pastDays.max
+    ),
     futureDaysOptions: FUTURE_OPTIONS,
     defaultFutureDays: normalizeDefaultFuture(),
   },
 
   allocation: {
-    maxFutureDays: envInt('LAB_ALLOCATION_MAX_FUTURE_DAYS', 365),
-    minDurationMinutes: envInt('LAB_ALLOCATION_MIN_DURATION_MINUTES', 15),
-    /** Horário local do parque (0–24) para reservas; 0 e 24 = sem restrição de faixa */
-    scheduleStartHour: envInt('LAB_SCHEDULE_START_HOUR', 0),
-    scheduleEndHour: envInt('LAB_SCHEDULE_END_HOUR', 24),
-    /** true = calendário/histórico da máquina exibe quem reservou; false = só admin */
+    maxFutureDays: envIntClamped(
+      'LAB_ALLOCATION_MAX_FUTURE_DAYS',
+      365,
+      LAB_ENV_LIMITS.allocation.maxFutureDays.min,
+      LAB_ENV_LIMITS.allocation.maxFutureDays.max
+    ),
+    minDurationMinutes: envIntClamped(
+      'LAB_ALLOCATION_MIN_DURATION_MINUTES',
+      15,
+      LAB_ENV_LIMITS.allocation.minDurationMinutes.min,
+      LAB_ENV_LIMITS.allocation.minDurationMinutes.max
+    ),
+    scheduleStartHour,
+    scheduleEndHour,
     publicNames: isAllocationPublicNamesEnabled(),
-    /**
-     * Minutos de bash após endTime (somente `approved`; finish manual não usa grace).
-     * Também define o intervalo mínimo entre reservas na mesma máquina (conflito de calendário).
-     */
-    graceMinutes: envIntAllowZero('LAB_ALLOCATION_GRACE_MINUTES', 10),
-    /** SFTP com chave após fim (+ grace se natural); 0 = desativado */
-    postSftpMinutes: envIntAllowZero('LAB_ALLOCATION_POST_SFTP_MINUTES', 1440),
-    /** Dias após endTime até remover conta no SO (via drift) */
-    deleteUserDays: envInt('LAB_ALLOCATION_DELETE_USER_DAYS', 7),
-    /** Provisionamento antecipado (T-5) antes do início */
-    prepareMinutes: envInt('LAB_ALLOCATION_PREPARE_MINUTES', 5),
+    graceMinutes: envIntAllowZero(
+      'LAB_ALLOCATION_GRACE_MINUTES',
+      10,
+      LAB_ENV_LIMITS.allocation.graceMinutes.min,
+      LAB_ENV_LIMITS.allocation.graceMinutes.max
+    ),
+    postSftpMinutes: envIntAllowZero(
+      'LAB_ALLOCATION_POST_SFTP_MINUTES',
+      1440,
+      LAB_ENV_LIMITS.allocation.postSftpMinutes.min,
+      LAB_ENV_LIMITS.allocation.postSftpMinutes.max
+    ),
+    deleteUserDays: envIntClamped(
+      'LAB_ALLOCATION_DELETE_USER_DAYS',
+      7,
+      LAB_ENV_LIMITS.allocation.deleteUserDays.min,
+      LAB_ENV_LIMITS.allocation.deleteUserDays.max
+    ),
+    prepareMinutes: envIntAllowZero(
+      'LAB_ALLOCATION_PREPARE_MINUTES',
+      5,
+      LAB_ENV_LIMITS.allocation.prepareMinutes.min,
+      LAB_ENV_LIMITS.allocation.prepareMinutes.max
+    ),
+  },
+
+  maintenance: {
+    summarizeAfterHours: envIntClamped(
+      'LAB_SUMMARIZE_AFTER_HOURS',
+      168,
+      LAB_ENV_LIMITS.maintenance.summarizeAfterHours.min,
+      LAB_ENV_LIMITS.maintenance.summarizeAfterHours.max
+    ),
+    pruneAllocationDays: envIntClamped(
+      'LAB_PRUNE_ALLOCATION_DAYS',
+      30,
+      LAB_ENV_LIMITS.maintenance.pruneDays.min,
+      LAB_ENV_LIMITS.maintenance.pruneDays.max
+    ),
+    pruneNotificationDays: envIntClamped(
+      'LAB_PRUNE_NOTIFICATION_DAYS',
+      30,
+      LAB_ENV_LIMITS.maintenance.pruneDays.min,
+      LAB_ENV_LIMITS.maintenance.pruneDays.max
+    ),
+    pruneSshAttemptsDays: envIntClamped(
+      'LAB_PRUNE_SSH_ATTEMPTS_DAYS',
+      30,
+      LAB_ENV_LIMITS.maintenance.pruneDays.min,
+      LAB_ENV_LIMITS.maintenance.pruneDays.max
+    ),
   },
 
   schedulers: {
-    pruneTokensCron: envString('LAB_SCHEDULER_PRUNE_TOKENS_CRON', '0 3 * * *'),
+    maintenanceCron: envString('LAB_SCHEDULER_MAINTENANCE_CRON', '0 4 * * *'),
     autoFinalizeCron: envString('LAB_SCHEDULER_AUTO_FINALIZE_CRON', '*/5 * * * *'),
   },
 
   notifications: {
-    /** Lembrete "reserva em breve" (minutos antes do início) */
-    upcomingMinutes: envInt('LAB_NOTIF_UPCOMING_MINUTES', 10),
-    /** Verificação de chave SSH (minutos antes do início) */
-    sshKeyReminderMinutes: envInt('LAB_NOTIF_SSH_KEY_MINUTES', 5),
+    upcomingMinutes: envIntClamped(
+      'LAB_NOTIF_UPCOMING_MINUTES',
+      10,
+      LAB_ENV_LIMITS.notifications.upcomingMinutes.min,
+      LAB_ENV_LIMITS.notifications.upcomingMinutes.max
+    ),
+    sshKeyReminderMinutes: envIntClamped(
+      'LAB_NOTIF_SSH_KEY_MINUTES',
+      5,
+      LAB_ENV_LIMITS.notifications.sshKeyMinutes.min,
+      LAB_ENV_LIMITS.notifications.sshKeyMinutes.max
+    ),
     sshFailureFlood: {
-      windowMinutes: envInt('LAB_NOTIF_SSH_FLOOD_WINDOW_MINUTES', 15),
-      threshold: envInt('LAB_NOTIF_SSH_FLOOD_THRESHOLD', 20),
-      cooldownHours: envInt('LAB_NOTIF_SSH_FLOOD_COOLDOWN_HOURS', 1),
+      windowMinutes: envIntClamped(
+        'LAB_NOTIF_SSH_FLOOD_WINDOW_MINUTES',
+        15,
+        LAB_ENV_LIMITS.notifications.sshFloodWindowMinutes.min,
+        LAB_ENV_LIMITS.notifications.sshFloodWindowMinutes.max
+      ),
+      threshold: envIntClamped(
+        'LAB_NOTIF_SSH_FLOOD_THRESHOLD',
+        20,
+        LAB_ENV_LIMITS.notifications.sshFloodThreshold.min,
+        LAB_ENV_LIMITS.notifications.sshFloodThreshold.max
+      ),
+      cooldownHours: envIntClamped(
+        'LAB_NOTIF_SSH_FLOOD_COOLDOWN_HOURS',
+        1,
+        LAB_ENV_LIMITS.notifications.sshFloodCooldownHours.min,
+        LAB_ENV_LIMITS.notifications.sshFloodCooldownHours.max
+      ),
     },
     agentOffline: {
-      /** Sem heartbeat neste intervalo → candidata a alerta (máquina available/occupied) */
-      offlineMinutes: envInt('LAB_NOTIF_AGENT_OFFLINE_MINUTES', 10),
-      /** Máximo 1 alerta por máquina neste intervalo (evita flood; reforça manutenção/retirada do parque) */
-      cooldownHours: envInt('LAB_NOTIF_AGENT_OFFLINE_COOLDOWN_HOURS', 24),
+      offlineMinutes: envIntClamped(
+        'LAB_NOTIF_AGENT_OFFLINE_MINUTES',
+        10,
+        LAB_ENV_LIMITS.notifications.agentOfflineMinutes.min,
+        LAB_ENV_LIMITS.notifications.agentOfflineMinutes.max
+      ),
+      cooldownHours: envIntClamped(
+        'LAB_NOTIF_AGENT_OFFLINE_COOLDOWN_HOURS',
+        24,
+        LAB_ENV_LIMITS.notifications.agentOfflineCooldownHours.min,
+        LAB_ENV_LIMITS.notifications.agentOfflineCooldownHours.max
+      ),
     },
   },
 } as const
@@ -183,12 +302,10 @@ export function assertAllocationMinDuration(
   return null
 }
 
-/** Ponto único para evoluir para config em DB/API depois. */
 export function getLabAccessConfig() {
   const graceMinutes = labConfig.allocation.graceMinutes
   return {
     graceMinutes,
-    /** Igual a grace — intervalo mínimo entre reservas (calendário). */
     gapMinutes: graceMinutes,
     postSftpMinutes: labConfig.allocation.postSftpMinutes,
     deleteUserDays: labConfig.allocation.deleteUserDays,
@@ -197,7 +314,7 @@ export function getLabAccessConfig() {
 }
 
 export function isAllocationRequireAdminApproval(): boolean {
-  return envBool('LAB_ALLOCATION_REQUIRE_ADMIN_APPROVAL', false)
+  return isRuntimeRequireAdminApproval()
 }
 
 type AllocationStatus = 'pending' | 'approved' | 'denied' | 'cancelled' | 'finished'

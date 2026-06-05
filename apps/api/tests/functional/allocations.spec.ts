@@ -480,6 +480,92 @@ test.group('Allocations', (group) => {
   })
 
   // =========================================================================
+  test('admin deve alterar início e fim de alocação alheia com validação', async ({
+    client,
+    assert,
+  }) => {
+    const admin = await User.create({
+      fullName: 'Admin Patch',
+      email: 'admin.patch@teste.com',
+      password: '123',
+      role: 'admin',
+    })
+    const user = await User.create({
+      fullName: 'Aluno',
+      email: 'aluno.patch@teste.com',
+      password: '123',
+      role: 'user',
+    })
+    const machine = await createTestMachine({
+      name: 'PC-PATCH',
+      description: 'Lab',
+      status: 'available',
+    })
+
+    const allocation = await Allocation.create({
+      userId: user.id,
+      machineId: machine.id,
+      startTime: DateTime.utc().plus({ days: 2 }),
+      endTime: DateTime.utc().plus({ days: 2, hours: 2 }),
+      status: 'approved',
+    })
+
+    const newStart = DateTime.utc().plus({ days: 3 }).toISO()
+    const newEnd = DateTime.utc().plus({ days: 3, hours: 3 }).toISO()
+
+    const response = await client
+      .patch(`/api/v1/allocations/${allocation.id}`)
+      .loginAs(admin)
+      .json({ startTime: newStart, endTime: newEnd })
+
+    response.assertStatus(200)
+    await allocation.refresh()
+    assert.equal(
+      allocation.startTime.toUTC().toISO(),
+      DateTime.fromISO(newStart).toUTC().startOf('second').toISO()
+    )
+    assert.equal(
+      allocation.endTime.toUTC().toISO(),
+      DateTime.fromISO(newEnd).toUTC().startOf('second').toISO()
+    )
+  })
+
+  test('admin NÃO pode alterar horários de alocação finished', async ({ client }) => {
+    const admin = await User.create({
+      fullName: 'Admin Fin',
+      email: 'admin.fin@teste.com',
+      password: '123',
+      role: 'admin',
+    })
+    const user = await User.create({
+      fullName: 'Aluno Fin',
+      email: 'aluno.fin@teste.com',
+      password: '123',
+      role: 'user',
+    })
+    const machine = await createTestMachine({
+      name: 'PC-FIN',
+      description: 'Lab',
+      status: 'available',
+    })
+
+    const allocation = await Allocation.create({
+      userId: user.id,
+      machineId: machine.id,
+      startTime: DateTime.utc().minus({ hours: 3 }),
+      endTime: DateTime.utc().minus({ hours: 1 }),
+      status: 'finished',
+    })
+
+    const response = await client
+      .patch(`/api/v1/allocations/${allocation.id}`)
+      .loginAs(admin)
+      .json({ endTime: DateTime.utc().plus({ hours: 1 }).toISO() })
+
+    response.assertStatus(400)
+    response.assertBodyContains({ code: 'CANNOT_CHANGE_FINISHED_TIMES' })
+  })
+
   // CANCELAMENTO E SOFT DELETE (PATCH / DELETE)
   // =========================================================================
 
