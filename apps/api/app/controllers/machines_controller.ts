@@ -5,7 +5,15 @@ import {
   createMachineValidator,
   requestProcessReportValidator,
   updateMachineValidator,
+  updateProvisionedUserValidator,
+  createProvisionedUserValidator,
 } from '#validators/machine'
+import {
+  createMachineUser,
+  deleteMachineUser,
+  listMachineProvisionedUsers,
+  updateMachineUserAccessType,
+} from '#services/machine_provisioned_users'
 import { telemetryBuffer } from '#services/telemetry_buffer'
 import { machineCache } from '#services/machine_cache'
 import { DateTime } from 'luxon'
@@ -314,6 +322,76 @@ export default class MachinesController {
       latest,
       total: normalized.length,
     })
+  }
+
+  /**
+   * Inventário lab.* provisionado nesta máquina (admin).
+   * GET /api/v1/machines/:id/provisioned-users
+   */
+  async provisionedUsers({ params, response }: HttpContext) {
+    const rows = await listMachineProvisionedUsers(params.id)
+    return response.ok(rows)
+  }
+
+  /**
+   * Vincula usuário à máquina com acesso fixo (shell | sftp | revoked).
+   * POST /api/v1/machines/:id/provisioned-users
+   */
+  async storeProvisionedUser({ params, request, response }: HttpContext) {
+    const { userId, accessType } = await request.validateUsing(createProvisionedUserValidator)
+
+    try {
+      const rows = await createMachineUser(params.id, userId, accessType ?? 'shell')
+      return response.created(rows)
+    } catch (error) {
+      if (error instanceof Error && error.message === 'USER_WITHOUT_SYSTEM_USERNAME') {
+        return response.badRequest({
+          code: 'USER_WITHOUT_SYSTEM_USERNAME',
+          message: 'O usuário não possui system_username cadastrado.',
+        })
+      }
+      if (error instanceof Error && error.message === 'ALREADY_PROVISIONED') {
+        return response.conflict({
+          code: 'ALREADY_PROVISIONED',
+          message: 'Este usuário já está vinculado a esta máquina.',
+        })
+      }
+      throw error
+    }
+  }
+
+  /**
+   * Altera access_type do vínculo machine_users (auto | shell | sftp | revoked).
+   * PATCH /api/v1/machines/:id/provisioned-users/:userId
+   */
+  async updateProvisionedUser({ params, request, response }: HttpContext) {
+    const { accessType } = await request.validateUsing(updateProvisionedUserValidator)
+    const rows = await updateMachineUserAccessType(
+      params.id,
+      params.userId,
+      accessType ?? 'auto'
+    )
+    return response.ok(rows)
+  }
+
+  /**
+   * Remove registro machine_users (bloqueado se alocação ainda exige acesso).
+   * DELETE /api/v1/machines/:id/provisioned-users/:userId
+   */
+  async destroyProvisionedUser({ params, response }: HttpContext) {
+    try {
+      await deleteMachineUser(params.id, params.userId)
+      return response.noContent()
+    } catch (error) {
+      if (error instanceof Error && error.message === 'ACTIVE_ALLOCATION') {
+        return response.conflict({
+          code: 'ACTIVE_ALLOCATION',
+          message:
+            'Não é possível remover usuário com alocação ativa nesta máquina. Finalize ou cancele a reserva primeiro.',
+        })
+      }
+      throw error
+    }
   }
 
   /**

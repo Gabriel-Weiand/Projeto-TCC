@@ -6,6 +6,7 @@ import {
   DEFAULT_LAB_TELEMETRY_PRESETS,
   type LabTelemetryPresets,
 } from "@/utils/telemetryPresets";
+import type { LabRuntimeSettings } from "@/types";
 
 const API_BASE = import.meta.env.VITE_API_URL || "http://localhost:7372";
 
@@ -46,6 +47,12 @@ export interface LabPublicConfig {
   telemetry?: {
     defaultOfflinePreset: "eco";
     presets: LabTelemetryPresets;
+  };
+  maintenance?: {
+    summarizeAfterHours: number;
+    pruneAllocationDays: number;
+    pruneNotificationDays: number;
+    pruneSshAttemptsDays: number;
   };
 }
 
@@ -120,6 +127,15 @@ export const useLabConfigStore = defineStore("labConfig", () => {
   const telemetryPresets = computed(
     () => config.value.telemetry?.presets ?? DEFAULT_LAB_TELEMETRY_PRESETS,
   );
+  const maintenanceConfig = computed(
+    () =>
+      config.value.maintenance ?? {
+        summarizeAfterHours: 168,
+        pruneAllocationDays: 30,
+        pruneNotificationDays: 30,
+        pruneSshAttemptsDays: 30,
+      },
+  );
 
   async function fetchConfig() {
     if (loading.value) return config.value;
@@ -183,6 +199,20 @@ export const useLabConfigStore = defineStore("labConfig", () => {
     return data;
   }
 
+  async function fetchLabSettings(): Promise<LabRuntimeSettings> {
+    const { data } = await api.get<LabRuntimeSettings>("/api/v1/lab/settings");
+    await fetchConfig();
+    return data;
+  }
+
+  async function saveLabSettings(
+    patch: Partial<Pick<LabRuntimeSettings, "requireAdminApproval" | "publicNames">>,
+  ): Promise<LabRuntimeSettings> {
+    const { data } = await api.put<LabRuntimeSettings>("/api/v1/lab/settings", patch);
+    await fetchConfig();
+    return data;
+  }
+
   return {
     config,
     loaded,
@@ -197,9 +227,12 @@ export const useLabConfigStore = defineStore("labConfig", () => {
     graceEnabled,
     postSftpEnabled,
     telemetryPresets,
+    maintenanceConfig,
     fetchConfig,
     refreshToday,
     fetchLabTelemetryPresets,
     saveLabTelemetryPresets,
+    fetchLabSettings,
+    saveLabSettings,
   };
 });

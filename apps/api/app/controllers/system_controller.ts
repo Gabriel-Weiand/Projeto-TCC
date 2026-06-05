@@ -1,17 +1,14 @@
 import type { HttpContext } from '@adonisjs/core/http'
-import Telemetry from '#models/telemetry'
 import Allocation from '#models/allocation'
 import Notification from '#models/notification'
 import SshConnectionAttempt from '#models/ssh_connection_attempt'
 import { DateTime } from 'luxon'
 import {
-  pruneAllocationsValidator,
   pruneNotificationsValidator,
   pruneSshAttemptsValidator,
 } from '#validators/system'
 import { labConfig } from '#services/lab_config'
 import {
-  pruneAllocations,
   pruneNotifications,
   pruneSshAttempts,
   runLabMaintenance,
@@ -29,30 +26,6 @@ export default class SystemController {
     return response.ok({
       message: 'Manutenção executada com sucesso.',
       ...result,
-    })
-  }
-
-  /**
-   * Remove alocações terminais cuja endTime é anterior ao corte.
-   * Telemetrias e métricas são removidas em CASCADE.
-   *
-   * DELETE /api/v1/system/prune/allocations
-   */
-  async pruneAllocations({ request, response }: HttpContext) {
-    const payload = await request.validateUsing(pruneAllocationsValidator)
-
-    const before = payload.before ? DateTime.fromJSDate(payload.before) : undefined
-
-    const deleted = await pruneAllocations({
-      before,
-      status: payload.status,
-      userId: payload.userId,
-      machineId: payload.machineId,
-    })
-
-    return response.ok({
-      message: 'Alocações removidas com sucesso.',
-      deleted,
     })
   }
 
@@ -127,17 +100,6 @@ export default class SystemController {
   async destroySshAttempt({ params, response }: HttpContext) {
     const attempt = await SshConnectionAttempt.findOrFail(params.id)
     await attempt.delete()
-    return response.noContent()
-  }
-
-  /**
-   * Remove uma telemetria específica.
-   *
-   * DELETE /api/v1/system/telemetries/:id
-   */
-  async destroyTelemetry({ params, response }: HttpContext) {
-    const telemetry = await Telemetry.findOrFail(params.id)
-    await telemetry.delete()
     return response.noContent()
   }
 

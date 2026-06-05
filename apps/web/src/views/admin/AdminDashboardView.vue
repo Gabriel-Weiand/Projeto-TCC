@@ -153,7 +153,11 @@ function primarySessionLabel(m: Machine): string | null {
           :key="m.id"
           class="card machine-status-card clickable"
           @click="
-            router.push({ name: 'machine-detail', params: { id: m.id } })
+            router.push({
+              name: 'machine-detail',
+              params: { id: m.id },
+              query: { from: 'admin' },
+            })
           "
         >
           <div class="ms-top">

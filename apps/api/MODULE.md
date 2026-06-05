@@ -379,7 +379,7 @@ O laboratório combina **configuração central** (`.env` + overrides em runtime
 
 ### Retenção automática (`LAB_SCHEDULER_MAINTENANCE_CRON`)
 
-Cron único (padrão `0 4 * * *`) executa, em sequência:
+Cron único (padrão `0 */4 * * *`, a cada 4 h) executa, em sequência:
 
 1. Prune de tokens expirados
 2. Resumo TWA (`LAB_SUMMARIZE_AFTER_HOURS` após `endTime`)
@@ -393,8 +393,8 @@ Disparo manual equivalente: `POST /api/v1/system/maintenance/run`.
 
 | Área | Rotas | Uso no front |
 |------|-------|--------------|
-| **Manutenção em lote** | `DELETE /system/prune/{allocations,notifications,ssh-attempts}` | Painel de retenção; body opcional sobrescreve dias/data |
-| **Exclusão pontual** | `DELETE /system/{allocations,notifications,ssh-attempts,telemetries}/:id` | Correção cirúrgica |
+| **Manutenção em lote** | `POST /system/maintenance/run` + `DELETE /system/prune/{notifications,ssh-attempts}` | Rotina completa (inclui alocações); prune seletivo só notificações e SSH |
+| **Exclusão pontual** | `DELETE /system/{allocations,notifications,ssh-attempts}/:id` | Correção cirúrgica |
 | **SSH por intervalo** | `DELETE /ssh-attempts/:keepDays` | Atalho: manter últimos N dias |
 | **Alocações alheias** | `PATCH /allocations/:id` (admin: `startTime`, `endTime`, `status`) | Corrigir horários com validação de conflito |
 | **Grupos** | CRUD `/machine-groups` + `machineIds` no body | Renomear, descrever, reassociar máquinas |
@@ -1318,7 +1318,6 @@ Executa o mesmo fluxo do cron de manutenção.
 
 | Método | Rota | Response |
 |--------|------|----------|
-| `DELETE` | `/telemetries/:id` | 204 |
 | `DELETE` | `/allocations/:id` | 204 (hard delete; CASCADE telemetria + métrica) |
 | `DELETE` | `/notifications/:id` | 204 |
 | `DELETE` | `/ssh-attempts/:id` | 204 |
@@ -1327,15 +1326,9 @@ Executa o mesmo fluxo do cron de manutenção.
 
 ##### Prune em lote
 
-Sem body, usa defaults do `.env`. Body opcional sobrescreve o corte.
+Alocações terminais só são removidas pela rotina completa (`POST /maintenance/run` ou cron), com `LAB_PRUNE_ALLOCATION_DAYS` comparado a **`endTime`**.
 
-**`DELETE /api/v1/system/prune/allocations`**
-
-```json
-{ "before": "2025-06-01T00:00:00Z", "status": ["finished", "cancelled", "denied"], "userId": 5, "machineId": 1 }
-```
-
-Padrão: `before = agora − LAB_PRUNE_ALLOCATION_DAYS` comparado a **`endTime`**; status `finished`, `cancelled`, `denied`.
+Prune seletivo — sem body, usa defaults do `.env`. Body opcional sobrescreve o corte.
 
 **`DELETE /api/v1/system/prune/notifications`**
 
@@ -1391,6 +1384,39 @@ Autenticação: `Authorization: Bearer <MACHINE_TOKEN>` (middleware `machineAuth
   "currentAllocation": { "id": 3, "userId": 5, "endTime": "2026-07-01T18:00:00.000Z" }
 }
 ```
+
+#### Resiliência: desconexão agente ↔ API
+
+O provisionamento é **declarativo e sem fila**: a API **não armazena ordens pendentes** para aplicar quando o agente voltar. Cada `POST /heartbeat` bem-sucedido recalcula o array `provisioning[]` com base no **relógio UTC atual**, nas alocações no banco e em `machine_users.access_type`. O agente trata essa lista como verdade absoluta no SO (ver `apps/agent/MODULE.md`).
+
+| Camada | O que persiste | O que evolui sem heartbeat |
+|--------|----------------|---------------------------|
+| **API (SQLite)** | Alocações, `machine_users`, políticas | Fases de acesso (`resolveAccessPhase`), auto-finalize, `lifecycleStatus` no front — tudo por **relógio** |
+| **Agente (Linux)** | Contas `lab.*`, shells, `authorized_keys` | **Nada** — só muda após heartbeat **200** |
+
+**Máquina do agente cai (SO desligado, `agentd` parado, rede local quebrada):**
+
+- `lastSeenAt` deixa de atualizar; após **10 min** o scheduler pode notificar admin (`LAB_NOTIF_AGENT_OFFLINE_*`); após **24 h** o status efetivo vira `offline` (`MACHINE_HEARTBEAT_OFFLINE_HOURS`) e **novas** reservas são bloqueadas.
+- Alocações `approved`/`finished` **não travam** no banco: o scheduler segue finalizando vencidas; fases (`grace`, `post_sftp`, `no_key`, `teardown`) avançam pelo tempo mesmo sem agente.
+- Linhas em `machine_users` **permanecem** até o próximo heartbeat reconciliar (drift só roda quando o agente reporta `provisionedOsUsers`).
+- Quando o agente volta, o **primeiro** heartbeat já recebe o estado desejado **atual** — pode revogar chaves, mudar shells ou pedir `userdel` de uma só vez, conforme o que o relógio já passou durante a queda.
+
+**API cai (agente isolado, mas SO no ar):**
+
+- O agente continua tentando heartbeat a cada **30 s**; em falha de rede/timeout **não** chama `apply_provisioning` — o Linux **congela no último estado aplicado com sucesso**.
+- Telemetria também falha; o agente mantém perfil **eco** local (`GET /api/config` no boot ou fallback em memória).
+- Não há “replay” de comandos: ao restabelecer a API, um único heartbeat sincroniza o SO com a política vigente naquele instante.
+
+**Dessincronia típica durante outage:**
+
+| Situação | Efeito |
+|----------|--------|
+| Usuário em `full_shell` e agente/API offline na virada de `endTime` | Pode manter bash além do grace até reconectar |
+| Fase `prepare`/`active` e conta nunca criada (queda antes do 1º sync) | Calendário mostra reserva ativa, mas SSH falha até heartbeat OK |
+| Fase já `no_key`/`teardown` na API, agente offline | Conta/chave podem permanecer no SO até o próximo sync |
+| `access_type` fixo (`shell`/`sftp`/`revoked`) em `machine_users` | API recalcula override a cada heartbeat; agente só aplica quando online |
+
+**Resumo:** a API guarda **dados e política temporal** (alocações, inventário, fases calculadas); o agente guarda **efeito no SO**. Nenhum dos dois mantém uma ACL incremental — só o último snapshot completo em `provisioning[]`. Acesso real = interseção do relógio da API com o último sync bem-sucedido no Linux.
 
 **Config global (admin):** `GET`/`PUT /api/v1/lab/telemetry-presets` (fast/eco) e `GET`/`PUT /api/v1/lab/settings` (aprovação e nomes no calendário).
 

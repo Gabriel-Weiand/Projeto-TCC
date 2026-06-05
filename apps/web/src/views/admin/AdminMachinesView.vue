@@ -1,24 +1,23 @@
 <script setup lang="ts">
 import { ref, reactive, onMounted, computed } from "vue";
+import { useRouter } from "vue-router";
 import { useMachinesStore } from "@/stores/machines";
-import type { Machine, MachineOperationalMode } from "@/types";
+import type { Machine } from "@/types";
 
+const router = useRouter();
 const store = useMachinesStore();
 const loading = ref(true);
 const search = ref("");
 
-const showModal = ref(false);
-const editing = ref<Machine | null>(null);
-const form = reactive({
+const showCreateModal = ref(false);
+const createForm = reactive({
   name: "",
   description: "",
   ipAddress: "",
-  sshPort: "" as string,
-  operationalMode: "available" as MachineOperationalMode,
+  sshPort: "",
 });
-const saving = ref(false);
-const error = ref("");
-
+const creating = ref(false);
+const createError = ref("");
 const tokenModal = ref(false);
 const tokenValue = ref("");
 const tokenMachine = ref("");
@@ -32,13 +31,14 @@ onMounted(async () => {
 });
 
 const filtered = computed(() => {
-  const q = search.value.toLowerCase();
+  const q = search.value.toLowerCase().trim();
   if (!q) return store.machines;
   return store.machines.filter(
     (m) =>
       m.name.toLowerCase().includes(q) ||
       m.status.includes(q) ||
-      (m.description && m.description.toLowerCase().includes(q)),
+      (m.description && m.description.toLowerCase().includes(q)) ||
+      (m.group?.title && m.group.title.toLowerCase().includes(q)),
   );
 });
 
@@ -49,85 +49,21 @@ function parseSshPortInput(raw: string): number | null {
   return Number.isFinite(n) ? n : null;
 }
 
-function resolveOperationalMode(m: Machine): MachineOperationalMode {
-  if (m.operationalMode) return m.operationalMode;
-  if (m.status === "maintenance") return "maintenance";
-  if (m.status === "disabled") return "offline";
-  return "available";
+function goToView(m: Machine) {
+  router.push({
+    name: "machine-detail",
+    params: { id: m.id },
+    query: { from: "admin" },
+  });
 }
 
-function machinePayload() {
-  const ip = form.ipAddress.trim();
-  const payload: Record<string, unknown> = {
-    name: form.name,
-    description: form.description,
-    ipAddress: ip || null,
-    sshPort: parseSshPortInput(form.sshPort),
-  };
-  if (editing.value) {
-    payload.status = form.operationalMode;
-  }
-  return payload;
+function goToEdit(m: Machine, event?: Event) {
+  event?.stopPropagation();
+  router.push({ name: "admin-machine-edit", params: { id: m.id } });
 }
 
-function openCreate() {
-  editing.value = null;
-  form.name = "";
-  form.description = "";
-  form.ipAddress = "";
-  form.sshPort = "";
-  form.operationalMode = "available";
-  error.value = "";
-  showModal.value = true;
-}
-
-function openEdit(m: Machine) {
-  editing.value = m;
-  form.name = m.name;
-  form.description = m.description || "";
-  form.ipAddress = m.ipAddress || "";
-  form.sshPort = m.sshPort != null ? String(m.sshPort) : "";
-  form.operationalMode = resolveOperationalMode(m);
-  error.value = "";
-  showModal.value = true;
-}
-
-async function handleSave() {
-  error.value = "";
-  if (!form.name) {
-    error.value = "Nome é obrigatório.";
-    return;
-  }
-
-  saving.value = true;
-  try {
-    if (editing.value) {
-      await store.updateMachine(editing.value.id, machinePayload());
-    } else {
-      const { status, ...createBody } = machinePayload();
-      const created = await store.createMachine({
-        name: createBody.name as string,
-        description: createBody.description as string,
-        ipAddress: (createBody.ipAddress as string | null) ?? undefined,
-        sshPort: createBody.sshPort as number | null,
-      });
-      if (created.token) {
-        tokenValue.value = created.token;
-        tokenMachine.value = created.name;
-        tokenModal.value = true;
-      }
-    }
-    showModal.value = false;
-  } catch (err: any) {
-    const status = err.response?.status;
-    if (status === 422) error.value = "Dados inválidos. Verifique os campos.";
-    else error.value = "Erro ao salvar máquina.";
-  } finally {
-    saving.value = false;
-  }
-}
-
-async function handleDelete(m: Machine) {
+async function handleDelete(m: Machine, event: Event) {
+  event.stopPropagation();
   if (!confirm(`Excluir "${m.name}"? Esta ação não pode ser desfeita.`)) return;
   try {
     await store.deleteMachine(m.id);
@@ -136,18 +72,39 @@ async function handleDelete(m: Machine) {
   }
 }
 
-async function handleRegenerateToken(m: Machine) {
-  if (
-    !confirm(`Regenerar token de "${m.name}"? O token atual será invalidado.`)
-  )
+function openCreate() {
+  createForm.name = "";
+  createForm.description = "";
+  createForm.ipAddress = "";
+  createForm.sshPort = "";
+  createError.value = "";
+  showCreateModal.value = true;
+}
+
+async function handleCreate() {
+  createError.value = "";
+  if (!createForm.name.trim()) {
+    createError.value = "Nome é obrigatório.";
     return;
+  }
+  creating.value = true;
   try {
-    const result = await store.regenerateToken(m.id);
-    tokenValue.value = result.token;
-    tokenMachine.value = m.name;
-    tokenModal.value = true;
+    const created = await store.createMachine({
+      name: createForm.name.trim(),
+      description: createForm.description.trim(),
+      ipAddress: createForm.ipAddress.trim() || undefined,
+      sshPort: parseSshPortInput(createForm.sshPort),
+    });
+    showCreateModal.value = false;
+    if (created.token) {
+      tokenValue.value = created.token;
+      tokenMachine.value = created.name;
+      tokenModal.value = true;
+    }
   } catch {
-    alert("Erro ao regenerar token.");
+    createError.value = "Erro ao criar máquina.";
+  } finally {
+    creating.value = false;
   }
 }
 
@@ -206,8 +163,8 @@ function copyToken() {
           <tr>
             <th>Nome</th>
             <th>Status</th>
+            <th>Grupo</th>
             <th>IP</th>
-            <th>Último Report</th>
             <th class="col-actions">Ações</th>
           </tr>
         </thead>
@@ -217,41 +174,31 @@ function copyToken() {
               <span class="machine-name">{{ m.name }}</span>
             </td>
             <td>
-              <span :class="['badge', statusBadge(m.status)]">{{
-                statusLabel(m.status)
-              }}</span>
+              <span :class="['badge', statusBadge(m.status)]">
+                {{ statusLabel(m.status) }}
+              </span>
+            </td>
+            <td class="text-secondary">
+              {{ m.group?.title ?? "Outros" }}
             </td>
             <td class="text-secondary">{{ m.ipAddress || "—" }}</td>
-            <td class="text-muted report-cell">
-              {{
-                m.lastSeenAt
-                  ? new Date(m.lastSeenAt).toLocaleString("pt-BR")
-                  : "Nunca"
-              }}
-            </td>
             <td class="col-actions">
               <div class="actions-cell">
                 <button
-                  class="btn btn-ghost btn-sm text-accent"
-                  @click="
-                    $router.push({
-                      name: 'machine-detail',
-                      params: { id: m.id },
-                    })
-                  "
+                  type="button"
+                  class="btn btn-ghost btn-sm"
+                  @click="goToView(m)"
                 >
                   Ver
                 </button>
-                <button class="btn btn-ghost btn-sm" @click="openEdit(m)">
+                <button type="button" class="btn btn-ghost btn-sm" @click="goToEdit(m)">
                   Editar
                 </button>
                 <button
-                  class="btn btn-ghost btn-sm text-accent"
-                  @click="handleRegenerateToken(m)"
+                  type="button"
+                  class="btn btn-danger btn-sm"
+                  @click="handleDelete(m, $event)"
                 >
-                  Token
-                </button>
-                <button class="btn btn-danger btn-sm" @click="handleDelete(m)">
                   Excluir
                 </button>
               </div>
@@ -263,94 +210,46 @@ function copyToken() {
 
     <Teleport to="body">
       <div
-        v-if="showModal"
+        v-if="showCreateModal"
         class="modal-overlay"
-        @click.self="showModal = false"
+        @click.self="showCreateModal = false"
       >
         <div class="modal-glass fade-in">
           <div class="modal-header">
-            <h2 class="modal-title">
-              {{ editing ? "Editar Máquina" : "Nova Máquina" }}
-            </h2>
-            <button class="btn-close" @click="showModal = false">✕</button>
+            <h2 class="modal-title">Nova Máquina</h2>
+            <button class="btn-close" @click="showCreateModal = false">✕</button>
           </div>
-          <form class="modal-body" @submit.prevent="handleSave">
+          <form class="modal-body" @submit.prevent="handleCreate">
             <div class="field">
               <label class="field-label">Nome</label>
-              <input
-                v-model="form.name"
-                type="text"
-                placeholder="Ex: Lab-PC-01"
-              />
+              <input v-model="createForm.name" type="text" placeholder="Ex: Lab-PC-01" />
             </div>
             <div class="field">
               <label class="field-label">Descrição</label>
-              <input
-                v-model="form.description"
-                type="text"
-                placeholder="Descrição da máquina"
-              />
+              <input v-model="createForm.description" type="text" />
             </div>
             <div class="field">
-              <label class="field-label">Endereço IP</label>
-              <input
-                v-model="form.ipAddress"
-                type="text"
-                placeholder="Ex: 192.168.1.10"
-              />
+              <label class="field-label">IP local</label>
+              <input v-model="createForm.ipAddress" type="text" placeholder="Opcional" />
             </div>
             <div class="field">
-              <label class="field-label"
-                >Porta SSH
-                <span class="text-muted">(vazio = 22)</span></label
-              >
-              <input
-                v-model="form.sshPort"
-                type="text"
-                inputmode="numeric"
-                pattern="[0-9]*"
-                class="port-input"
-                placeholder="22"
-              />
+              <label class="field-label">Porta SSH</label>
+              <input v-model="createForm.sshPort" type="text" placeholder="22" />
             </div>
-            <div v-if="editing" class="field">
-              <label class="field-label">Status</label>
-              <select v-model="form.operationalMode">
-                <option value="available">Disponível</option>
-                <option value="offline">Desativada</option>
-                <option value="maintenance">Manutenção</option>
-              </select>
-              <p v-if="form.operationalMode === 'available'" class="field-hint text-muted">
-                Em modo disponível, o status exibido é calculado automaticamente
-                (alocações, grace e heartbeat de 24 h).
-              </p>
-            </div>
-
-            <p v-if="error" class="error-text">{{ error }}</p>
-
+            <p v-if="createError" class="form-error">{{ createError }}</p>
             <div class="modal-actions">
-              <button
-                type="button"
-                class="btn btn-ghost"
-                @click="showModal = false"
-              >
+              <button type="button" class="btn btn-ghost" @click="showCreateModal = false">
                 Cancelar
               </button>
-              <button type="submit" class="btn btn-primary" :disabled="saving">
-                {{ saving ? "Salvando..." : "Salvar" }}
+              <button type="submit" class="btn btn-primary" :disabled="creating">
+                {{ creating ? "Criando…" : "Criar" }}
               </button>
             </div>
           </form>
         </div>
       </div>
-    </Teleport>
 
-    <Teleport to="body">
-      <div
-        v-if="tokenModal"
-        class="modal-overlay"
-        @click.self="tokenModal = false"
-      >
+      <div v-if="tokenModal" class="modal-overlay" @click.self="tokenModal = false">
         <div class="modal-glass fade-in">
           <div class="modal-header">
             <h2 class="modal-title">Token — {{ tokenMachine }}</h2>
@@ -358,17 +257,12 @@ function copyToken() {
           </div>
           <div class="modal-body">
             <p class="text-secondary" style="font-size: 0.88rem">
-              Copie o token abaixo. Ele
-              <strong>não será exibido novamente</strong>.
+              Copie o token abaixo. Ele <strong>não será exibido novamente</strong>.
             </p>
-            <div class="token-box">
-              <code>{{ tokenValue }}</code>
-            </div>
+            <div class="token-box"><code>{{ tokenValue }}</code></div>
             <div class="modal-actions">
               <button class="btn btn-ghost" @click="copyToken">Copiar</button>
-              <button class="btn btn-primary" @click="tokenModal = false">
-                Fechar
-              </button>
+              <button class="btn btn-primary" @click="tokenModal = false">Fechar</button>
             </div>
           </div>
         </div>
@@ -384,39 +278,29 @@ function copyToken() {
   gap: 0.75rem;
   flex-wrap: nowrap;
 }
-
 .search-input {
   width: 220px;
   max-width: 100%;
   padding: 0.5rem 0.85rem;
   font-size: 0.88rem;
   height: 38px;
-  box-sizing: border-box;
 }
-
 .btn-new-machine {
   height: 38px;
-  padding: 0 1rem;
-  font-size: 0.88rem;
   white-space: nowrap;
 }
-
 .machines-table th,
 .machines-table td {
   text-align: center;
 }
 
+.machines-table .col-actions {
+  width: 220px;
+  min-width: 220px;
+}
+
 .machines-table .machine-name {
   font-weight: 500;
-}
-
-.machines-table .report-cell {
-  font-size: 0.82rem;
-}
-
-.machines-table .col-actions {
-  width: 280px;
-  min-width: 280px;
 }
 
 .machines-table .actions-cell {
@@ -427,18 +311,6 @@ function copyToken() {
   flex-wrap: nowrap;
   white-space: nowrap;
 }
-
-.port-input {
-  appearance: textfield;
-  -moz-appearance: textfield;
-}
-
-.port-input::-webkit-outer-spin-button,
-.port-input::-webkit-inner-spin-button {
-  -webkit-appearance: none;
-  margin: 0;
-}
-
 .modal-overlay {
   position: fixed;
   inset: 0;
@@ -454,20 +326,14 @@ function copyToken() {
   background: var(--bg-card-solid);
   border: 1px solid var(--border);
   border-radius: var(--radius-xl);
-  box-shadow: var(--shadow-elevated);
   width: 100%;
   max-width: 460px;
 }
 .modal-header {
   display: flex;
-  align-items: center;
   justify-content: space-between;
   padding: 1.25rem 1.5rem;
   border-bottom: 1px solid var(--border-subtle);
-}
-.modal-title {
-  font-size: 1.1rem;
-  font-weight: 600;
 }
 .modal-body {
   padding: 1.5rem;
@@ -479,17 +345,19 @@ function copyToken() {
   display: flex;
   justify-content: flex-end;
   gap: 0.75rem;
-  margin-top: 0.5rem;
 }
 .token-box {
   background: var(--bg-input);
   border: 1px solid var(--border);
   border-radius: var(--radius);
-  padding: 0.9rem 1rem;
+  padding: 0.9rem;
   word-break: break-all;
   font-family: monospace;
   font-size: 0.85rem;
   color: var(--accent);
-  user-select: text;
+}
+.form-error {
+  color: var(--danger);
+  font-size: 0.88rem;
 }
 </style>

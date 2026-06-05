@@ -52,7 +52,7 @@ export const updateMachineValidator = vine.compile(
 
     customAgentConfig: vine
       .object({
-        intervalSeconds: vine.number().min(1).max(600).optional(),
+        intervalSeconds: vine.number().min(2).max(600).optional(),
         batchSize: vine.number().min(1).max(15).optional(),
 
         // Configuração padrão de captura contínua de processos
@@ -82,6 +82,19 @@ export const updateMachineValidator = vine.compile(
       })
       .optional()
       .nullable(),
+  })
+)
+
+export const updateProvisionedUserValidator = vine.compile(
+  vine.object({
+    accessType: vine.enum(['auto', 'shell', 'sftp', 'revoked'] as const).optional(),
+  })
+)
+
+export const createProvisionedUserValidator = vine.compile(
+  vine.object({
+    userId: vine.number().positive(),
+    accessType: vine.enum(['shell', 'sftp', 'revoked'] as const).optional(),
   })
 )
 

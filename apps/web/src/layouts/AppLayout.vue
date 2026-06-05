@@ -68,7 +68,9 @@ function isActive(name: string | string[]): boolean {
             >
             <RouterLink
               to="/admin/machines"
-              :class="{ active: isActive('admin-machines') }"
+              :class="{
+                active: isActive(['admin-machines', 'admin-machine-edit']),
+              }"
               >Gerenciar</RouterLink
             >
             <RouterLink
@@ -77,9 +79,9 @@ function isActive(name: string | string[]): boolean {
               >Alocações</RouterLink
             >
             <RouterLink
-              to="/admin/lab-telemetry"
-              :class="{ active: isActive('admin-lab-telemetry') }"
-              >Telemetria lab</RouterLink
+              to="/admin/maintenance"
+              :class="{ active: isActive('admin-maintenance') }"
+              >Manutenção</RouterLink
             >
           </template>
         </div>

@@ -5,8 +5,7 @@ import Allocation from '#models/allocation'
 import testUtils from '@adonisjs/core/services/test_utils'
 import { DateTime } from 'luxon'
 import { autoFinalizeExpired } from '#services/allocation_summarizer'
-import { pruneExpiredTokens } from '#services/lab_maintenance'
-import { dateTimeToSqlUtc } from '#utils/datetime'
+import { pruneAllocations, pruneExpiredTokens } from '#services/lab_maintenance'
 import { createTestMachine } from '../helpers/test_machine.js'
 
 /**
@@ -129,10 +128,9 @@ test.group('Bug: autoFinalizeExpired — comparação de datas', (group) => {
 test.group('Bug: prune — comparação de datas', (group) => {
   group.each.setup(() => testUtils.db().withGlobalTransaction())
 
-  test('pruneAllocations NÃO deve remover alocações recentes', async ({ client, assert }) => {
+  test('pruneAllocations NÃO deve remover alocações recentes', async ({ assert }) => {
     const { user, machine } = await createUserAndMachine('prune1')
 
-    // Alocação que terminou ontem — recente, NÃO deve ser removida se "before" é 1 semana atrás
     const recent = await Allocation.create({
       userId: user.id,
       machineId: machine.id,
@@ -141,21 +139,14 @@ test.group('Bug: prune — comparação de datas', (group) => {
       status: 'finished',
     })
 
-    const before = DateTime.now().minus({ weeks: 1 }).toISO()
+    const before = DateTime.now().minus({ weeks: 1 })
+    await pruneAllocations({ before })
 
-    const response = await client
-      .delete('/api/v1/system/prune/allocations')
-      .loginAs(user)
-      .json({ before })
-
-    response.assertStatus(200)
-
-    // Verificar que NOSSA alocação recente ainda existe (pode ter removido seeded data antiga)
     const check = await Allocation.find(recent.id)
     assert.isNotNull(check, 'Alocação recente deve continuar existindo')
   })
 
-  test('pruneAllocations DEVE remover alocações antigas', async ({ client, assert }) => {
+  test('pruneAllocations DEVE remover alocações antigas', async ({ assert }) => {
     const { user, machine } = await createUserAndMachine('prune2')
 
     const antiga = await Allocation.create({
@@ -166,26 +157,23 @@ test.group('Bug: prune — comparação de datas', (group) => {
       status: 'finished',
     })
 
-    const before = DateTime.now().minus({ months: 1 }).toISO()
+    const before = DateTime.now().minus({ months: 1 })
+    const deleted = await pruneAllocations({ before })
 
-    const response = await client
-      .delete('/api/v1/system/prune/allocations')
-      .loginAs(user)
-      .json({ before })
-
-    response.assertStatus(200)
-    assert.isAtLeast(response.body().deleted, 1)
+    assert.isAtLeast(deleted, 1)
     assert.isNull(await Allocation.find(antiga.id))
   })
 })
 
 // ─────────────────────────────────────────────────────────────────────────
-// Bug 3: pruneExpiredTokens — corte em UTC, não no relógio local
+// Bug 3: pruneExpiredTokens — mesma regra do Adonis (Date), não string SQL UTC
 // ─────────────────────────────────────────────────────────────────────────
-test.group('Bug: pruneExpiredTokens — comparação UTC', (group) => {
+test.group('Bug: pruneExpiredTokens — comparação Date', (group) => {
   group.each.setup(() => testUtils.db().withGlobalTransaction())
 
-  test('remove tokens expirados em UTC mesmo com TZ do lab ≠ UTC', async ({ assert }) => {
+  test('remove só tokens expirados e preserva sessão válida (TZ America/Sao_Paulo)', async ({
+    assert,
+  }) => {
     const prevTz = process.env.TZ
     process.env.TZ = 'America/Sao_Paulo'
 
@@ -196,8 +184,8 @@ test.group('Bug: pruneExpiredTokens — comparação UTC', (group) => {
       role: 'user',
     })
 
-    const nowUtc = DateTime.utc()
-    const stamp = dateTimeToSqlUtc(nowUtc.minus({ days: 1 }))
+    const now = DateTime.now()
+    const stamp = now.minus({ days: 1 }).toJSDate()
 
     await db.table('auth_access_tokens').insert({
       tokenable_id: user.id,
@@ -207,7 +195,7 @@ test.group('Bug: pruneExpiredTokens — comparação UTC', (group) => {
       abilities: '["*"]',
       created_at: stamp,
       updated_at: stamp,
-      expires_at: dateTimeToSqlUtc(nowUtc.minus({ hours: 2 })),
+      expires_at: now.minus({ hours: 2 }).toJSDate(),
     })
 
     await db.table('auth_access_tokens').insert({
@@ -218,7 +206,7 @@ test.group('Bug: pruneExpiredTokens — comparação UTC', (group) => {
       abilities: '["*"]',
       created_at: stamp,
       updated_at: stamp,
-      expires_at: dateTimeToSqlUtc(nowUtc.plus({ hours: 2 })),
+      expires_at: now.plus({ hours: 2 }).toJSDate(),
     })
 
     assert.lengthOf(

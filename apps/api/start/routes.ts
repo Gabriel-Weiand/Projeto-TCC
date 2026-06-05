@@ -129,12 +129,32 @@ router
               router
                 .post('/:id/request-processes', [MachinesController, 'requestProcessReport'])
                 .as('machines.requestProcesses')
+              router
+                .get('/:id/provisioned-users', [MachinesController, 'provisionedUsers'])
+                .as('machines.provisionedUsers.index')
+              router
+                .post('/:id/provisioned-users', [MachinesController, 'storeProvisionedUser'])
+                .as('machines.provisionedUsers.store')
+              router
+                .patch('/:id/provisioned-users/:userId', [
+                  MachinesController,
+                  'updateProvisionedUser',
+                ])
+                .as('machines.provisionedUsers.update')
+                .where('userId', router.matchers.number())
+              router
+                .delete('/:id/provisioned-users/:userId', [
+                  MachinesController,
+                  'destroyProvisionedUser',
+                ])
+                .as('machines.provisionedUsers.destroy')
+                .where('userId', router.matchers.number())
             })
             .prefix('machines')
             .where('id', router.matchers.number())
             .use(middleware.isAdmin()) // Admin Only
 
-          // --- SSH Attempts Auditing (Admin only - Substitui ssh-sessions) ---
+          // --- SSH Attempts Auditing (Admin only) ---
           router
             .group(() => {
               router.get('/', [SshAttemptsController, 'index']).as('sshAttempts.index')
@@ -185,9 +205,6 @@ router
                 .post('maintenance/run', [SystemController, 'runMaintenance'])
                 .as('system.maintenance.run')
               router
-                .delete('telemetries/:id', [SystemController, 'destroyTelemetry'])
-                .as('telemetries.destroy')
-              router
                 .delete('allocations/:id', [SystemController, 'destroyAllocation'])
                 .as('system.allocations.destroy')
               router
@@ -196,9 +213,6 @@ router
               router
                 .delete('ssh-attempts/:id', [SystemController, 'destroySshAttempt'])
                 .as('system.sshAttempts.destroy')
-              router
-                .delete('prune/allocations', [SystemController, 'pruneAllocations'])
-                .as('system.prune.allocations')
               router
                 .delete('prune/notifications', [SystemController, 'pruneNotifications'])
                 .as('system.prune.notifications')

@@ -32,6 +32,7 @@ const emit = defineEmits<{
   cancel: [];
   finish: [];
   delete: [];
+  edit: [];
   approve: [];
   deny: [];
   generateSummary: [];
@@ -251,6 +252,14 @@ function machineDescription(desc?: string | null) {
                 </button>
               </template>
               <button
+                v-if="adminActions.canEdit(allocation)"
+                type="button"
+                class="btn btn-ghost btn-sm detail-action-btn"
+                @click="emit('edit')"
+              >
+                Editar
+              </button>
+              <button
                 v-if="adminActions.canCancel(allocation)"
                 type="button"
                 class="btn btn-ghost btn-sm detail-action-btn"
@@ -277,7 +286,7 @@ function machineDescription(desc?: string | null) {
                 Estatísticas
               </button>
               <button
-                v-if="adminActions.canDelete(allocation)"
+                v-if="adminActions.canHardDelete(allocation)"
                 type="button"
                 class="btn btn-danger btn-sm detail-action-btn"
                 :disabled="deleting"

@@ -232,6 +232,105 @@ tr:hover td { background: var(--bg-hover); }
 .progress-bar.warning .progress-fill { background: linear-gradient(90deg, #fbbf24, #fcd34d); }
 .progress-bar.danger .progress-fill { background: linear-gradient(90deg, #f87171, #fca5a5); }
 
+/* ---- Data/hora BR em formulários de alocação ---- */
+.lab-wall-input {
+  width: 100%;
+  min-width: 0;
+  padding: 0.48rem 0.55rem;
+  font-size: 0.86rem;
+  background: var(--bg-card-solid);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  color: var(--text-primary);
+  font-family: inherit;
+}
+.lab-wall-input--time {
+  padding-left: 0.4rem;
+  padding-right: 0.35rem;
+  text-align: center;
+}
+.lab-wall-input:focus {
+  outline: none;
+  border-color: rgba(124, 108, 240, 0.45);
+}
+.lab-wall-input--error {
+  border-color: rgba(239, 68, 68, 0.65);
+  background: rgba(239, 68, 68, 0.06);
+}
+.lab-wall-input--error:focus {
+  border-color: rgba(239, 68, 68, 0.85);
+}
+.lab-wall-input:disabled {
+  opacity: 0.65;
+  cursor: not-allowed;
+}
+
+.lab-wall-date-field {
+  position: relative;
+  display: flex;
+  align-items: stretch;
+  width: 100%;
+  min-width: 0;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--bg-card-solid);
+  overflow: hidden;
+}
+.lab-wall-date-field:focus-within {
+  border-color: rgba(124, 108, 240, 0.45);
+}
+.lab-wall-date-field--error {
+  border-color: rgba(239, 68, 68, 0.65);
+  background: rgba(239, 68, 68, 0.06);
+}
+.lab-wall-date-field--error:focus-within {
+  border-color: rgba(239, 68, 68, 0.85);
+}
+.lab-wall-input--in-field {
+  border: none;
+  border-radius: 0;
+  background: transparent;
+  flex: 1;
+  min-width: 0;
+}
+.lab-wall-input--in-field:focus {
+  border-color: transparent;
+  outline: none;
+}
+.lab-wall-date-picker-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  width: 2.15rem;
+  padding: 0;
+  border: none;
+  border-left: 1px solid var(--border-subtle);
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+  transition: color 0.15s, background 0.15s;
+}
+.lab-wall-date-picker-btn:hover:not(:disabled) {
+  color: var(--text-primary);
+  background: var(--bg-hover);
+}
+.lab-wall-date-picker-btn:disabled {
+  opacity: 0.65;
+  cursor: not-allowed;
+}
+.lab-wall-date-picker-icon {
+  width: 1rem;
+  height: 1rem;
+}
+.lab-wall-date-native {
+  position: absolute;
+  width: 0;
+  height: 0;
+  opacity: 0;
+  pointer-events: none;
+}
+
 /* ---- Field ---- */
 .field { display: flex; flex-direction: column; gap: 0.35rem; }
 .field-label { font-size: 0.82rem; font-weight: 500; color: var(--text-secondary); }

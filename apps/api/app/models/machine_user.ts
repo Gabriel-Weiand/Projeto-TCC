@@ -23,6 +23,9 @@ export default class MachineUser extends BaseModel {
   @column.dateTime()
   declare lastActiveAt: DateTime | null
 
+  @column()
+  declare accessType: 'auto' | 'shell' | 'sftp' | 'revoked'
+
   @column.dateTime({ autoCreate: true })
   declare createdAt: DateTime
 

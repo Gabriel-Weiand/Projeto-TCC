@@ -13,10 +13,14 @@ export function machineHasAllocationConflict(
   machineId: number,
   startIso: string,
   endIso: string,
+  excludeAllocationId?: number,
 ): boolean {
   const startMs = parseApiUtcMs(normalizeApiUtcIso(startIso));
   const endMs = parseApiUtcMs(normalizeApiUtcIso(endIso));
   return allocations.some((a) => {
+    if (excludeAllocationId !== undefined && a.id === excludeAllocationId) {
+      return false;
+    }
     if (a.machineId !== machineId || !BLOCKING_STATUSES.has(a.status)) {
       return false;
     }

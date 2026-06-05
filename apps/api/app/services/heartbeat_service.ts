@@ -17,6 +17,10 @@ import {
   sftpEndsAt,
   type AccessPhase,
 } from '#services/allocation_access'
+import {
+  buildProvisioningFromAccessType,
+  type AccessType,
+} from '#services/machine_provisioned_users'
 import { getLabAccessConfig } from '#services/lab_config'
 
 export default class HeartbeatService {
@@ -87,18 +91,59 @@ export default class HeartbeatService {
       }
     }
 
+    const fixedAccessByUserId = new Map(
+      dbMachineUsers
+        .filter((row) => (row.accessType as AccessType) !== 'auto')
+        .map((row) => [row.userId, row.accessType as AccessType] as const)
+    )
+
     const provisioning: any[] = []
     let currentAllocationPayload: Allocation | null = null
     let currentPhase: AccessPhase = 'none'
 
+    // access_type fixo: ignora fases de alocação para este usuário
+    for (const dbUser of dbMachineUsers) {
+      const accessType = (dbUser.accessType as AccessType) ?? 'auto'
+      if (accessType === 'auto') continue
+
+      const user = dbUser.user
+      if (!user?.systemUsername) continue
+
+      const prov = buildProvisioningFromAccessType(
+        accessType,
+        user.systemUsername,
+        user.sshPublicKey
+      )
+
+      provisioning.push({
+        systemUsername: prov.systemUsername,
+        sshPublicKey: prov.sshPublicKey,
+        accessState: prov.accessState,
+        revokeSshKey: prov.revokeSshKey,
+      })
+
+      await MachineUser.updateOrCreate(
+        { machineId: machine.id, userId: user.id },
+        {
+          osUsername: user.systemUsername,
+          lastActiveAt: prov.accessState === 'full_shell' ? now : undefined,
+        }
+      )
+    }
+
+    // auto: segue ciclo de vida da alocação (exceto usuários com access_type fixo)
     for (const { phase, allocation } of phasesByUserId.values()) {
       const user = allocation.user
       if (!user?.systemUsername) {
         continue
       }
 
-      const prov = phaseToProvisioning(phase, allocation, user.sshPublicKey)
-      if (!prov) {
+      if (fixedAccessByUserId.has(user.id)) {
+        continue
+      }
+
+      const allocationProv = phaseToProvisioning(phase, allocation, user.sshPublicKey)
+      if (!allocationProv) {
         continue
       }
 
@@ -114,15 +159,15 @@ export default class HeartbeatService {
         { machineId: machine.id, userId: user.id },
         {
           osUsername: user.systemUsername,
-          lastActiveAt: prov.accessState === 'full_shell' ? now : undefined,
+          lastActiveAt: allocationProv.accessState === 'full_shell' ? now : undefined,
         }
       )
 
       provisioning.push({
         systemUsername: user.systemUsername,
-        sshPublicKey: prov.sshPublicKey,
-        accessState: prov.accessState,
-        revokeSshKey: prov.revokeSshKey,
+        sshPublicKey: allocationProv.sshPublicKey,
+        accessState: allocationProv.accessState,
+        revokeSshKey: allocationProv.revokeSshKey,
       })
     }
 

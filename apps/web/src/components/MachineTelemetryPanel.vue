@@ -6,10 +6,12 @@ import NumberStepper from "@/components/NumberStepper.vue";
 import TelemetryMetricGrid from "@/components/TelemetryMetricGrid.vue";
 import {
   TELEMETRY_BATCH_MAX,
+  TELEMETRY_CUSTOM_INTERVAL_MIN,
   TELEMETRY_INTERVAL_MAX,
-  TELEMETRY_INTERVAL_MIN,
-  clampTelemetryInterval,
+  clampCustomTelemetryInterval,
   enforceMandatoryTelemetrySet,
+  validateBatchSize,
+  validateCustomInterval,
 } from "@/utils/telemetryPresets";
 import type { Machine } from "@/types";
 
@@ -71,6 +73,16 @@ const custom = reactive({
   telemetrySet: defaultTelemetrySet(),
 });
 
+const customIntervalError = computed(() =>
+  mode.value === "custom" ? validateCustomInterval(custom.intervalSeconds) : null,
+);
+const customBatchError = computed(() =>
+  mode.value === "custom" ? validateBatchSize(custom.batchSize) : null,
+);
+const hasCustomValidationErrors = computed(
+  () => customIntervalError.value !== null || customBatchError.value !== null,
+);
+
 function loadFromMachine(m: Machine) {
   mode.value = m.telemetryPreset === "custom" ? "custom" : "automatic";
   const c = m.customAgentConfig || {};
@@ -105,20 +117,13 @@ async function handleSave() {
     const payload: Record<string, unknown> = {};
 
     if (mode.value === "custom") {
-      if (
-        custom.intervalSeconds < TELEMETRY_INTERVAL_MIN ||
-        custom.intervalSeconds > TELEMETRY_INTERVAL_MAX
-      ) {
-        error.value = `Intervalo deve ser entre ${TELEMETRY_INTERVAL_MIN}s e ${TELEMETRY_INTERVAL_MAX}s.`;
-        return;
-      }
-      if (custom.batchSize < 1 || custom.batchSize > TELEMETRY_BATCH_MAX) {
-        error.value = `Tamanho do lote deve ser entre 1 e ${TELEMETRY_BATCH_MAX}.`;
+      if (hasCustomValidationErrors.value) {
+        error.value = "Corrija os campos destacados antes de salvar.";
         return;
       }
       payload.telemetryPreset = "custom";
       payload.customAgentConfig = {
-        intervalSeconds: clampTelemetryInterval(custom.intervalSeconds),
+        intervalSeconds: clampCustomTelemetryInterval(custom.intervalSeconds),
         batchSize: custom.batchSize,
         telemetrySet: enforceMandatoryTelemetrySet(custom.telemetrySet),
       };
@@ -177,24 +182,38 @@ async function handleSave() {
 
       <div v-if="mode === 'custom'" class="custom-block">
         <div class="custom-row">
-          <NumberStepper
-            v-model="custom.intervalSeconds"
-            label="Intervalo (s)"
-            :min="1"
-            :max="600"
-          />
-          <NumberStepper
-            v-model="custom.batchSize"
-            label="Tamanho do lote"
-            :min="1"
-            :max="TELEMETRY_BATCH_MAX"
-          />
+          <div class="custom-field">
+            <NumberStepper
+              v-model="custom.intervalSeconds"
+              label="Intervalo (s)"
+              :min="TELEMETRY_CUSTOM_INTERVAL_MIN"
+              :max="TELEMETRY_INTERVAL_MAX"
+            />
+            <p class="field-hint">
+              Entre {{ TELEMETRY_CUSTOM_INTERVAL_MIN }}s e {{ TELEMETRY_INTERVAL_MAX }}s.
+            </p>
+            <p v-if="customIntervalError" class="field-error">{{ customIntervalError }}</p>
+          </div>
+          <div class="custom-field">
+            <NumberStepper
+              v-model="custom.batchSize"
+              label="Tamanho do lote"
+              :min="1"
+              :max="TELEMETRY_BATCH_MAX"
+            />
+            <p class="field-hint">Entre 1 e {{ TELEMETRY_BATCH_MAX }} amostras.</p>
+            <p v-if="customBatchError" class="field-error">{{ customBatchError }}</p>
+          </div>
         </div>
         <TelemetryMetricGrid v-model="custom.telemetrySet" class="custom-metrics" />
       </div>
 
       <div class="panel-actions">
-        <button class="btn btn-primary btn-sm" :disabled="saving" @click="handleSave">
+        <button
+          class="btn btn-primary btn-sm"
+          :disabled="saving || (mode === 'custom' && hasCustomValidationErrors)"
+          @click="handleSave"
+        >
           {{ saving ? "Salvando…" : "Salvar telemetria" }}
         </button>
         <span v-if="saved" class="save-ok">Salvo — agente atualiza no próximo heartbeat.</span>
@@ -238,24 +257,38 @@ async function handleSave() {
 
           <div v-if="mode === 'custom'" class="custom-block">
             <div class="custom-row">
-              <NumberStepper
-                v-model="custom.intervalSeconds"
-                label="Intervalo (s)"
-                :min="1"
-                :max="600"
-              />
-              <NumberStepper
-                v-model="custom.batchSize"
-                label="Tamanho do lote"
-                :min="1"
-                :max="TELEMETRY_BATCH_MAX"
-              />
+              <div class="custom-field">
+                <NumberStepper
+                  v-model="custom.intervalSeconds"
+                  label="Intervalo (s)"
+                  :min="TELEMETRY_CUSTOM_INTERVAL_MIN"
+                  :max="TELEMETRY_INTERVAL_MAX"
+                />
+                <p class="field-hint">
+                  Entre {{ TELEMETRY_CUSTOM_INTERVAL_MIN }}s e {{ TELEMETRY_INTERVAL_MAX }}s.
+                </p>
+                <p v-if="customIntervalError" class="field-error">{{ customIntervalError }}</p>
+              </div>
+              <div class="custom-field">
+                <NumberStepper
+                  v-model="custom.batchSize"
+                  label="Tamanho do lote"
+                  :min="1"
+                  :max="TELEMETRY_BATCH_MAX"
+                />
+                <p class="field-hint">Entre 1 e {{ TELEMETRY_BATCH_MAX }} amostras.</p>
+                <p v-if="customBatchError" class="field-error">{{ customBatchError }}</p>
+              </div>
             </div>
             <TelemetryMetricGrid v-model="custom.telemetrySet" class="custom-metrics" />
           </div>
 
           <div class="panel-actions">
-            <button class="btn btn-primary btn-sm" :disabled="saving" @click="handleSave">
+            <button
+              class="btn btn-primary btn-sm"
+              :disabled="saving || (mode === 'custom' && hasCustomValidationErrors)"
+              @click="handleSave"
+            >
               {{ saving ? "Salvando…" : "Salvar telemetria" }}
             </button>
             <span v-if="saved" class="save-ok">Salvo — agente atualiza no próximo heartbeat.</span>
@@ -347,6 +380,24 @@ async function handleSave() {
   display: flex;
   flex-wrap: wrap;
   gap: 1.25rem;
+}
+
+.custom-field {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+}
+
+.field-hint {
+  margin: 0;
+  font-size: 0.78rem;
+  color: var(--text-secondary);
+}
+
+.field-error {
+  margin: 0;
+  font-size: 0.78rem;
+  color: var(--danger);
 }
 
 .custom-metrics {

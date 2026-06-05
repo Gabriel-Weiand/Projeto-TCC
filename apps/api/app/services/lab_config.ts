@@ -182,7 +182,7 @@ export const labConfig = {
   },
 
   schedulers: {
-    maintenanceCron: envString('LAB_SCHEDULER_MAINTENANCE_CRON', '0 4 * * *'),
+    maintenanceCron: envString('LAB_SCHEDULER_MAINTENANCE_CRON', '0 */4 * * *'),
     autoFinalizeCron: envString('LAB_SCHEDULER_AUTO_FINALIZE_CRON', '*/5 * * * *'),
   },
 
@@ -273,6 +273,12 @@ export function labPublicConfig() {
       tokenExpiresIn: labConfig.auth.tokenExpiresIn,
     },
     telemetry: labTelemetryPublicConfig(),
+    maintenance: {
+      summarizeAfterHours: labConfig.maintenance.summarizeAfterHours,
+      pruneAllocationDays: labConfig.maintenance.pruneAllocationDays,
+      pruneNotificationDays: labConfig.maintenance.pruneNotificationDays,
+      pruneSshAttemptsDays: labConfig.maintenance.pruneSshAttemptsDays,
+    },
   }
 }
 

@@ -47,6 +47,55 @@ export interface MachineGroupSummary {
   description: string | null;
 }
 
+export interface MachineGroup extends MachineGroupSummary {
+  machines?: Machine[];
+  createdAt?: string;
+  updatedAt?: string | null;
+}
+
+export type MachineAccessType = "auto" | "shell" | "sftp" | "revoked";
+
+export interface MachineProvisionedUser {
+  id: number;
+  userId: number;
+  osUsername: string;
+  fullName: string;
+  accessType: MachineAccessType;
+  lastActiveAt: string | null;
+}
+
+export interface SshConnectionAttempt {
+  id: number;
+  machineId: number;
+  sourceIp: string;
+  targetUsername: string;
+  status: "success" | "failed" | "invalid_user";
+  authMethod: string | null;
+  clientFingerprint: string | null;
+  createdAt: string;
+  machine?: Pick<Machine, "id" | "name">;
+}
+
+export type PolicyMode = "auto" | "true" | "false";
+
+export interface LabRuntimeSettings {
+  requireAdminApproval: PolicyMode;
+  publicNames: PolicyMode;
+  env: {
+    requireAdminApproval: boolean;
+    publicNames: boolean;
+  };
+}
+
+export interface MaintenanceRunResult {
+  message: string;
+  tokens: number;
+  summarized: number;
+  allocations: number;
+  notifications: number;
+  sshAttempts: number;
+}
+
 export type MachineOperationalMode = "available" | "offline" | "maintenance";
 
 export interface Machine {

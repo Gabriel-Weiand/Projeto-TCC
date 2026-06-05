@@ -16,7 +16,7 @@ import ProfileMyAllocationsTab from "@/components/ProfileMyAllocationsTab.vue";
 
 <style scoped>
 .my-allocations-page {
-  max-width: 1100px;
+  max-width: 1280px;
   margin: 0 auto;
 }
 

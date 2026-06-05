@@ -6,16 +6,18 @@ import { useTelemetryPlayback } from "@/composables/useTelemetryPlayback";
 import { pickNewerTelemetry } from "@/utils/telemetryBatchDiff";
 import MachineTelemetryPanel from "@/components/MachineTelemetryPanel.vue";
 import MachineLiveSections from "@/components/MachineLiveSections.vue";
-import CalendarGanttScroll from "@/components/CalendarGanttScroll.vue";
 import ProfileAllocationConnectModal from "@/components/ProfileAllocationConnectModal.vue";
 import type { Machine, Allocation } from "@/types";
-import { useRouter } from "vue-router";
+import { useRoute, useRouter } from "vue-router";
 import { isNowBeforeUtc, isNowInUtcRange } from "@/utils/datetime";
 
 const props = defineProps<{ id: string | number }>();
 const machinesStore = useMachinesStore();
 const auth = useAuthStore();
+const route = useRoute();
 const router = useRouter();
+
+const fromAdmin = computed(() => route.query.from === "admin");
 
 const machineId = computed(() => Number(props.id));
 const machine = ref<Machine | null>(null);
@@ -78,8 +80,6 @@ const showLiveSections = computed(
     isAdmin.value ||
     (machine.value?.disks != null && machine.value.disks.length > 0),
 );
-
-const ganttMachines = computed(() => (machine.value ? [machine.value] : []));
 
 const myActiveAllocation = computed(() => {
   const uid = auth.user?.id;
@@ -183,11 +183,23 @@ async function refreshFromApi() {
   }
 }
 
+function goBack() {
+  router.push({ name: fromAdmin.value ? "admin-machines" : "machines" });
+}
+
 function goToReserve() {
   if (!machine.value || machine.value.status === "maintenance") return;
   router.push({
     name: "home",
     query: { machine: String(machine.value.id), reserve: "1" },
+  });
+}
+
+function goToEdit() {
+  if (!machine.value) return;
+  router.push({
+    name: "admin-machine-edit",
+    params: { id: machine.value.id },
   });
 }
 
@@ -227,7 +239,7 @@ function statusLabel(s: string) {
     <button
       class="btn btn-ghost btn-sm"
       style="margin-bottom: 1rem"
-      @click="router.push({ name: 'machines' })"
+      @click="goBack"
     >
       ← Voltar
     </button>
@@ -271,6 +283,14 @@ function statusLabel(s: string) {
             @click="goToReserve"
           >
             + Reservar
+          </button>
+          <button
+            v-if="isAdmin"
+            type="button"
+            class="btn btn-ghost btn-sm"
+            @click="goToEdit"
+          >
+            Editar
           </button>
         </div>
       </div>
@@ -367,18 +387,6 @@ function statusLabel(s: string) {
           </div>
           <pre class="api-debug-pre">{{ JSON.stringify(apiDebugJson, null, 2) }}</pre>
         </details>
-
-        <section class="row-block gantt-block">
-          <h2 class="row-title">Agenda</h2>
-          <CalendarGanttScroll
-            compact
-            single-machine-focus
-            :machines="ganttMachines"
-            :allocations="scheduleAllocations"
-            :current-user-id="auth.user?.id ?? null"
-            :loading="false"
-          />
-        </section>
       </template>
     </template>
 
@@ -426,22 +434,6 @@ function statusLabel(s: string) {
   grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
   gap: 0.75rem;
   margin-bottom: 2rem;
-}
-
-.row-block {
-  background: var(--bg-card);
-  border: 1px solid var(--border-subtle);
-  border-radius: var(--radius);
-  padding: 0.75rem 0.85rem;
-}
-
-.row-title {
-  font-size: 0.78rem;
-  font-weight: 600;
-  text-transform: uppercase;
-  letter-spacing: 0.04em;
-  color: var(--text-muted);
-  margin: 0 0 0.55rem;
 }
 
 .section-title {
@@ -499,7 +491,4 @@ function statusLabel(s: string) {
   color: var(--text-secondary);
 }
 
-.gantt-block {
-  padding-bottom: 0.5rem;
-}
 </style>

@@ -1,6 +1,6 @@
 import type { HttpContext } from '@adonisjs/core/http'
 import {
-  getLabRuntimeSettings,
+  getLabRuntimeSettingsResponse,
   saveLabRuntimeSettings,
 } from '#services/lab_runtime_settings'
 import { updateLabSettingsValidator } from '#validators/lab_settings'
@@ -12,7 +12,7 @@ export default class LabSettingsController {
    * GET /api/v1/lab/settings
    */
   async show({ response }: HttpContext) {
-    return response.ok(getLabRuntimeSettings())
+    return response.ok(getLabRuntimeSettingsResponse())
   }
 
   /**
@@ -25,11 +25,11 @@ export default class LabSettingsController {
 
     if (data.requireAdminApproval === undefined && data.publicNames === undefined) {
       return response.badRequest({
-        message: 'Informe requireAdminApproval e/ou publicNames.',
+        message: 'Informe requireAdminApproval e/ou publicNames (auto, true ou false).',
       })
     }
 
     saveLabRuntimeSettings(data)
-    return response.ok(getLabRuntimeSettings())
+    return response.ok(getLabRuntimeSettingsResponse())
   }
 }

@@ -666,7 +666,9 @@ test.group('AllocationMetric - Resumo de Sessão', (group) => {
 test.group('Manutenção - Exclusão de Telemetrias e Métricas', (group) => {
   group.each.setup(() => testUtils.db().withGlobalTransaction())
 
-  test('admin deve deletar telemetria individual', async ({ client, assert }) => {
+  test('telemetrias brutas persistem por alocação (sem exclusão individual)', async ({
+    assert,
+  }) => {
     const admin = await User.create({
       fullName: 'Admin Del',
       email: 'admin.del@teste.com',
@@ -692,16 +694,6 @@ test.group('Manutenção - Exclusão de Telemetrias e Métricas', (group) => {
 
     const telemetries = await Telemetry.query().where('allocationId', allocation.id)
     assert.equal(telemetries.length, 10)
-
-    // Deleta uma telemetria
-    const target = telemetries[0]
-    const response = await client.delete(`/api/v1/system/telemetries/${target.id}`).loginAs(admin)
-    response.assertStatus(204)
-
-    // Verifica que restam 9
-    const remaining = await Telemetry.query().where('allocationId', allocation.id)
-    assert.equal(remaining.length, 9)
-    assert.isFalse(remaining.some((t) => t.id === target.id))
   })
 
   test('cascade: deletar alocação remove telemetrias e métrica', async ({ assert }) => {

@@ -20,6 +20,7 @@ import {
 } from "@/utils/allocationLabels";
 import { effectiveLifecycleStatus } from "@/utils/allocationLifecycle";
 import { useAdminAllocationActions } from "@/composables/useAdminAllocationActions";
+import ExtendAllocationOverlay from "@/components/ExtendAllocationOverlay.vue";
 
 const store = useAllocationsStore();
 const machinesStore = useMachinesStore();
@@ -33,6 +34,7 @@ const usageStatsTarget = ref<Allocation | null>(null);
 const updating = ref<number | null>(null);
 const deleting = ref<number | null>(null);
 const summarizing = ref<number | null>(null);
+const editTarget = ref<Allocation | null>(null);
 
 const isHiddenList = computed(() => isHiddenAllocationsFilter(statusFilter.value));
 
@@ -163,23 +165,30 @@ async function handleGenerateSummary(a: Allocation) {
   }
 }
 
-async function handleDelete(a: Allocation) {
+function openEdit(a: Allocation) {
+  editTarget.value = enrichAllocation(a);
+}
+
+function onAllocationEdited(updated: Allocation) {
+  const idx = store.allocations.findIndex((row) => row.id === updated.id);
+  if (idx !== -1) store.allocations[idx] = updated;
+  syncDetailFromStore();
+  editTarget.value = null;
+}
+
+async function handleHardDelete(a: Allocation) {
   if (
     !confirm(
-      "Excluir esta alocação do histórico operacional? O registro ficará apenas em «Removidas pelo usuário».",
+      "Remover permanentemente esta alocação?\n\nTelemetrias e resumo da sessão serão apagados. Esta ação não pode ser desfeita.",
     )
   )
     return;
   deleting.value = a.id;
   try {
-    await store.softDeleteAllocation(a.id);
+    await store.hardDeleteAllocation(a.id);
     if (detailTarget.value?.id === a.id) detailTarget.value = null;
-  } catch (err: unknown) {
-    const code = (err as { response?: { data?: { code?: string } } })?.response
-      ?.data?.code;
-    if (code === "ALLOCATION_IN_PROGRESS")
-      alert("Não é possível excluir uma alocação em andamento.");
-    else alert("Erro ao excluir alocação.");
+  } catch {
+    alert("Erro ao remover alocação.");
   } finally {
     deleting.value = null;
   }
@@ -290,6 +299,14 @@ function openStatistics(a: Allocation) {
                       Negar
                     </button>
                     <button
+                      v-if="adminActions.canEdit(a)"
+                      type="button"
+                      class="btn btn-ghost btn-sm btn-action"
+                      @click.stop="openEdit(a)"
+                    >
+                      Editar
+                    </button>
+                    <button
                       v-if="adminActions.canCancel(a)"
                       type="button"
                       class="btn btn-ghost btn-sm btn-action"
@@ -316,11 +333,11 @@ function openStatistics(a: Allocation) {
                       Estatísticas
                     </button>
                     <button
-                      v-if="adminActions.canDelete(a)"
+                      v-if="adminActions.canHardDelete(a)"
                       type="button"
                       class="btn btn-danger btn-sm btn-action"
                       :disabled="deleting === a.id"
-                      @click.stop="handleDelete(a)"
+                      @click.stop="handleHardDelete(a)"
                     >
                       Excluir
                     </button>
@@ -348,7 +365,16 @@ function openStatistics(a: Allocation) {
       @cancel="setStatus(detailTarget, 'cancelled')"
       @generate-summary="handleGenerateSummary(detailTarget)"
       @statistics="openStatistics(detailTarget)"
-      @delete="handleDelete(detailTarget)"
+      @edit="openEdit(detailTarget)"
+      @delete="handleHardDelete(detailTarget)"
+    />
+
+    <ExtendAllocationOverlay
+      v-if="editTarget"
+      admin-mode
+      :allocation="editTarget"
+      @close="editTarget = null"
+      @extended="onAllocationEdited"
     />
 
     <AllocationUsageStatsModal

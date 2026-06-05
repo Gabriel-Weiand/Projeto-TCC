@@ -17,74 +17,10 @@ test.group('System Maintenance', (group) => {
       role: 'user',
     })
     const response = await client
-      .delete('/api/v1/system/prune/allocations')
+      .delete('/api/v1/system/prune/notifications')
       .loginAs(user)
       .json({ before: new Date().toISOString() })
     response.assertStatus(403)
-  })
-
-  test('admin deve fazer prune de alocações antigas por endTime', async ({ client, assert }) => {
-    const admin = await User.create({
-      fullName: 'Admin',
-      email: 'a@teste.com',
-      password: '123',
-      role: 'admin',
-    })
-    const machine = await Machine.create({ name: 'PC-1', description: 'Lab', status: 'available' })
-
-    const antiga = await Allocation.create({
-      userId: admin.id,
-      machineId: machine.id,
-      startTime: DateTime.utc().minus({ months: 1, hours: 2 }),
-      endTime: DateTime.utc().minus({ months: 1 }),
-      status: 'finished',
-    })
-
-    const recente = await Allocation.create({
-      userId: admin.id,
-      machineId: machine.id,
-      startTime: DateTime.utc().minus({ hours: 1 }),
-      endTime: DateTime.utc().plus({ hours: 1 }),
-      status: 'approved',
-    })
-
-    const limite = DateTime.utc().minus({ days: 15 }).toISO()
-
-    const response = await client.delete('/api/v1/system/prune/allocations').loginAs(admin).json({
-      before: limite,
-    })
-
-    response.assertStatus(200)
-    assert.isAtLeast(response.body().deleted, 1)
-    assert.isNull(await Allocation.find(antiga.id))
-    assert.isNotNull(await Allocation.find(recente.id))
-  })
-
-  test('prune de alocações inclui denied e cancelled por padrão', async ({ client, assert }) => {
-    const admin = await User.create({
-      fullName: 'Admin 2',
-      email: 'a2@teste.com',
-      password: '123',
-      role: 'admin',
-    })
-    const machine = await Machine.create({ name: 'PC-2', description: 'Lab', status: 'available' })
-
-    const denied = await Allocation.create({
-      userId: admin.id,
-      machineId: machine.id,
-      startTime: DateTime.utc().minus({ days: 40 }),
-      endTime: DateTime.utc().minus({ days: 40 }),
-      status: 'denied',
-    })
-
-    const response = await client
-      .delete('/api/v1/system/prune/allocations')
-      .loginAs(admin)
-      .json({})
-
-    response.assertStatus(200)
-    assert.isAtLeast(response.body().deleted, 1)
-    assert.isNull(await Allocation.find(denied.id))
   })
 
   test('admin deve fazer prune de notificações antigas', async ({ client, assert }) => {

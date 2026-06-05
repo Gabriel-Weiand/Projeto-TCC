@@ -1,4 +1,4 @@
-import { wallClockToUtcIso } from "@/utils/datetime";
+import { normalizeApiUtcIso, parseApiUtcMs, wallClockToUtcIso } from "@/utils/datetime";
 
 function addCalendarDays(isoDate: string, days: number): string {
   const [yRaw, mRaw, dRaw] = isoDate.split("-").map(Number);
@@ -62,6 +62,44 @@ export function isPeriodRangeOrderInvalid(
 }
 
 /** Duração em minutos menor que o mínimo do laboratório (API: ALLOCATION_TOO_SHORT). */
+function extendEndCompareMs(
+  endDate: string,
+  endTime: string,
+  timezone: string,
+  currentEndIso: string,
+): number | null {
+  try {
+    const endIso = normalizeApiUtcIso(
+      wallClockToUtcIso(endDate, endTime, timezone),
+    );
+    return parseApiUtcMs(endIso) - parseApiUtcMs(currentEndIso);
+  } catch {
+    return null;
+  }
+}
+
+/** Extensão (envio): novo fim não é estritamente posterior ao fim atual (igual = sem extensão). */
+export function isExtendEndNotAfterCurrent(
+  endDate: string,
+  endTime: string,
+  timezone: string,
+  currentEndIso: string,
+): boolean {
+  const delta = extendEndCompareMs(endDate, endTime, timezone, currentEndIso);
+  return delta === null || delta <= 0;
+}
+
+/** Extensão (borda vermelha): novo fim anterior ao fim atual — igual ao atual não é erro visual. */
+export function isExtendEndBeforeCurrent(
+  endDate: string,
+  endTime: string,
+  timezone: string,
+  currentEndIso: string,
+): boolean {
+  const delta = extendEndCompareMs(endDate, endTime, timezone, currentEndIso);
+  return delta === null || delta < 0;
+}
+
 export function isPeriodDurationTooShort(
   fields: ReservationPeriodFields,
   timezone: string,

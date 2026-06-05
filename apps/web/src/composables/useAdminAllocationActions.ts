@@ -23,7 +23,14 @@ export function useAdminAllocationActions(
     return !!a.metric;
   }
 
-  function canDelete(a: Allocation) {
+  function canEdit(a: Allocation) {
+    if (a.status === "pending") return true;
+    if (a.status !== "approved") return false;
+    const lc = lifecycle(a);
+    return lc === "approved" || lc === "active" || lc === "grace";
+  }
+
+  function canHardDelete(a: Allocation) {
     return (
       a.userHidden ||
       a.status === "cancelled" ||
@@ -33,22 +40,24 @@ export function useAdminAllocationActions(
   }
 
   function hasActions(a: Allocation, readonly = false) {
-    if (readonly) return canDelete(a);
+    if (readonly) return canHardDelete(a);
     return (
       canApproveDeny(a) ||
       canCancel(a) ||
+      canEdit(a) ||
       canGenerateSummary(a) ||
       canViewStatistics(a) ||
-      canDelete(a)
+      canHardDelete(a)
     );
   }
 
   return {
     canApproveDeny,
     canCancel,
+    canEdit,
     canGenerateSummary,
     canViewStatistics,
-    canDelete,
+    canHardDelete,
     hasActions,
   };
 }

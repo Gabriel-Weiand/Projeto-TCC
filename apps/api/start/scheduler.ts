@@ -17,7 +17,7 @@ import {
 
 /**
  * Manutenção sistemática: tokens, resumo TWA, prune de alocações/notificações/SSH.
- * Roda conforme LAB_SCHEDULER_MAINTENANCE_CRON (padrão: todo dia às 4h).
+ * Roda conforme LAB_SCHEDULER_MAINTENANCE_CRON (padrão: a cada 4 h).
  */
 function scheduleMaintenance() {
   cron.schedule(labConfig.schedulers.maintenanceCron, async () => {

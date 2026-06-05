@@ -21,6 +21,14 @@ export function periodTooShortMessage(minDurationMinutes: number): string {
   return `A reserva deve ter pelo menos ${minDurationMinutes} minutos de duração.`;
 }
 
+/** Extensão: novo fim não é posterior ao fim atual da reserva. */
+export const EXTEND_END_NOT_AFTER_CURRENT_MESSAGE =
+  "A finalização deve ser posterior ao fim atual da reserva.";
+
+/** Período sobrepõe outra reserva aprovada/pendente na mesma máquina. */
+export const PERIOD_ALLOCATION_CONFLICT_MESSAGE =
+  "O horário conflita com outra reserva nesta máquina.";
+
 /** Mensagem da API em POST/PATCH de alocação (400/409/422). */
 export function allocationApiErrorMessage(
   err: unknown,

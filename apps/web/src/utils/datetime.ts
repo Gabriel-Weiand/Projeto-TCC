@@ -113,7 +113,65 @@ export function formatLabDate(iso: string, timeZone: string = DEFAULT_LAB_TZ): s
   return `${p.day}/${p.month}/${p.year}`;
 }
 
-/** ISO UTC → campos para `<input type="date">` e `<input type="time">` no fuso do lab. */
+/** YYYY-MM-DD → DD/MM/YYYY (exibição em formulários). */
+export function isoDateToBr(iso: string): string {
+  if (!iso) return "";
+  const [y, m, d] = iso.split("-");
+  if (!y || !m || !d) return "";
+  return `${d}/${m}/${y}`;
+}
+
+/** DD/MM/YYYY → YYYY-MM-DD ou null se inválido. */
+export function brDateToIso(br: string): string | null {
+  const match = br.trim().match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
+  if (!match) return null;
+  const day = Number(match[1]);
+  const month = Number(match[2]);
+  const year = Number(match[3]);
+  if (month < 1 || month > 12 || day < 1 || day > 31 || year < 1000) {
+    return null;
+  }
+  const probe = new Date(Date.UTC(year, month - 1, day));
+  if (
+    probe.getUTCFullYear() !== year ||
+    probe.getUTCMonth() !== month - 1 ||
+    probe.getUTCDate() !== day
+  ) {
+    return null;
+  }
+  return `${String(year).padStart(4, "0")}-${String(month).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
+}
+
+/** Formata digitação parcial como DD/MM/AAAA. */
+export function formatBrDateTyping(raw: string): string {
+  const digits = raw.replace(/\D/g, "").slice(0, 8);
+  if (digits.length <= 2) return digits;
+  if (digits.length <= 4) return `${digits.slice(0, 2)}/${digits.slice(2)}`;
+  return `${digits.slice(0, 2)}/${digits.slice(2, 4)}/${digits.slice(4)}`;
+}
+
+/** HH:mm (24h) ou null se inválido. */
+export function normalizeWallClockTime(raw: string): string | null {
+  const match = raw.trim().match(/^(\d{1,2}):(\d{1,2})$/);
+  if (!match) return null;
+  const hour = Number(match[1]);
+  const minute = Number(match[2]);
+  if (hour < 0 || hour > 23 || minute < 0 || minute > 59) return null;
+  return `${String(hour).padStart(2, "0")}:${String(minute).padStart(2, "0")}`;
+}
+
+/** Formata digitação parcial como HH:mm (24h). */
+export function formatWallClockTimeTyping(raw: string): string {
+  const digits = raw.replace(/\D/g, "").slice(0, 4);
+  if (digits.length <= 2) return digits;
+  if (digits.length === 3) {
+    // HMM → 0H:MM (ex.: 905 → 09:05)
+    return `0${digits[0]}:${digits.slice(1).padStart(2, "0")}`;
+  }
+  return `${digits.slice(0, 2)}:${digits.slice(2).padStart(2, "0")}`;
+}
+
+/** ISO UTC → campos de parede no fuso do lab (YYYY-MM-DD + HH:mm). */
 export function utcIsoToWallClockFields(
   iso: string,
   timeZone: string = DEFAULT_LAB_TZ,

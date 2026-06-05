@@ -1,4 +1,5 @@
 import { BaseSeeder } from '@adonisjs/lucid/seeders'
+import { DateTime } from 'luxon'
 import Machine from '#models/machine'
 import MachineGroup from '#models/machine_group'
 
@@ -278,9 +279,26 @@ export default class extends BaseSeeder {
       },
     ]
 
+    /** Sem heartbeat recente → status efetivo offline (exceto maintenance/disabled). */
+    const machinesWithoutHeartbeat = new Set(['PC-LAB-06', 'PC-LAB-08'])
+
+    const heartbeatOffsetsHours: Record<string, number> = {
+      'PC-LAB-01': 1,
+      'PC-LAB-02': 3,
+      'PC-LAB-03': 2,
+      'PC-LAB-04': 6,
+      'PC-LAB-05': 4,
+      'PC-LAB-07': 8,
+      'PC-LAB-09': 5,
+      'PC-LAB-10': 12,
+    }
+
     console.log('\n--- Tokens das máquinas (MACHINE_TOKEN no agente) ---')
     for (const m of machines) {
-      const created = await Machine.create(m)
+      const lastSeenAt = machinesWithoutHeartbeat.has(m.name)
+        ? null
+        : DateTime.utc().minus({ hours: heartbeatOffsetsHours[m.name] ?? 2 })
+      const created = await Machine.create({ ...m, lastSeenAt })
       console.log(`  ${created.name}: ${created.token}`)
     }
     console.log('---\n')

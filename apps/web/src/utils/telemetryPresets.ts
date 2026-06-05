@@ -1,8 +1,14 @@
 /** Máximo de amostras por lote enviadas ao agente (8 métricas distintas no total). */
 export const TELEMETRY_BATCH_MAX = 15;
 
-export const TELEMETRY_INTERVAL_MIN = 1;
 export const TELEMETRY_INTERVAL_MAX = 600;
+/** Perfis globais fast/eco (admin). */
+export const TELEMETRY_PRESET_INTERVAL_MIN = 10;
+/** Config custom por máquina. */
+export const TELEMETRY_CUSTOM_INTERVAL_MIN = 2;
+
+/** @deprecated Use TELEMETRY_PRESET_INTERVAL_MIN ou TELEMETRY_CUSTOM_INTERVAL_MIN */
+export const TELEMETRY_INTERVAL_MIN = TELEMETRY_PRESET_INTERVAL_MIN;
 
 /** Sempre ativas em fast, eco e custom. */
 export const MANDATORY_TELEMETRY_METRICS = ["cpu", "ramAndSwap"] as const;
@@ -70,12 +76,48 @@ export function enforceMandatoryTelemetrySet(
   return out;
 }
 
-export function clampTelemetryInterval(seconds: number): number {
-  if (!Number.isFinite(seconds)) return TELEMETRY_INTERVAL_MIN;
+export function clampTelemetryInterval(
+  seconds: number,
+  min = TELEMETRY_PRESET_INTERVAL_MIN,
+): number {
+  if (!Number.isFinite(seconds)) return min;
   return Math.min(
     TELEMETRY_INTERVAL_MAX,
-    Math.max(TELEMETRY_INTERVAL_MIN, Math.round(seconds)),
+    Math.max(min, Math.round(seconds)),
   );
+}
+
+export function clampCustomTelemetryInterval(seconds: number): number {
+  return clampTelemetryInterval(seconds, TELEMETRY_CUSTOM_INTERVAL_MIN);
+}
+
+export function validatePresetInterval(seconds: number): string | null {
+  if (
+    !Number.isFinite(seconds) ||
+    seconds < TELEMETRY_PRESET_INTERVAL_MIN ||
+    seconds > TELEMETRY_INTERVAL_MAX
+  ) {
+    return `Intervalo deve ser entre ${TELEMETRY_PRESET_INTERVAL_MIN}s e ${TELEMETRY_INTERVAL_MAX}s.`;
+  }
+  return null;
+}
+
+export function validateCustomInterval(seconds: number): string | null {
+  if (
+    !Number.isFinite(seconds) ||
+    seconds < TELEMETRY_CUSTOM_INTERVAL_MIN ||
+    seconds > TELEMETRY_INTERVAL_MAX
+  ) {
+    return `Intervalo deve ser entre ${TELEMETRY_CUSTOM_INTERVAL_MIN}s e ${TELEMETRY_INTERVAL_MAX}s.`;
+  }
+  return null;
+}
+
+export function validateBatchSize(batchSize: number): string | null {
+  if (!Number.isFinite(batchSize) || batchSize < 1 || batchSize > TELEMETRY_BATCH_MAX) {
+    return `Tamanho do lote deve ser entre 1 e ${TELEMETRY_BATCH_MAX}.`;
+  }
+  return null;
 }
 
 export const TELEMETRY_METRIC_KEYS = [

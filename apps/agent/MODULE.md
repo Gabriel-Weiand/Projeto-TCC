@@ -117,6 +117,41 @@ Os instantes `graceEndsAt` e `sftpEndsAt` também vêm em `currentAllocation` qu
    - Se `revokeSshKey` ou chave vazia, trunca `authorized_keys`.
    - `provisioning: []` ainda executa drift (remove `lab.*` não listados).
 
+**Importante:** `apply_provisioning` só roda quando o `POST /heartbeat` retorna **HTTP 200**. Não há fila local de ordens nem ACL persistida em disco — apenas o cache em memória `LAST_ACCESS_STATE` (para detectar transição `full_shell` → `sftp_only` e disparar `pkill`).
+
+---
+
+## Resiliência e falhas de conectividade
+
+O modelo é **pull declarativo**: a cada ~30 s o agente pergunta “o que deve existir agora?” e a API responde com a lista completa `provisioning[]`. Não são deltas nem eventos empilhados.
+
+### API indisponível (rede, API desligada, timeout)
+
+- O loop em `heartbeat_worker` captura a exceção, loga `[C2] Erro no Heartbeat` e **não** altera o SO.
+- O Linux permanece no **último estado aplicado com sucesso** (contas, shells, chaves).
+- A thread de telemetria também falha ao enviar lotes; cadência e preset seguem o último `agentConfig` recebido ou o fallback **eco** (`_ECO_TELEMETRY_OFFLINE` / `GET /api/config` no boot).
+- Ao restabelecer a conexão, **um** heartbeat reconcilia tudo de uma vez com a política **atual** da API (que pode já ter passado `endTime`, grace, revogação de chave, etc.).
+
+### Máquina do agente cai (reboot, kernel panic, `agentd` morto)
+
+- Do lado do **SO**: o último provisionamento permanece em `/etc/passwd`, shells e `authorized_keys` até alguém mudar manualmente ou o `agentd` voltar e sincronizar.
+- Do lado da **API**: alocações e fases seguem o relógio (auto-finalize, `lifecycleStatus`); `machine_users` permanece no banco; `lastSeenAt` para de atualizar.
+- Quando o agente reinicia: `sync-specs` no boot, depois heartbeats normais; a API pode pedir recriação imediata se havia alocação ativa e a conta sumiu do SO (teste `drift: deve forçar recriação` em `agent.spec.ts`).
+
+### Quem “guarda” o quê
+
+| Componente | Persiste | Congela sem sync |
+|------------|----------|------------------|
+| **API** | Alocações, `machine_users`, políticas `.env` | Não — fases avançam por tempo |
+| **Agente (SO)** | Contas `lab.*` no disco | Sim — até próximo heartbeat 200 |
+| **Agente (processo)** | `LAST_ACCESS_STATE`, `AGENT_CONFIG`, buffer SSH | Perdido no restart do `agentd` |
+
+### Dessincronia esperada
+
+Enquanto agente e API não conversam, o usuário pode ver no front uma fase (`active`, `grace`, `sftp`) que **ainda não** foi refletida no Linux, ou o contrário — bash ativo no SO depois que a API já considera `post_sftp`/`no_key`. Isso se corrige no próximo sync bem-sucedido; não há mecanismo de “travamento” da alocação no banco por falta de heartbeat.
+
+`provisioning: []` em resposta válida **ainda** remove contas `lab.*` órfãs (drift). Durante outage da API, lista vazia **não** é aplicada — o SO fica como estava.
+
 ---
 
 ## Fluxo de Telemetria (Data-Heavy)

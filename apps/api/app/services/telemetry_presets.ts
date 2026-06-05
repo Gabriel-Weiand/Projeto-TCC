@@ -26,8 +26,11 @@ export type LabTelemetryPresets = {
 }
 
 /** Intervalo entre capturas enviadas ao agente (segundos). */
-export const TELEMETRY_INTERVAL_MIN = 1
 export const TELEMETRY_INTERVAL_MAX = 600
+/** Perfis globais fast/eco. */
+export const TELEMETRY_PRESET_INTERVAL_MIN = 10
+/** Config custom por máquina. */
+export const TELEMETRY_CUSTOM_INTERVAL_MIN = 2
 
 /** Sempre coletadas em fast, eco e custom (não podem ser desligadas). */
 export const MANDATORY_TELEMETRY_METRICS = ['cpu', 'ramAndSwap'] as const satisfies readonly (keyof TelemetrySetConfig)[]
@@ -71,12 +74,16 @@ export const DEFAULT_LAB_TELEMETRY_PRESETS: LabTelemetryPresets = {
 
 const TELEMETRY_SET_KEYS = Object.keys(FULL_TELEMETRY_SET) as (keyof TelemetrySetConfig)[]
 
-export function clampTelemetryInterval(seconds: number): number {
-  if (!Number.isFinite(seconds)) return TELEMETRY_INTERVAL_MIN
-  return Math.min(
-    TELEMETRY_INTERVAL_MAX,
-    Math.max(TELEMETRY_INTERVAL_MIN, Math.round(seconds))
-  )
+export function clampTelemetryInterval(
+  seconds: number,
+  min = TELEMETRY_PRESET_INTERVAL_MIN
+): number {
+  if (!Number.isFinite(seconds)) return min
+  return Math.min(TELEMETRY_INTERVAL_MAX, Math.max(min, Math.round(seconds)))
+}
+
+export function clampCustomTelemetryInterval(seconds: number): number {
+  return clampTelemetryInterval(seconds, TELEMETRY_CUSTOM_INTERVAL_MIN)
 }
 
 export function normalizeTelemetrySet(set: TelemetrySetConfig): TelemetrySetConfig {
@@ -108,7 +115,7 @@ export function normalizeCustomAgentConfig(
   if (!config) return config
   const out = { ...config }
   if (typeof out.intervalSeconds === 'number') {
-    out.intervalSeconds = clampTelemetryInterval(out.intervalSeconds)
+    out.intervalSeconds = clampCustomTelemetryInterval(out.intervalSeconds)
   }
   if (out.telemetrySet && typeof out.telemetrySet === 'object') {
     out.telemetrySet = normalizeTelemetrySet({

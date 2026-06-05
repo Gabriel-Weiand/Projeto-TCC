@@ -5,8 +5,6 @@ import Notification from '#models/notification'
 import SshConnectionAttempt from '#models/ssh_connection_attempt'
 import { labConfig, labNow } from '#services/lab_config'
 import { summarizeAllocation } from '#services/allocation_summarizer'
-import { dateTimeToSqlUtc } from '#utils/datetime'
-
 /** Statuses de alocações que não ocorrerão — elegíveis para prune por endTime. */
 export const TERMINAL_ALLOCATION_STATUSES = ['finished', 'cancelled', 'denied'] as const
 
@@ -44,10 +42,11 @@ function sshKeepDays(override?: number): number {
 
 /**
  * Remove tokens de acesso expirados.
+ * Usa `Date` como o Adonis (`AccessToken.isExpired()`), não string SQL em UTC —
+ * evita apagar sessões válidas quando expires_at foi gravado via Knex/Date.
  */
 export async function pruneExpiredTokens(): Promise<number> {
-  const now = dateTimeToSqlUtc(DateTime.utc())
-  const result = await db.from('auth_access_tokens').where('expires_at', '<', now).delete()
+  const result = await db.from('auth_access_tokens').where('expires_at', '<', new Date()).delete()
   return Array.isArray(result) ? (result[0] ?? 0) : Number(result ?? 0)
 }
 

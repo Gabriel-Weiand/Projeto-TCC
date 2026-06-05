@@ -30,14 +30,32 @@ const presetSections = computed(() => [
   {
     key: "fast" as const,
     title: "Fast (máquina em alocação)",
-    hint: "Aplicado automaticamente enquanto houver reserva ativa (prepare, sessão, grace ou SFTP pós-reserva).",
+    hint: "Aplicado automaticamente enquanto houver reserva ativa.",
   },
   {
     key: "eco" as const,
     title: "Eco (máquina ociosa)",
-    hint: "Padrão automático sem reserva e fallback do agente quando a API não responde.",
+    hint: "Padrão sem reserva e fallback do agente offline.",
   },
 ]);
+
+const intervalErrors = computed(() => ({
+  fast: validatePresetInterval(form.fast.intervalSeconds),
+  eco: validatePresetInterval(form.eco.intervalSeconds),
+}));
+
+const batchErrors = computed(() => ({
+  fast: validateBatchSize(form.fast.batchSize),
+  eco: validateBatchSize(form.eco.batchSize),
+}));
+
+const hasValidationErrors = computed(
+  () =>
+    intervalErrors.value.fast !== null ||
+    intervalErrors.value.eco !== null ||
+    batchErrors.value.fast !== null ||
+    batchErrors.value.eco !== null,
+);
 
 onMounted(async () => {
   loading.value = true;
@@ -65,24 +83,6 @@ onMounted(async () => {
     loading.value = false;
   }
 });
-
-const intervalErrors = computed(() => ({
-  fast: validatePresetInterval(form.fast.intervalSeconds),
-  eco: validatePresetInterval(form.eco.intervalSeconds),
-}));
-
-const batchErrors = computed(() => ({
-  fast: validateBatchSize(form.fast.batchSize),
-  eco: validateBatchSize(form.eco.batchSize),
-}));
-
-const hasValidationErrors = computed(
-  () =>
-    intervalErrors.value.fast !== null ||
-    intervalErrors.value.eco !== null ||
-    batchErrors.value.fast !== null ||
-    batchErrors.value.eco !== null,
-);
 
 async function handleSave() {
   error.value = "";
@@ -115,17 +115,10 @@ async function handleSave() {
 </script>
 
 <template>
-  <div class="fade-in admin-lab-telemetry">
-    <h1 class="page-title">Telemetria do laboratório</h1>
-    <p class="page-lead text-secondary">
-      Todas as máquinas usam coleta <strong>automática</strong>: perfil
-      <strong>fast</strong> durante alocação (reserva em andamento) e
-      <strong>eco</strong> quando estão ociosas. O agente offline inicia em
-      <strong>eco</strong> até o primeiro heartbeat.
-      <strong>Custom</strong> só vale se o admin configurar na página da máquina.
-      <strong>CPU</strong> e <strong>RAM / Swap</strong> são sempre coletadas; intervalo entre
-      <strong>{{ TELEMETRY_PRESET_INTERVAL_MIN }}s</strong> e <strong>600s</strong>; lote até
-      <strong>{{ TELEMETRY_BATCH_MAX }}</strong> amostras.
+  <div class="maintenance-tab">
+    <p class="tab-lead text-secondary">
+      Perfis globais <strong>fast</strong> e <strong>eco</strong> para todo o parque.
+      Máquinas em modo <em>custom</em> ignoram estes defaults.
     </p>
 
     <div v-if="loading" class="empty-state">Carregando…</div>
@@ -185,12 +178,12 @@ async function handleSave() {
 </template>
 
 <style scoped>
-.admin-lab-telemetry {
+.maintenance-tab {
   max-width: 820px;
 }
-.page-lead {
-  margin-bottom: 1.5rem;
-  font-size: 0.92rem;
+.tab-lead {
+  margin-bottom: 1.25rem;
+  font-size: 0.9rem;
   line-height: 1.5;
 }
 .preset-card {
@@ -204,7 +197,6 @@ async function handleSave() {
 .preset-hint {
   font-size: 0.82rem;
   margin: 0 0 0.85rem;
-  line-height: 1.45;
 }
 .preset-fields {
   display: flex;

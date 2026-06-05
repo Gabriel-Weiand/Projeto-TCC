@@ -88,7 +88,31 @@ test.group('Lab telemetry presets', (group) => {
     response.assertStatus(403)
   })
 
-  test('rejeita intervalo fora de 1–600s', async ({ client }) => {
+  test('rejeita intervalo menor que 10s nos presets globais', async ({ client }) => {
+    const admin = await User.create({
+      fullName: 'Admin Tel Min',
+      email: 'admin-tel-min@teste.com',
+      password: 'senha123',
+      role: 'admin',
+    })
+    const presets = getLabTelemetryPresets()
+
+    const response = await client
+      .put('/api/v1/lab/telemetry-presets')
+      .loginAs(admin)
+      .json({
+        fast: {
+          intervalSeconds: 5,
+          batchSize: presets.fast.batchSize,
+          telemetrySet: presets.fast.telemetrySet,
+        },
+        eco: presets.eco,
+      })
+
+    response.assertStatus(422)
+  })
+
+  test('rejeita intervalo fora de 10–600s', async ({ client }) => {
     const admin = await User.create({
       fullName: 'Admin Tel Val',
       email: 'admin-tel-val@teste.com',

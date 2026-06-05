@@ -10,11 +10,31 @@ import {
   utcIsoToWallClockFields,
   wallClockToUtcIso,
   formatLabDateTime,
-  parseApiUtcMs,
   normalizeApiUtcIso,
 } from "@/utils/datetime";
+import { effectiveLifecycleStatus } from "@/utils/allocationLifecycle";
+import LabWallClockDateInput from "@/components/LabWallClockDateInput.vue";
+import LabWallClockTimeInput from "@/components/LabWallClockTimeInput.vue";
+import { machineHasAllocationConflict } from "@/utils/allocationAvailability";
+import {
+  EXTEND_END_NOT_AFTER_CURRENT_MESSAGE,
+  PERIOD_ALLOCATION_CONFLICT_MESSAGE,
+  PERIOD_END_TOO_FAR_MESSAGE,
+  PERIOD_INVALID_RANGE_MESSAGE,
+  periodTooShortMessage,
+} from "@/utils/allocationLabels";
+import {
+  isAllocationEndBeyondLabLimit,
+  isExtendEndBeforeCurrent,
+  isExtendEndNotAfterCurrent,
+  isPeriodDurationTooShort,
+  isPeriodRangeOrderInvalid,
+} from "@/utils/allocationPeriodValidation";
 
-const props = defineProps<{ allocation: Allocation }>();
+const props = withDefaults(
+  defineProps<{ allocation: Allocation; adminMode?: boolean }>(),
+  { adminMode: false },
+);
 const emit = defineEmits<{ close: []; extended: [allocation: Allocation] }>();
 
 const store = useAllocationsStore();
@@ -46,6 +66,38 @@ function syncFormFromAllocation() {
   };
 }
 
+const lifecycle = computed(() =>
+  effectiveLifecycleStatus(props.allocation, lab.allocationAccess),
+);
+
+/** Admin: início editável só antes da sessão (pending ou approved, não active/grace). */
+const canEditStart = computed(() => {
+  if (!props.adminMode) return false;
+  if (props.allocation.status === "pending") return true;
+  if (props.allocation.status === "approved") {
+    return lifecycle.value === "approved";
+  }
+  return false;
+});
+
+const overlayTitle = computed(() =>
+  props.adminMode ? "Editar alocação" : "Estender alocação",
+);
+
+const hintText = computed(() => {
+  if (props.adminMode) {
+    return canEditStart.value
+      ? "Altere início e fim da reserva."
+      : "Só a finalização pode ser alterada (sessão já iniciada).";
+  }
+  return "Só a finalização pode ser alterada.";
+});
+
+const submitLabel = computed(() => {
+  if (saving.value) return "Salvando…";
+  return props.adminMode ? "Salvar alterações" : "Confirmar extensão";
+});
+
 const machine = computed<Machine | undefined>(() => {
   if (props.allocation.machine) return props.allocation.machine;
   return machinesStore.machines.find((m) => m.id === props.allocation.machineId);
@@ -66,7 +118,6 @@ const machineDescription = computed(() => {
   return t.replace(/\s*\(semanas\)\s*$/i, "").trim() || t;
 });
 
-/** Dia civil de fim da reserva (TZ do lab) — scroll inicial do Gantt. */
 const calendarScrollIso = computed(() => {
   if (!lab.timezone) return null;
   try {
@@ -74,6 +125,152 @@ const calendarScrollIso = computed(() => {
   } catch {
     return null;
   }
+});
+
+const effectiveStartFields = computed(() => {
+  if (canEditStart.value) {
+    return {
+      startDate: form.value.startDate,
+      startTime: form.value.startTime,
+    };
+  }
+  const start = utcIsoToWallClockFields(props.allocation.startTime, lab.timezone);
+  return { startDate: start.date, startTime: start.time };
+});
+
+const periodFilled = computed(() => {
+  if (props.adminMode && canEditStart.value) {
+    return (
+      !!form.value.startDate &&
+      !!form.value.startTime &&
+      !!form.value.endDate &&
+      !!form.value.endTime
+    );
+  }
+  return !!form.value.endDate && !!form.value.endTime;
+});
+
+const periodFields = computed(() => ({
+  startDate: effectiveStartFields.value.startDate,
+  startTime: effectiveStartFields.value.startTime,
+  endDate: form.value.endDate,
+  endTime: form.value.endTime,
+}));
+
+const periodRangeInvalid = computed(
+  () =>
+    periodFilled.value &&
+    isPeriodRangeOrderInvalid(periodFields.value, lab.timezone),
+);
+
+const periodTooShort = computed(() => {
+  if (!periodFilled.value || periodRangeInvalid.value) return false;
+  return isPeriodDurationTooShort(
+    periodFields.value,
+    lab.timezone,
+    lab.config.allocation.minDurationMinutes,
+  );
+});
+
+const periodEndTooFar = computed(() => {
+  if (!periodFilled.value || periodRangeInvalid.value) return false;
+  try {
+    return isAllocationEndBeyondLabLimit(
+      form.value.endDate,
+      form.value.endTime,
+      lab.timezone,
+      lab.config.allocation.maxFutureDays,
+      lab.todayIso,
+    );
+  } catch {
+    return false;
+  }
+});
+
+const extendEndBeforeCurrent = computed(() => {
+  if (props.adminMode || !periodFilled.value) return false;
+  return isExtendEndBeforeCurrent(
+    form.value.endDate,
+    form.value.endTime,
+    lab.timezone,
+    props.allocation.endTime,
+  );
+});
+
+const extendEndNotAfterCurrent = computed(() => {
+  if (props.adminMode || !periodFilled.value) return false;
+  return isExtendEndNotAfterCurrent(
+    form.value.endDate,
+    form.value.endTime,
+    lab.timezone,
+    props.allocation.endTime,
+  );
+});
+
+const adminFormRangeIso = computed((): { start: string; end: string } | null => {
+  if (!props.adminMode || !periodFilled.value || periodRangeInvalid.value) return null;
+  try {
+    const start = wallClockToUtcIso(
+      effectiveStartFields.value.startDate,
+      effectiveStartFields.value.startTime,
+      lab.timezone,
+    );
+    const end = wallClockToUtcIso(
+      form.value.endDate,
+      form.value.endTime,
+      lab.timezone,
+    );
+    if (end <= start) return null;
+    return {
+      start: normalizeApiUtcIso(start),
+      end: normalizeApiUtcIso(end),
+    };
+  } catch {
+    return null;
+  }
+});
+
+/** Conflito com outra reserva (exclui a alocação em edição). */
+const periodHasConflict = computed(() => {
+  if (!props.adminMode || !adminFormRangeIso.value) return false;
+  return machineHasAllocationConflict(
+    ganttAllocations.value,
+    props.allocation.machineId,
+    adminFormRangeIso.value.start,
+    adminFormRangeIso.value.end,
+    props.allocation.id,
+  );
+});
+
+/** Borda vermelha sem texto — igual à criação; igual ao fim atual não conta como erro. */
+const periodHasError = computed(() => {
+  if (!periodFilled.value) return false;
+  if (props.adminMode) {
+    return (
+      periodRangeInvalid.value ||
+      periodTooShort.value ||
+      periodEndTooFar.value ||
+      periodHasConflict.value
+    );
+  }
+  return extendEndBeforeCurrent.value || periodEndTooFar.value;
+});
+
+/** Mensagens só no envio do formulário. */
+const periodErrorMessage = computed((): string | null => {
+  if (!periodFilled.value) return null;
+  if (props.adminMode) {
+    if (periodRangeInvalid.value) return PERIOD_INVALID_RANGE_MESSAGE;
+    if (periodTooShort.value) {
+      return periodTooShortMessage(lab.config.allocation.minDurationMinutes);
+    }
+    if (periodEndTooFar.value) return PERIOD_END_TOO_FAR_MESSAGE;
+    if (periodHasConflict.value) return PERIOD_ALLOCATION_CONFLICT_MESSAGE;
+    return null;
+  }
+  if (extendEndNotAfterCurrent.value) return EXTEND_END_NOT_AFTER_CURRENT_MESSAGE;
+  if (periodEndTooFar.value) return PERIOD_END_TOO_FAR_MESSAGE;
+  return null;
 });
 
 onMounted(async () => {
@@ -97,7 +294,7 @@ function apiErrorMessage(err: unknown): string {
   const res = (err as { response?: { status?: number; data?: Record<string, unknown> } })
     ?.response;
   const data = res?.data;
-  if (!data) return "Erro ao estender reserva.";
+  if (!data) return "Erro ao salvar alterações.";
 
   if (typeof data.message === "string" && data.message) return data.message;
 
@@ -115,13 +312,65 @@ function apiErrorMessage(err: unknown): string {
     if (msgs.length) return msgs.join(" ");
   }
 
-  return "Erro ao estender reserva.";
+  return "Erro ao salvar alterações.";
+}
+
+async function handleAdminSave() {
+  formError.value = "";
+  if (!periodFilled.value) {
+    formError.value = "Preencha data e horário de início e fim.";
+    return;
+  }
+  if (periodErrorMessage.value) {
+    formError.value = periodErrorMessage.value;
+    return;
+  }
+
+  let startTime: string;
+  let endTime: string;
+  try {
+    startTime = normalizeApiUtcIso(
+      wallClockToUtcIso(form.value.startDate, form.value.startTime, lab.timezone),
+    );
+    endTime = normalizeApiUtcIso(
+      wallClockToUtcIso(form.value.endDate, form.value.endTime, lab.timezone),
+    );
+  } catch {
+    formError.value = "Data ou horário inválido.";
+    return;
+  }
+
+  saving.value = true;
+  try {
+    const payload: Record<string, string> = { endTime };
+    if (canEditStart.value) {
+      payload.startTime = startTime;
+    }
+    const updated = await store.updateAllocation(props.allocation.id, payload);
+    emit("extended", updated);
+    emit("close");
+  } catch (err: unknown) {
+    const res = (err as { response?: { status?: number; data?: { code?: string } } })
+      ?.response;
+    const status = res?.status;
+    const code = res?.data?.code;
+    if (status === 409 || code === "ALLOCATION_CONFLICT") {
+      formError.value =
+        "Conflito com outra reserva nesta máquina. Ajuste o intervalo.";
+    } else formError.value = apiErrorMessage(err);
+  } finally {
+    saving.value = false;
+  }
 }
 
 async function handleExtend() {
   formError.value = "";
-  if (!form.value.endDate || !form.value.endTime) {
+  if (!periodFilled.value) {
     formError.value = "Informe a nova data e horário de finalização.";
+    return;
+  }
+  if (periodErrorMessage.value) {
+    formError.value = periodErrorMessage.value;
     return;
   }
 
@@ -132,14 +381,6 @@ async function handleExtend() {
     );
   } catch {
     formError.value = "Data ou horário de finalização inválido.";
-    return;
-  }
-
-  const currentEndMs = parseApiUtcMs(props.allocation.endTime);
-  const newEndMs = parseApiUtcMs(endTime);
-  if (newEndMs <= currentEndMs) {
-    formError.value =
-      "A finalização deve ser posterior ao fim atual da reserva.";
     return;
   }
 
@@ -163,6 +404,14 @@ async function handleExtend() {
     saving.value = false;
   }
 }
+
+function handleSubmit() {
+  if (props.adminMode) {
+    void handleAdminSave();
+  } else {
+    void handleExtend();
+  }
+}
 </script>
 
 <template>
@@ -172,13 +421,13 @@ async function handleExtend() {
         <div class="extend-layout">
           <div class="layout-main">
             <header class="extend-head">
-              <h2 class="extend-head-title">Estender alocação</h2>
+              <h2 class="extend-head-title">{{ overlayTitle }}</h2>
               <p class="extend-head-machine">{{ machineLabel }}</p>
               <p v-if="machineDescription" class="extend-head-desc text-secondary">
                 {{ machineDescription }}
               </p>
               <p class="extend-head-hint text-muted">
-                Só a finalização pode ser alterada.
+                {{ hintText }}
               </p>
             </header>
 
@@ -198,7 +447,7 @@ async function handleExtend() {
 
           <aside class="layout-panel">
             <div class="panel-card">
-              <form class="panel-body" @submit.prevent="handleExtend">
+              <form class="panel-body" @submit.prevent="handleSubmit">
                 <div class="panel-machine-row">
                   <span class="field-label field-label--section">Máquina</span>
                   <button
@@ -213,23 +462,26 @@ async function handleExtend() {
 
                 <div class="field-group">
                   <label class="field-label field-label--section">Início</label>
-                  <div class="field-row">
+                  <div
+                    class="field-row"
+                    :class="{ 'field-row--error': periodHasError && canEditStart }"
+                  >
                     <div class="field">
                       <label class="field-label field-label--small">Data</label>
-                      <input
+                      <LabWallClockDateInput
                         v-model="form.startDate"
-                        type="date"
-                        disabled
-                        title="O início da alocação não pode ser alterado"
+                        :disabled="!canEditStart"
+                        :invalid="periodHasError && canEditStart"
+                        aria-label="Data de início"
                       />
                     </div>
                     <div class="field">
                       <label class="field-label field-label--small">Horário</label>
-                      <input
+                      <LabWallClockTimeInput
                         v-model="form.startTime"
-                        type="time"
-                        disabled
-                        title="O início da alocação não pode ser alterado"
+                        :disabled="!canEditStart"
+                        :invalid="periodHasError && canEditStart"
+                        aria-label="Horário de início"
                       />
                     </div>
                   </div>
@@ -239,14 +491,22 @@ async function handleExtend() {
                   <label class="field-label field-label--section"
                     >Finalização</label
                   >
-                  <div class="field-row">
+                  <div class="field-row" :class="{ 'field-row--error': periodHasError }">
                     <div class="field">
                       <label class="field-label field-label--small">Data</label>
-                      <input v-model="form.endDate" type="date" required />
+                      <LabWallClockDateInput
+                        v-model="form.endDate"
+                        :invalid="periodHasError"
+                        aria-label="Data de finalização"
+                      />
                     </div>
                     <div class="field">
                       <label class="field-label field-label--small">Horário</label>
-                      <input v-model="form.endTime" type="time" required />
+                      <LabWallClockTimeInput
+                        v-model="form.endTime"
+                        :invalid="periodHasError"
+                        aria-label="Horário de finalização"
+                      />
                     </div>
                   </div>
                   <p class="field-hint text-muted">
@@ -270,7 +530,7 @@ async function handleExtend() {
                     class="btn btn-primary"
                     :disabled="saving"
                   >
-                    {{ saving ? "Estendendo..." : "Confirmar extensão" }}
+                    {{ submitLabel }}
                   </button>
                 </div>
               </form>
@@ -309,7 +569,7 @@ async function handleExtend() {
 .extend-layout {
   display: flex;
   gap: 1rem;
-  align-items: flex-end;
+  align-items: stretch;
 }
 
 .layout-main {
@@ -318,6 +578,7 @@ async function handleExtend() {
   display: flex;
   flex-direction: column;
   gap: 0.75rem;
+  justify-content: flex-start;
 }
 
 .extend-head {
@@ -353,6 +614,7 @@ async function handleExtend() {
 .layout-calendar {
   min-width: 0;
   width: 100%;
+  margin-top: auto;
 }
 
 .layout-calendar :deep(.gantt-wrap) {
@@ -362,7 +624,9 @@ async function handleExtend() {
 .layout-panel {
   width: 320px;
   flex-shrink: 0;
-  align-self: flex-end;
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-start;
 }
 
 .panel-card {
@@ -441,26 +705,24 @@ input:disabled {
   cursor: not-allowed;
 }
 
-input[type="date"],
-input[type="time"],
-input[type="text"] {
-  width: 100%;
-  padding: 0.5rem 0.7rem;
-  background: var(--bg-card-solid);
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
-  color: var(--text-primary);
-  font-family: inherit;
-  font-size: 0.86rem;
+.error-text {
+  color: var(--danger);
+  font-size: 0.82rem;
+  margin: 0;
 }
 
 @media (max-width: 960px) {
   .extend-layout {
     flex-direction: column;
+    align-items: stretch;
   }
 
   .layout-panel {
     width: 100%;
+  }
+
+  .layout-calendar {
+    margin-top: 0;
   }
 
   .extend-head {

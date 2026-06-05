@@ -30,12 +30,18 @@ export default class extends BaseSchema {
       // CRÍTICO: Impede que o sistema cadastre o mesmo aluno na mesma máquina duas vezes
       table.unique(['machine_id', 'user_id'])
 
-      // Nome exato que o agente criou no Linux (ex: gabriel.santos)
+      // Nome exato que o agente criou no Linux (ex: lab.gabriel_santos)
       table.string('os_username', 64).notNullable()
 
       // Timestamps de auditoria
       table.timestamp('provisioned_at').nullable() // Quando o agente confirmou a criação
       table.timestamp('last_active_at').nullable() // Quando foi a última vez que usou a máquina
+
+      // Override admin: auto segue alocação; demais valores fixam o provisioning no heartbeat
+      table
+        .enum('access_type', ['auto', 'shell', 'sftp', 'revoked'])
+        .notNullable()
+        .defaultTo('auto')
 
       table.timestamp('created_at').notNullable()
       table.timestamp('updated_at').nullable()

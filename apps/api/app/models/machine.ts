@@ -112,7 +112,7 @@ export default class Machine extends BaseModel {
   @manyToMany(() => User, {
     pivotTable: 'machine_users',
     pivotTimestamps: true,
-    pivotColumns: ['os_username', 'provisioned_at', 'last_active_at'],
+    pivotColumns: ['os_username', 'provisioned_at', 'last_active_at', 'access_type'],
   })
   declare provisionedUsers: ManyToMany<typeof User>
 

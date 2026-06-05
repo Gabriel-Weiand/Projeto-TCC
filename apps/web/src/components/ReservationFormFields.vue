@@ -2,6 +2,8 @@
 import { computed } from "vue";
 import type { Machine } from "@/types";
 import ReservationMachinePicker from "@/components/ReservationMachinePicker.vue";
+import LabWallClockDateInput from "@/components/LabWallClockDateInput.vue";
+import LabWallClockTimeInput from "@/components/LabWallClockTimeInput.vue";
 import { ALLOCATION_REASON_MAX_LENGTH } from "@/utils/allocationLabels";
 
 const props = withDefaults(
@@ -56,34 +58,30 @@ const reason = defineModel<string>("reason", { default: "" });
         </div>
         <div class="period-fields-col">
           <div class="period-row-inputs">
-            <input
+            <LabWallClockDateInput
               v-model="startDate"
-              type="date"
-              class="period-input period-input--date"
-              :class="{ 'period-input--error': periodHasError }"
+              input-class="period-input period-input--date"
+              :invalid="periodHasError"
               aria-label="Data de início"
             />
-            <input
+            <LabWallClockTimeInput
               v-model="startTime"
-              type="time"
-              class="period-input period-input--time"
-              :class="{ 'period-input--error': periodHasError }"
+              input-class="period-input period-input--time"
+              :invalid="periodHasError"
               aria-label="Horário de início"
             />
           </div>
           <div class="period-row-inputs">
-            <input
+            <LabWallClockDateInput
               v-model="endDate"
-              type="date"
-              class="period-input period-input--date"
-              :class="{ 'period-input--error': periodHasError }"
+              input-class="period-input period-input--date"
+              :invalid="periodHasError"
               aria-label="Data de finalização"
             />
-            <input
+            <LabWallClockTimeInput
               v-model="endTime"
-              type="time"
-              class="period-input period-input--time"
-              :class="{ 'period-input--error': periodHasError }"
+              input-class="period-input period-input--time"
+              :invalid="periodHasError"
               aria-label="Horário de finalização"
             />
           </div>

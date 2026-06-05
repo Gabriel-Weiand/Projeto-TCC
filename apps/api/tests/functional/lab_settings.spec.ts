@@ -12,7 +12,7 @@ test.group('Lab Settings', (group) => {
     if (existsSync(path)) unlinkSync(path)
   })
 
-  test('GET /api/config reflete publicNames após PUT /lab/settings', async ({ client, assert }) => {
+  test('modo auto respeita .env em GET /api/config', async ({ client, assert }) => {
     const admin = await User.create({
       fullName: 'Admin',
       email: 'a@teste.com',
@@ -23,16 +23,39 @@ test.group('Lab Settings', (group) => {
     const putResp = await client
       .put('/api/v1/lab/settings')
       .loginAs(admin)
-      .json({ publicNames: true, requireAdminApproval: true })
+      .json({ publicNames: 'auto', requireAdminApproval: 'auto' })
 
     putResp.assertStatus(200)
-    assert.isTrue(putResp.body().publicNames)
-    assert.isTrue(putResp.body().requireAdminApproval)
+    assert.equal(putResp.body().publicNames, 'auto')
+    assert.equal(putResp.body().requireAdminApproval, 'auto')
+
+    const configResp = await client.get('/api/config')
+    configResp.assertStatus(200)
+    const envPublic = ['1', 'true', 'yes', 'on'].includes(
+      (process.env.LAB_ALLOCATION_PUBLIC_NAMES ?? '').trim().toLowerCase()
+    )
+    assert.equal(configResp.body().allocation.publicNames, envPublic)
+  })
+
+  test('modo true fixa publicNames independente do .env', async ({ client, assert }) => {
+    const admin = await User.create({
+      fullName: 'Admin',
+      email: 'b@teste.com',
+      password: '123',
+      role: 'admin',
+    })
+
+    const putResp = await client
+      .put('/api/v1/lab/settings')
+      .loginAs(admin)
+      .json({ publicNames: 'true' })
+
+    putResp.assertStatus(200)
+    assert.equal(putResp.body().publicNames, 'true')
 
     const configResp = await client.get('/api/config')
     configResp.assertStatus(200)
     assert.isTrue(configResp.body().allocation.publicNames)
-    assert.isTrue(configResp.body().allocation.requireAdminApproval)
   })
 
   test('utilizador comum é bloqueado em /lab/settings', async ({ client }) => {
@@ -46,7 +69,7 @@ test.group('Lab Settings', (group) => {
     const response = await client
       .put('/api/v1/lab/settings')
       .loginAs(user)
-      .json({ publicNames: true })
+      .json({ publicNames: 'true' })
 
     response.assertStatus(403)
   })

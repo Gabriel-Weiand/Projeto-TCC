@@ -62,17 +62,36 @@ const router = createRouter({
           meta: { admin: true },
         },
         {
+          path: "admin/machines/:id",
+          redirect: (to) => ({
+            name: "machine-detail",
+            params: { id: to.params.id },
+            query: { from: "admin" },
+          }),
+        },
+        {
+          path: "admin/machines/:id/edit",
+          name: "admin-machine-edit",
+          component: () => import("@/views/admin/AdminMachineEditView.vue"),
+          meta: { admin: true },
+          props: true,
+        },
+        {
           path: "admin/allocations",
           name: "admin-allocations",
           component: () => import("@/views/admin/AdminAllocationsView.vue"),
           meta: { admin: true },
         },
         {
-          path: "admin/lab-telemetry",
-          name: "admin-lab-telemetry",
-          component: () => import("@/views/admin/AdminLabTelemetryView.vue"),
+          path: "admin/maintenance",
+          name: "admin-maintenance",
+          component: () => import("@/views/admin/AdminMaintenanceView.vue"),
           meta: { admin: true },
-        }
+        },
+        {
+          path: "admin/lab-telemetry",
+          redirect: { name: "admin-maintenance", query: { tab: "telemetria" } },
+        },
       ],
     },
   ],

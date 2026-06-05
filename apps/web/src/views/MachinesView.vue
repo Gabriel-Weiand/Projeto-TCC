@@ -4,6 +4,7 @@ import { useMachinesStore } from "@/stores/machines";
 import MachineParkInfoModal from "@/components/MachineParkInfoModal.vue";
 import MachineParkCard from "@/components/MachineParkCard.vue";
 import type { Machine, MachineGroupSummary } from "@/types";
+import { DEFAULT_GROUP_TITLE } from "@/stores/machineGroups";
 import { useRouter } from "vue-router";
 
 const store = useMachinesStore();
@@ -72,12 +73,14 @@ const parkSections = computed((): ParkSection[] => {
 
   const sections = [...byGroup.values()];
   sections.sort((a, b) => {
-    const titleA = a.group?.title ?? "Outras máquinas";
-    const titleB = b.group?.title ?? "Outras máquinas";
+    const titleA = a.group?.title ?? DEFAULT_GROUP_TITLE;
+    const titleB = b.group?.title ?? DEFAULT_GROUP_TITLE;
+    if (titleA === DEFAULT_GROUP_TITLE) return 1;
+    if (titleB === DEFAULT_GROUP_TITLE) return -1;
     const idxA = GROUP_ORDER.indexOf(titleA);
     const idxB = GROUP_ORDER.indexOf(titleB);
-    const orderA = idxA === -1 ? 999 : idxA;
-    const orderB = idxB === -1 ? 999 : idxB;
+    const orderA = idxA === -1 ? 998 : idxA;
+    const orderB = idxB === -1 ? 998 : idxB;
     if (orderA !== orderB) return orderA - orderB;
     return titleA.localeCompare(titleB, "pt-BR");
   });
@@ -138,7 +141,7 @@ function toggleGroup(key: string) {
           :class="{ 'is-collapsed': isGroupCollapsed(section.key) }"
           :aria-expanded="!isGroupCollapsed(section.key)"
           :aria-label="
-            (section.group?.title ?? 'Outras máquinas') +
+            (section.group?.title ?? DEFAULT_GROUP_TITLE) +
             (isGroupCollapsed(section.key)
               ? ' — expandir máquinas'
               : ' — recolher máquinas')
@@ -147,7 +150,7 @@ function toggleGroup(key: string) {
         >
           <div class="park-group-header-text">
             <h2 class="park-group-title">
-              {{ section.group?.title ?? "Outras máquinas" }}
+              {{ section.group?.title ?? DEFAULT_GROUP_TITLE }}
             </h2>
             <p v-if="section.group?.description" class="park-group-desc text-secondary">
               {{ section.group.description }}

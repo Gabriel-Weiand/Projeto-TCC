@@ -1,7 +1,13 @@
 import { defineStore } from "pinia";
 import { ref } from "vue";
 import api from "@/services/api";
-import type { Machine, Allocation, PaginatedResponse } from "@/types";
+import type {
+  Machine,
+  Allocation,
+  PaginatedResponse,
+  MachineProvisionedUser,
+  MachineAccessType,
+} from "@/types";
 
 export const useMachinesStore = defineStore("machines", () => {
   const machines = ref<Machine[]>([]);
@@ -77,6 +83,42 @@ export const useMachinesStore = defineStore("machines", () => {
     return data;
   }
 
+  async function fetchProvisionedUsers(machineId: number) {
+    const { data } = await api.get<MachineProvisionedUser[]>(
+      `/api/v1/machines/${machineId}/provisioned-users`,
+    );
+    return data;
+  }
+
+  async function updateProvisionedUser(
+    machineId: number,
+    userId: number,
+    accessType: MachineAccessType,
+  ) {
+    const { data } = await api.patch<MachineProvisionedUser[]>(
+      `/api/v1/machines/${machineId}/provisioned-users/${userId}`,
+      { accessType },
+    );
+    return data;
+  }
+
+  async function removeProvisionedUser(machineId: number, userId: number) {
+    await api.delete(`/api/v1/machines/${machineId}/provisioned-users/${userId}`);
+    return fetchProvisionedUsers(machineId);
+  }
+
+  async function addProvisionedUser(
+    machineId: number,
+    userId: number,
+    accessType: Exclude<MachineAccessType, "auto"> = "shell",
+  ) {
+    const { data } = await api.post<MachineProvisionedUser[]>(
+      `/api/v1/machines/${machineId}/provisioned-users`,
+      { userId, accessType },
+    );
+    return data;
+  }
+
   return {
     machines,
     loading,
@@ -88,5 +130,9 @@ export const useMachinesStore = defineStore("machines", () => {
     fetchMachineAllocations,
     regenerateToken,
     fetchTelemetryStream,
+    fetchProvisionedUsers,
+    updateProvisionedUser,
+    removeProvisionedUser,
+    addProvisionedUser,
   };
 });

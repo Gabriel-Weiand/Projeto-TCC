@@ -108,6 +108,12 @@ export const useAllocationsStore = defineStore("allocations", () => {
     allocations.value = allocations.value.filter((a) => a.id !== id);
   }
 
+  /** Hard delete (admin): remove alocação, telemetrias e métrica em CASCADE. */
+  async function hardDeleteAllocation(id: number) {
+    await api.delete(`/api/v1/system/allocations/${id}`);
+    allocations.value = allocations.value.filter((a) => a.id !== id);
+  }
+
   return {
     allocations,
     loading,
@@ -121,5 +127,6 @@ export const useAllocationsStore = defineStore("allocations", () => {
     fetchAllocationSummary,
     generateAllocationSummary,
     softDeleteAllocation,
+    hardDeleteAllocation,
   };
 });
