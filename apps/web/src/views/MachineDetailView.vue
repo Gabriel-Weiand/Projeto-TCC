@@ -6,6 +6,7 @@ import { useTelemetryPlayback } from "@/composables/useTelemetryPlayback";
 import { pickNewerTelemetry } from "@/utils/telemetryBatchDiff";
 import MachineTelemetryPanel from "@/components/MachineTelemetryPanel.vue";
 import MachineLiveSections from "@/components/MachineLiveSections.vue";
+import CollapsibleSection from "@/components/CollapsibleSection.vue";
 import ProfileAllocationConnectModal from "@/components/ProfileAllocationConnectModal.vue";
 import type { Machine, Allocation } from "@/types";
 import { useRoute, useRouter } from "vue-router";
@@ -24,6 +25,7 @@ const machine = ref<Machine | null>(null);
 const scheduleAllocations = ref<Allocation[]>([]);
 const loading = ref(true);
 const connectTarget = ref<Allocation | null>(null);
+const usersCollapsed = ref(false);
 const debugRefreshing = ref(false);
 const debugStreamPreview = ref<unknown>(null);
 
@@ -200,6 +202,7 @@ function goToEdit() {
   router.push({
     name: "admin-machine-edit",
     params: { id: machine.value.id },
+    query: { from: "machine-detail" },
   });
 }
 
@@ -248,21 +251,20 @@ function statusLabel(s: string) {
 
     <template v-else-if="machine">
       <div class="detail-header">
-        <div>
-          <h1 class="page-title" style="margin-bottom: 0.25rem">
-            {{ machine.name }}
-          </h1>
-          <p class="text-secondary" style="font-size: 0.9rem">
+        <div class="detail-header-main">
+          <div class="detail-title-row">
+            <h1 class="page-title">{{ machine.name }}</h1>
+            <span
+              :class="['badge', 'machine-status-badge', statusBadge(machine.status)]"
+            >
+              {{ statusLabel(machine.status) }}
+            </span>
+          </div>
+          <p class="text-secondary machine-description">
             {{ machine.description || "Sem descrição" }}
           </p>
         </div>
         <div class="header-actions">
-          <span
-            :class="['badge', statusBadge(machine.status)]"
-            style="font-size: 0.85rem; padding: 0.35rem 0.9rem"
-          >
-            {{ statusLabel(machine.status) }}
-          </span>
           <MachineTelemetryPanel
             v-if="isAdmin"
             trigger="button"
@@ -332,18 +334,20 @@ function statusLabel(s: string) {
       <MachineLiveSections
         v-if="showLiveSections"
         :machine="machine"
+        :machine-id="machineId"
         :live-data="liveData"
         :show-telemetry="isAdmin"
+        :show-charts="isAdmin"
       />
 
       <template v-if="isAdmin">
-        <h2 class="section-title section-spaced">Usuários na máquina</h2>
-        <p class="section-hint">
-          Sessões reportadas pelo agente (<code>activeUsers</code> na telemetria e
-          <code>connectedUsers</code> no heartbeat a cada 30s).
-        </p>
+        <CollapsibleSection v-model:collapsed="usersCollapsed" title="Usuários">
+          <p class="section-hint">
+            Sessões reportadas pelo agente (<code>activeUsers</code> na telemetria e
+            <code>connectedUsers</code> no heartbeat a cada 30s).
+          </p>
 
-        <div v-if="activeUserRows.length" class="table-wrap users-table-wrap">
+          <div v-if="activeUserRows.length" class="table-wrap users-table-wrap">
           <table>
             <thead>
               <tr>
@@ -372,6 +376,7 @@ function statusLabel(s: string) {
           Nenhuma sessão ativa na API. Se você está em SSH, confira o preset (activeUsers) e se o
           agente tem permissão para listar sessões.
         </div>
+        </CollapsibleSection>
 
         <details class="api-debug">
           <summary>Debug — dados brutos da API</summary>
@@ -406,6 +411,34 @@ function statusLabel(s: string) {
   margin-bottom: 1.5rem;
   flex-wrap: wrap;
   gap: 1rem;
+}
+
+.detail-header-main {
+  flex: 1;
+  min-width: 0;
+}
+
+.detail-title-row {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0.65rem;
+  margin-bottom: 0.25rem;
+}
+
+.detail-title-row .page-title {
+  margin-bottom: 0;
+}
+
+.machine-status-badge {
+  font-size: 0.72rem;
+  padding: 0.28rem 0.7rem;
+  line-height: 1.25;
+}
+
+.machine-description {
+  font-size: 0.9rem;
+  margin: 0;
 }
 
 .header-actions {

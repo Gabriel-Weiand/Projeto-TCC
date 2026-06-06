@@ -3,7 +3,6 @@ import { ref, reactive, computed, onMounted, watch } from "vue";
 import { useRoute, useRouter } from "vue-router";
 import { useMachinesStore } from "@/stores/machines";
 import { useMachineGroupsStore } from "@/stores/machineGroups";
-import AdminTabBar from "@/components/admin/AdminTabBar.vue";
 import MachineTelemetryPanel from "@/components/MachineTelemetryPanel.vue";
 import AdminMachineUsersTab from "@/components/admin/machine/AdminMachineUsersTab.vue";
 import AdminMachineSshTab from "@/components/admin/machine/AdminMachineSshTab.vue";
@@ -23,9 +22,10 @@ const error = ref("");
 const activeTab = ref("infos");
 const editTabs = [
   { id: "infos", label: "Informações" },
+  { id: "telemetria", label: "Telemetria" },
   { id: "usuarios", label: "Usuários" },
   { id: "ssh", label: "SSH" },
-];
+] as const;
 
 const form = reactive({
   name: "",
@@ -38,6 +38,12 @@ const form = reactive({
 
 const tokenModal = ref(false);
 const tokenValue = ref("");
+
+const backLabel = computed(() =>
+  route.query.from === "machine-detail"
+    ? "← Ver máquina"
+    : "← Gerenciar máquinas",
+);
 
 function parseSshPortInput(raw: string): number | null {
   const trimmed = raw.trim();
@@ -61,6 +67,18 @@ function loadForm(m: Machine) {
   form.operationalMode = resolveOperationalMode(m);
   form.machineGroupId =
     m.machineGroupId != null ? String(m.machineGroupId) : "";
+}
+
+function goBack() {
+  if (route.query.from === "machine-detail") {
+    router.push({
+      name: "machine-detail",
+      params: { id: machineId.value },
+      query: { from: "admin" },
+    });
+    return;
+  }
+  router.push({ name: "admin-machines" });
 }
 
 onMounted(async () => {
@@ -145,102 +163,114 @@ function copyToken() {
 </script>
 
 <template>
-  <div class="fade-in">
-    <div class="top-nav">
-      <button
-        type="button"
-        class="btn btn-ghost btn-sm"
-        @click="
-          router.push({
-            name: 'machine-detail',
-            params: { id: machineId },
-            query: { from: 'admin' },
-          })
-        "
-      >
-        ← Ver máquina
+  <div class="fade-in machine-edit-page">
+    <div class="page-header">
+      <button type="button" class="btn btn-ghost btn-sm back-btn" @click="goBack">
+        {{ backLabel }}
       </button>
+      <h1 v-if="machine" class="page-title">Editar — {{ machine.name }}</h1>
+      <h1 v-else class="page-title">Editar máquina</h1>
     </div>
 
     <div v-if="loading" class="empty-state">Carregando…</div>
 
-    <template v-else-if="machine">
-      <h1 class="page-title">Editar — {{ machine.name }}</h1>
+    <div v-else-if="machine" class="card edit-card">
+      <div class="allocation-list edit-list">
+        <div class="filter-tabs">
+          <button
+            v-for="tab in editTabs"
+            :key="tab.id"
+            type="button"
+            :class="['tab-btn', { active: activeTab === tab.id }]"
+            @click="activeTab = tab.id"
+          >
+            {{ tab.label }}
+          </button>
+        </div>
 
-      <AdminTabBar v-model="activeTab" :tabs="editTabs" />
-
-      <div v-if="activeTab === 'infos'" class="edit-panel">
-        <form class="infos-form" @submit.prevent="handleSave">
-          <div class="field">
-            <label class="field-label">Nome</label>
-            <input v-model="form.name" type="text" />
-          </div>
-          <div class="field">
-            <label class="field-label">Descrição</label>
-            <textarea v-model="form.description" class="field-textarea" rows="2" />
-          </div>
-          <div class="field">
-            <label class="field-label">IP local</label>
-            <input
-              v-model="form.ipAddress"
-              type="text"
-              placeholder="Capturado pelo agente / rede local"
-            />
-            <p class="field-hint text-muted">
-              Endereço na rede local reportado pelo parque (não é IP público).
-            </p>
-          </div>
-          <div class="field">
-            <label class="field-label">Porta SSH <span class="text-muted">(vazio = 22)</span></label>
-            <input v-model="form.sshPort" type="text" inputmode="numeric" />
-          </div>
-          <div class="field">
-            <label class="field-label">Grupo</label>
-            <select v-model="form.machineGroupId">
-              <option value="">Outros (sem grupo)</option>
-              <option
-                v-for="g in groupsStore.groups"
-                :key="g.id"
-                :value="String(g.id)"
-              >
-                {{ g.title }}
-              </option>
-            </select>
-          </div>
-          <div class="field">
-            <label class="field-label">Modo operacional</label>
-            <select v-model="form.operationalMode">
-              <option value="available">Disponível</option>
-              <option value="offline">Desativada</option>
-              <option value="maintenance">Manutenção</option>
-            </select>
-          </div>
-
-          <p v-if="error" class="form-error">{{ error }}</p>
-
-          <div class="form-actions">
-            <button type="submit" class="btn btn-primary" :disabled="saving">
-              {{ saving ? "Salvando…" : "Salvar informações" }}
-            </button>
-            <button
-              type="button"
-              class="btn btn-ghost"
-              @click="handleRegenerateToken"
+        <div class="edit-panel">
+          <div class="edit-panel-inner">
+            <form
+              v-if="activeTab === 'infos'"
+              class="infos-form"
+              @submit.prevent="handleSave"
             >
-              Regenerar token do agente
-            </button>
-          </div>
-        </form>
+              <div class="field">
+                <label class="field-label">Nome</label>
+                <input v-model="form.name" type="text" />
+              </div>
+              <div class="field">
+                <label class="field-label">Descrição</label>
+                <textarea v-model="form.description" class="field-textarea" rows="2" />
+              </div>
+              <div class="field">
+                <label class="field-label">IP local</label>
+                <input
+                  v-model="form.ipAddress"
+                  type="text"
+                  placeholder="Capturado pelo agente / rede local"
+                />
+                <p class="field-hint text-muted">
+                  Endereço na rede local reportado pelo parque (não é IP público).
+                </p>
+              </div>
+              <div class="field">
+                <label class="field-label">
+                  Porta SSH <span class="text-muted">(vazio = 22)</span>
+                </label>
+                <input v-model="form.sshPort" type="text" inputmode="numeric" />
+              </div>
+              <div class="field">
+                <label class="field-label">Grupo</label>
+                <select v-model="form.machineGroupId">
+                  <option value="">Outros (sem grupo)</option>
+                  <option
+                    v-for="g in groupsStore.groups"
+                    :key="g.id"
+                    :value="String(g.id)"
+                  >
+                    {{ g.title }}
+                  </option>
+                </select>
+              </div>
+              <div class="field">
+                <label class="field-label">Modo operacional</label>
+                <select v-model="form.operationalMode">
+                  <option value="available">Disponível</option>
+                  <option value="offline">Desativada</option>
+                  <option value="maintenance">Manutenção</option>
+                </select>
+              </div>
 
-        <div class="telemetry-block">
-          <h2 class="block-title">Telemetria desta máquina</h2>
-          <MachineTelemetryPanel :machine="machine" @saved="onTelemetrySaved" />
+              <p v-if="error" class="form-error">{{ error }}</p>
+
+              <div class="form-actions">
+                <button type="submit" class="btn btn-primary" :disabled="saving">
+                  {{ saving ? "Salvando…" : "Salvar informações" }}
+                </button>
+                <button
+                  type="button"
+                  class="btn btn-ghost"
+                  @click="handleRegenerateToken"
+                >
+                  Regenerar token do agente
+                </button>
+              </div>
+            </form>
+
+            <div v-else-if="activeTab === 'telemetria'" class="telemetry-tab">
+              <MachineTelemetryPanel :machine="machine" @saved="onTelemetrySaved" />
+            </div>
+
+            <AdminMachineUsersTab
+              v-else-if="activeTab === 'usuarios'"
+              :machine="machine"
+            />
+            <AdminMachineSshTab v-else-if="activeTab === 'ssh'" :machine="machine" />
+          </div>
         </div>
       </div>
-
-      <AdminMachineUsersTab v-else-if="activeTab === 'usuarios'" :machine="machine" />
-      <AdminMachineSshTab v-else-if="activeTab === 'ssh'" :machine="machine" />
-    </template>
+    </div>
 
     <Teleport to="body">
       <div v-if="tokenModal" class="modal-overlay" @click.self="tokenModal = false">
@@ -268,35 +298,58 @@ function copyToken() {
 </template>
 
 <style scoped>
-.top-nav {
+.machine-edit-page {
+  max-width: 1280px;
+  margin: 0 auto;
+}
+
+.page-header {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 0.35rem;
+  margin-bottom: 1.25rem;
+}
+
+.back-btn {
+  padding-left: 0;
+}
+
+.edit-card {
+  padding: 1.25rem 1.5rem;
+  text-align: left;
+}
+
+.edit-list .filter-tabs {
   margin-bottom: 1rem;
 }
-.edit-panel {
-  max-width: 720px;
+
+.edit-panel-inner {
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  background: var(--bg-card);
+  box-shadow: var(--shadow-card);
+  padding: 1.25rem 1.35rem;
+  min-height: 200px;
 }
+
 .infos-form {
   display: flex;
   flex-direction: column;
   gap: 1rem;
-  margin-bottom: 2rem;
+  max-width: 720px;
 }
+
 .form-actions {
   display: flex;
   flex-wrap: wrap;
   gap: 0.75rem;
 }
-.telemetry-block {
-  border-top: 1px solid var(--border-subtle);
-  padding-top: 1.5rem;
-}
-.block-title {
-  font-size: 1rem;
-  font-weight: 600;
-  margin-bottom: 1rem;
-}
+
 .form-error {
   color: var(--danger);
 }
+
 .modal-overlay {
   position: fixed;
   inset: 0;
@@ -308,6 +361,7 @@ function copyToken() {
   z-index: 100;
   padding: 1rem;
 }
+
 .modal-glass {
   background: var(--bg-card-solid);
   border: 1px solid var(--border);
@@ -315,21 +369,25 @@ function copyToken() {
   width: 100%;
   max-width: 480px;
 }
+
 .modal-header {
   display: flex;
   justify-content: space-between;
   padding: 1.25rem 1.5rem;
   border-bottom: 1px solid var(--border-subtle);
 }
+
 .modal-body {
   padding: 1.5rem;
 }
+
 .modal-actions {
   display: flex;
   justify-content: flex-end;
   gap: 0.75rem;
   margin-top: 1rem;
 }
+
 .token-box {
   background: var(--bg-input);
   border: 1px solid var(--border);

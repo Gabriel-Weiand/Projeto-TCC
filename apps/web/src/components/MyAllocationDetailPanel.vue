@@ -120,7 +120,7 @@ function machineDescription(desc?: string | null) {
         <div class="modal-header">
           <div class="modal-header-text">
             <h2 class="modal-title">{{ machineLabel }}</h2>
-            <span :class="['badge', statusBadgeClass]">
+            <span :class="['badge', 'detail-status-badge', statusBadgeClass]">
               {{ statusLabelText }}
             </span>
           </div>
@@ -421,6 +421,14 @@ function machineDescription(desc?: string | null) {
   font-weight: 600;
   margin: 0;
   line-height: 1.3;
+}
+
+.detail-status-badge {
+  align-self: flex-start;
+  width: fit-content;
+  max-width: 100%;
+  line-height: 1.25;
+  padding: 0.28rem 0.65rem;
 }
 
 .modal-body {

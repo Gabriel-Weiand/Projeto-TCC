@@ -1,7 +1,7 @@
 /** Máximo de amostras por lote enviadas ao agente (8 métricas distintas no total). */
 export const TELEMETRY_BATCH_MAX = 15;
 
-export const TELEMETRY_INTERVAL_MAX = 600;
+export const TELEMETRY_INTERVAL_MAX = 300;
 /** Perfis globais fast/eco (admin). */
 export const TELEMETRY_PRESET_INTERVAL_MIN = 10;
 /** Config custom por máquina. */

@@ -7,6 +7,7 @@ import type {
   PaginatedResponse,
   MachineProvisionedUser,
   MachineAccessType,
+  MachineIdleHistoryResponse,
 } from "@/types";
 
 export const useMachinesStore = defineStore("machines", () => {
@@ -119,6 +120,13 @@ export const useMachinesStore = defineStore("machines", () => {
     return data;
   }
 
+  async function fetchMachineIdleHistory(id: number) {
+    const { data } = await api.get<{
+      idleHistory: MachineIdleHistoryResponse;
+    }>(`/api/v1/machines/${id}/telemetry`, { params: { limit: 1, page: 1 } });
+    return data.idleHistory;
+  }
+
   return {
     machines,
     loading,
@@ -130,6 +138,7 @@ export const useMachinesStore = defineStore("machines", () => {
     fetchMachineAllocations,
     regenerateToken,
     fetchTelemetryStream,
+    fetchMachineIdleHistory,
     fetchProvisionedUsers,
     updateProvisionedUser,
     removeProvisionedUser,

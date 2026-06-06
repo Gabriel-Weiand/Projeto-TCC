@@ -52,7 +52,7 @@ export const updateMachineValidator = vine.compile(
 
     customAgentConfig: vine
       .object({
-        intervalSeconds: vine.number().min(2).max(600).optional(),
+        intervalSeconds: vine.number().min(2).max(300).optional(),
         batchSize: vine.number().min(1).max(15).optional(),
 
         // Configuração padrão de captura contínua de processos

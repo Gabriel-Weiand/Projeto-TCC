@@ -5,7 +5,7 @@ import {
   DEFAULT_GROUP_TITLE,
 } from "@/stores/machineGroups";
 import { useMachinesStore } from "@/stores/machines";
-import type { MachineGroup } from "@/types";
+import type { Machine, MachineGroup } from "@/types";
 
 const groupsStore = useMachineGroupsStore();
 const machinesStore = useMachinesStore();
@@ -20,6 +20,37 @@ const form = reactive({
   title: "",
   description: "",
   machineIds: [] as number[],
+});
+
+const machineSearch = ref("");
+const GRID_SLOTS = 12;
+
+const sortedMachines = computed(() =>
+  [...machinesStore.machines].sort((a, b) => a.name.localeCompare(b.name, "pt-BR")),
+);
+
+const filteredMachines = computed(() => {
+  const q = machineSearch.value.trim().toLowerCase();
+  const list = q
+    ? sortedMachines.value.filter((m) => m.name.toLowerCase().includes(q))
+    : sortedMachines.value;
+  return list.slice(0, GRID_SLOTS);
+});
+
+const gridSlots = computed((): (Machine | null)[] => {
+  const slots: (Machine | null)[] = Array.from({ length: GRID_SLOTS }, () => null);
+  filteredMachines.value.forEach((m, i) => {
+    slots[i] = m;
+  });
+  return slots;
+});
+
+const hiddenMachineCount = computed(() => {
+  const q = machineSearch.value.trim().toLowerCase();
+  const list = q
+    ? sortedMachines.value.filter((m) => m.name.toLowerCase().includes(q))
+    : sortedMachines.value;
+  return Math.max(0, list.length - GRID_SLOTS);
 });
 
 onMounted(async () => {
@@ -37,6 +68,7 @@ function openCreate() {
   form.title = "";
   form.description = "";
   form.machineIds = [];
+  machineSearch.value = "";
   error.value = "";
   showModal.value = true;
 }
@@ -46,6 +78,7 @@ function openEdit(group: MachineGroup) {
   form.title = group.title;
   form.description = group.description || "";
   form.machineIds = (group.machines ?? []).map((m) => m.id);
+  machineSearch.value = "";
   error.value = "";
   showModal.value = true;
 }
@@ -161,22 +194,44 @@ async function handleDelete(group: MachineGroup) {
               <label class="field-label">Descrição</label>
               <textarea v-model="form.description" class="field-textarea" rows="2" />
             </div>
-            <div class="field">
-              <label class="field-label">Máquinas do grupo</label>
-              <div class="machine-pick-grid">
-                <label
-                  v-for="m in machinesStore.machines"
-                  :key="m.id"
-                  class="machine-pick"
-                >
-                  <input
-                    type="checkbox"
-                    :checked="form.machineIds.includes(m.id)"
-                    @change="toggleMachine(m.id)"
-                  />
-                  <span>{{ m.name }}</span>
-                </label>
+            <div class="field machine-pick-field">
+              <div class="machine-pick-header">
+                <label class="field-label machine-pick-title">Máquinas do grupo</label>
+                <input
+                  v-model="machineSearch"
+                  type="search"
+                  class="machine-pick-search"
+                  placeholder="Buscar máquina…"
+                  autocomplete="off"
+                />
               </div>
+              <div class="metric-toggle-grid machine-pick-grid">
+                <template v-for="(m, idx) in gridSlots" :key="m ? m.id : `empty-${idx}`">
+                  <div
+                    v-if="!m"
+                    class="metric-toggle machine-pick-empty"
+                    aria-hidden="true"
+                  />
+                  <label
+                    v-else
+                    class="metric-toggle"
+                    :class="{ 'is-checked': form.machineIds.includes(m.id) }"
+                  >
+                    <input
+                      type="checkbox"
+                      class="metric-toggle-input"
+                      :checked="form.machineIds.includes(m.id)"
+                      @change="toggleMachine(m.id)"
+                    />
+                    <span class="metric-toggle-box" aria-hidden="true" />
+                    <span class="metric-toggle-label">{{ m.name }}</span>
+                  </label>
+                </template>
+              </div>
+              <p v-if="hiddenMachineCount > 0" class="machine-pick-hint text-muted">
+                +{{ hiddenMachineCount }} máquina(s) oculta(s) — refine a busca para
+                encontrá-las.
+              </p>
             </div>
             <p v-if="error" class="form-error">{{ error }}</p>
             <div class="modal-actions">
@@ -279,27 +334,52 @@ async function handleDelete(group: MachineGroup) {
   border-radius: 7px;
 }
 
-.machine-pick-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
-  gap: 0.35rem;
-  max-height: 200px;
-  overflow: auto;
-  padding: 0.5rem;
-  border: 1px solid var(--border-subtle);
-  border-radius: var(--radius);
+.machine-pick-field {
+  gap: 0.65rem;
 }
 
-.machine-pick {
+.machine-pick-header {
   display: flex;
   align-items: center;
-  gap: 0.4rem;
-  font-size: 0.82rem;
-  cursor: pointer;
+  justify-content: space-between;
+  gap: 0.75rem;
 }
 
-.machine-pick input {
-  width: auto;
+.machine-pick-title {
+  margin: 0;
+  flex-shrink: 0;
+}
+
+.machine-pick-search {
+  width: min(220px, 100%);
+  padding: 0.45rem 0.75rem;
+  font-size: 0.82rem;
+  background: var(--bg-card-solid);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  color: var(--text-primary);
+}
+
+.machine-pick-grid {
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  grid-template-rows: repeat(3, minmax(2.75rem, auto));
+  min-height: calc(3 * 2.75rem + 2 * 0.5rem);
+  padding: 0.65rem;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-lg);
+  background: var(--bg-card);
+}
+
+.machine-pick-empty {
+  pointer-events: none;
+  opacity: 0.22;
+  border-style: dashed;
+  cursor: default;
+}
+
+.machine-pick-hint {
+  margin: 0;
+  font-size: 0.78rem;
 }
 
 .modal-overlay {
@@ -324,7 +404,7 @@ async function handleDelete(group: MachineGroup) {
 }
 
 .modal-wide {
-  max-width: 560px;
+  max-width: 720px;
 }
 
 .modal-header {

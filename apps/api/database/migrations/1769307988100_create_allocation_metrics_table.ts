@@ -58,6 +58,8 @@ export default class extends BaseSchema {
 
       // --- OUTROS ---
       table.integer('session_duration_minutes').unsigned() // Duração total
+      table.integer('chart_bucket_minutes').unsigned().notNullable().defaultTo(10)
+      table.jsonb('chart_series').nullable() // Série resumida (wire format ×10)
       table.timestamp('created_at') // Data da consolidação
     })
   }

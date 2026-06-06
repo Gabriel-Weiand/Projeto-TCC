@@ -1,4 +1,5 @@
 import Telemetry from '#models/telemetry'
+import { idleTelemetryBuffer } from '#services/telemetry_idle_buffer'
 import logger from '@adonisjs/core/services/logger'
 
 /** * Payload unificado de telemetria enviado pelo agente (C2).
@@ -269,6 +270,7 @@ class TelemetryBuffer {
     this.latestState.delete(machineId)
     this.recentEntries.delete(machineId)
     this.lastBatchByMachine.delete(machineId)
+    idleTelemetryBuffer.clearMachine(machineId)
   }
 
   /**
@@ -280,6 +282,7 @@ class TelemetryBuffer {
     this.latestState.clear()
     this.recentEntries.clear()
     this.lastBatchByMachine.clear()
+    idleTelemetryBuffer.reset()
   }
 }
 

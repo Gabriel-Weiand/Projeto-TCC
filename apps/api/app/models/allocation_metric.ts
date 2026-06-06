@@ -53,6 +53,20 @@ export default class AllocationMetric extends BaseModel {
   @column()
   declare sessionDurationMinutes: number
 
+  /** Largura de cada ponto do gráfico (minutos), adaptada à duração da sessão. */
+  @column()
+  declare chartBucketMinutes: number
+
+  @column({
+    prepare: (value: unknown) => (value == null ? null : JSON.stringify(value)),
+    consume: (value: unknown) => {
+      if (value == null) return null
+      if (typeof value === 'string') return JSON.parse(value)
+      return value
+    },
+  })
+  declare chartSeries: Record<string, unknown>[] | null
+
   @column.dateTime({ autoCreate: true })
   declare createdAt: DateTime
 

@@ -25,8 +25,8 @@ export type LabTelemetryPresets = {
   eco: TelemetryPresetProfile
 }
 
-/** Intervalo entre capturas enviadas ao agente (segundos). */
-export const TELEMETRY_INTERVAL_MAX = 600
+/** Intervalo máximo entre capturas enviadas ao agente (segundos). Alinha grade do gráfico resumido. */
+export const TELEMETRY_INTERVAL_MAX = 300
 /** Perfis globais fast/eco. */
 export const TELEMETRY_PRESET_INTERVAL_MIN = 10
 /** Config custom por máquina. */
@@ -235,6 +235,15 @@ export function saveLabTelemetryPresets(presets: LabTelemetryPresets): void {
 /**
  * Monta `agentConfig.telemetry` para heartbeat conforme preset da máquina.
  */
+/** Intervalo efetivo de captura da máquina (segundos). */
+export function resolveMachineIntervalSeconds(
+  machine: Machine,
+  isInAllocation: boolean
+): number {
+  const config = buildAgentTelemetryConfig(machine, isInAllocation)
+  return config.intervalSeconds as number
+}
+
 export function buildAgentTelemetryConfig(
   machine: Machine,
   isInAllocation: boolean

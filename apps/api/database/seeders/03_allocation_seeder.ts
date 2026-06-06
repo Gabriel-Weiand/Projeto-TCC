@@ -5,6 +5,12 @@ import Telemetry from '#models/telemetry'
 import SshConnectionAttempt from '#models/ssh_connection_attempt'
 import Notification from '#models/notification'
 import { DateTime } from 'luxon'
+import {
+  generateChartSeriesWire,
+  generateRawTelemetriesWire,
+  createTelemetriesInChunks,
+} from '#services/seed_chart_series'
+import { resolveChartBucketMs, chartBucketMinutes } from '#services/telemetry_downsample'
 
 export default class extends BaseSeeder {
   async run() {
@@ -14,6 +20,19 @@ export default class extends BaseSeeder {
     /** Horário local do parque → UTC no banco */
     function at(day: DateTime, hour: number, minute: number = 0): DateTime {
       return day.set({ hour, minute, second: 0, millisecond: 0 }).toUTC()
+    }
+
+    function chartSeedForAllocation(allocation: Allocation, overrides?: { pointCount?: number }) {
+      const startMs = allocation.startTime.toMillis()
+      const endMs = allocation.endTime.toMillis()
+      const durationMs = endMs - startMs
+      const bucketMs = resolveChartBucketMs(durationMs)
+      const pointCount =
+        overrides?.pointCount ?? Math.max(2, Math.ceil(durationMs / bucketMs))
+      return {
+        chartSeries: generateChartSeriesWire(startMs, endMs, { pointCount }),
+        chartBucketMinutes: chartBucketMinutes(bucketMs),
+      }
     }
 
     const allocationsData = [
@@ -126,6 +145,48 @@ export default class extends BaseSeeder {
         status: 'approved' as const,
       },
 
+      // —— TESTes Gabriel: gerar resumo na hora (sem allocation_metrics) ——
+      {
+        userId: 3,
+        machineId: 1,
+        startTime: at(today.minus({ days: 1 }), 14, 0),
+        endTime: at(today.minus({ days: 1 }), 14, 45),
+        reason: '[TEST-A] Curta · eco ~60s · <100 amostras · Gerar resumo',
+        status: 'finished' as const,
+      },
+      {
+        userId: 3,
+        machineId: 2,
+        startTime: at(today.minus({ days: 3 }), 9),
+        endTime: at(today.minus({ days: 3 }), 17),
+        reason: '[TEST-B] Média 8h · fast ~30s · Gerar resumo',
+        status: 'finished' as const,
+      },
+      {
+        userId: 3,
+        machineId: 4,
+        startTime: at(today.minus({ days: 6 }), 8),
+        endTime: at(today.minus({ days: 3 }), 20),
+        reason: '[TEST-C] Longa 3d · custom 300s · Gerar resumo',
+        status: 'finished' as const,
+      },
+      {
+        userId: 3,
+        machineId: 5,
+        startTime: at(today.minus({ days: 9 }), 8),
+        endTime: at(today.minus({ days: 8 }), 8),
+        reason: '[TEST-D] Longa 24h · fast ~15s · bruta densa · Gerar resumo',
+        status: 'finished' as const,
+      },
+      {
+        userId: 3,
+        machineId: 6,
+        startTime: at(today.minus({ days: 1 }), 16, 0),
+        endTime: at(today.minus({ days: 1 }), 16, 20),
+        reason: '[TEST-E] Curta 20min · fast ~10s · ~120 amostras · Gerar resumo',
+        status: 'finished' as const,
+      },
+
       // —— Cancelada (curta) ——
       {
         userId: 4,
@@ -141,6 +202,9 @@ export default class extends BaseSeeder {
     for (const a of allocationsData) {
       allocations.push(await Allocation.create(a))
     }
+
+    const chart0 = chartSeedForAllocation(allocations[0])
+    const chart1 = chartSeedForAllocation(allocations[1])
 
     const metricsData = [
       {
@@ -171,9 +235,11 @@ export default class extends BaseSeeder {
         maxDownloadMbps: 220,
         avgUploadMbps: 18,
         maxUploadMbps: 90,
-        avgMoboTemp: 48,
-        maxMoboTemp: 56,
+        avgMoboTemp: 480,
+        maxMoboTemp: 560,
         sessionDurationMinutes: 14 * 24 * 60 - 600,
+        chartBucketMinutes: chart0.chartBucketMinutes,
+        chartSeries: chart0.chartSeries,
       },
       {
         allocationId: allocations[1].id,
@@ -203,9 +269,11 @@ export default class extends BaseSeeder {
         maxDownloadMbps: 120,
         avgUploadMbps: 8,
         maxUploadMbps: 40,
-        avgMoboTemp: 45,
-        maxMoboTemp: 52,
+        avgMoboTemp: 450,
+        maxMoboTemp: 520,
         sessionDurationMinutes: 14 * 24 * 60,
+        chartBucketMinutes: chart1.chartBucketMinutes,
+        chartSeries: chart1.chartSeries,
       },
     ]
 
@@ -213,36 +281,62 @@ export default class extends BaseSeeder {
       await AllocationMetric.create(m)
     }
 
-    const telemetryData = [
+    const summaryTestCases: {
+      allocation: Allocation
+      intervalMs: number
+      label: string
+      options?: { gpuIntensity?: number; includeDiskIo?: boolean }
+    }[] = [
       {
-        allocationId: allocations[3].id,
-        timestamp: at(today.minus({ days: 10 }), 10, 0).toISO()!,
-        cpuUsage: 150,
-        cpuTemp: 420,
-        gpuUsage: 0,
-        gpuTemp: 350,
-        vramTotalGb: 480,
-        vramUsedGb: 40,
-        ramTotalGb: 2560,
-        ramUsedGb: 800,
+        allocation: allocations[13],
+        intervalMs: 60_000,
+        label: 'TEST-A',
+        options: { gpuIntensity: 0.4, includeDiskIo: false },
       },
       {
-        allocationId: allocations[3].id,
-        timestamp: at(today.minus({ days: 10 }), 10, 20).toISO()!,
-        cpuUsage: 850,
-        cpuTemp: 780,
-        gpuUsage: 620,
-        gpuTemp: 720,
-        vramTotalGb: 480,
-        vramUsedGb: 120,
-        ramTotalGb: 2560,
-        ramUsedGb: 1400,
+        allocation: allocations[14],
+        intervalMs: 30_000,
+        label: 'TEST-B',
+        options: { gpuIntensity: 0.7, includeDiskIo: true },
+      },
+      {
+        allocation: allocations[15],
+        intervalMs: 300_000,
+        label: 'TEST-C',
+        options: { gpuIntensity: 0.65, includeDiskIo: true },
+      },
+      {
+        allocation: allocations[16],
+        intervalMs: 15_000,
+        label: 'TEST-D',
+        options: { gpuIntensity: 0.75, includeDiskIo: true },
+      },
+      {
+        allocation: allocations[17],
+        intervalMs: 10_000,
+        label: 'TEST-E',
+        options: { gpuIntensity: 0.55, includeDiskIo: false },
       },
     ]
 
-    for (const t of telemetryData) {
-      await Telemetry.create(t)
+    console.log('\n📊 Alocações para gerar resumo (admin → Gerar resumo):')
+    for (const test of summaryTestCases) {
+      const startMs = test.allocation.startTime.toMillis()
+      const endMs = test.allocation.endTime.toMillis()
+      const rows = generateRawTelemetriesWire(test.allocation.id, startMs, endMs, test.intervalMs, {
+        gpuIntensity: test.options?.gpuIntensity,
+        includeDiskIo: test.options?.includeDiskIo,
+      })
+      await createTelemetriesInChunks((chunk) => Telemetry.createMany(chunk), rows)
+      const durationMin = Math.round((endMs - startMs) / 60_000)
+      console.log(
+        `   ${test.label} · alocação #${test.allocation.id} · ${rows.length} brutas · ${durationMin} min · intervalo ${test.intervalMs / 1000}s`
+      )
+      console.log(`      → ${test.allocation.reason}`)
     }
+    console.log(
+      `   Pré-resumidas (~100 pts): alocações #${allocations[0].id}, #${allocations[1].id}\n`
+    )
 
     const sshData = [
       {
@@ -341,6 +435,6 @@ export default class extends BaseSeeder {
       await Notification.create(n)
     }
 
-    console.log('\n✅ Seed de alocações (reservas semanais+) concluído.\n')
+    console.log('✅ Seed de alocações concluído.\n')
   }
 }

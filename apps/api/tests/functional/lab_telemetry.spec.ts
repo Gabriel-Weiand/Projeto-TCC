@@ -112,7 +112,7 @@ test.group('Lab telemetry presets', (group) => {
     response.assertStatus(422)
   })
 
-  test('rejeita intervalo fora de 10–600s', async ({ client }) => {
+  test('rejeita intervalo fora de 10–300s', async ({ client }) => {
     const admin = await User.create({
       fullName: 'Admin Tel Val',
       email: 'admin-tel-val@teste.com',
@@ -126,7 +126,7 @@ test.group('Lab telemetry presets', (group) => {
       .loginAs(admin)
       .json({
         fast: {
-          intervalSeconds: 601,
+          intervalSeconds: 301,
           batchSize: presets.fast.batchSize,
           telemetrySet: presets.fast.telemetrySet,
         },

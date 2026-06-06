@@ -5,6 +5,8 @@ import Allocation from '#models/allocation'
 import Telemetry from '#models/telemetry'
 import AllocationMetric from '#models/allocation_metric'
 import { telemetryBuffer } from '#services/telemetry_buffer'
+import { idleTelemetryBuffer } from '#services/telemetry_idle_buffer'
+import { downsampleToBuckets, resolveChartBucketMs, CHART_COARSE_BUCKET_MS, CHART_MAX_POINTS } from '#services/telemetry_downsample'
 import testUtils from '@adonisjs/core/services/test_utils'
 import { DateTime } from 'luxon'
 
@@ -19,7 +21,7 @@ import { DateTime } from 'luxon'
  * @param tick - Número do tick (0 a N), usado para variar os valores.
  * @param intensity - 0.0 a 1.0, controla o nível de carga geral.
  */
-function generateTelemetry(tick: number, intensity: number = 0.5) {
+function generateTelemetry(tick: number, intensity: number = 0.5, baseMs?: number) {
   // Funções de variação pseudoaleatória baseadas no tick
   const wave = Math.sin(tick * 0.3) * 0.15 // Oscilação suave ±15%
   const noise = (((tick * 7 + 13) % 17) / 17) * 0.1 // Ruído determinístico ±10%
@@ -27,7 +29,7 @@ function generateTelemetry(tick: number, intensity: number = 0.5) {
 
   const clamp = (v: number, min: number, max: number) => Math.round(Math.min(max, Math.max(min, v)))
 
-  const timestamp = new Date(Date.now() + tick * 5000).toISOString()
+  const timestamp = new Date((baseMs ?? Date.now()) + tick * 5000).toISOString()
   const ramTotalGb = 320
   const ramUsedGb = clamp(80 + factor * 200 + (tick % 6) * 4, 20, ramTotalGb)
   const diskReadMbps = clamp(50 + factor * 200 + (tick % 5) * 5, 0, 1000)
@@ -51,14 +53,27 @@ function generateTelemetry(tick: number, intensity: number = 0.5) {
 
 /**
  * Popula telemetrias diretamente no banco para uma alocação.
- * Simula `durationSeconds` segundos de coleta (1 registro = 5 segundos reais).
+ * Timestamps distribuídos dentro de [startTime, endTime] da alocação.
  */
-async function seedTelemetries(allocationId: number, count: number, intensity: number = 0.5) {
+async function seedTelemetries(
+  allocationId: number,
+  count: number,
+  intensity: number = 0.5,
+  intervalMs: number = 5000
+) {
+  const allocation = await Allocation.findOrFail(allocationId)
+  const startMs = allocation.startTime.toMillis()
+  const endMs = allocation.endTime.toMillis()
+  const spanMs = Math.max(intervalMs, endMs - startMs)
+  const stepMs = count > 1 ? Math.min(intervalMs, Math.floor(spanMs / (count - 1))) : 0
+
   const records = []
   for (let i = 0; i < count; i++) {
+    const ts = new Date(Math.min(startMs + i * stepMs, endMs)).toISOString()
     records.push({
       allocationId,
       ...generateTelemetry(i, intensity),
+      timestamp: ts,
     })
   }
 
@@ -412,6 +427,13 @@ test.group('AllocationMetric - Resumo de Sessão', (group) => {
     assert.isAtMost(metric.avgDownloadMbps, metric.maxDownloadMbps)
     assert.isAtMost(metric.avgUploadMbps, metric.maxUploadMbps)
     assert.isAtMost(metric.avgMoboTemp, metric.maxMoboTemp)
+
+    assert.isArray(metric.chartSeries)
+    assert.isAtLeast(metric.chartSeries.length, 1)
+    assert.isAtLeast(metric.chartBucketMinutes, 1)
+
+    const rawAfter = await Telemetry.query().where('allocationId', allocation.id).count('* as total')
+    assert.equal(Number(rawAfter[0].$extras.total), 0)
   })
 
   test('resumo via API deve ser idêntico ao cálculo manual', async ({ client, assert }) => {
@@ -666,8 +688,9 @@ test.group('AllocationMetric - Resumo de Sessão', (group) => {
 test.group('Manutenção - Exclusão de Telemetrias e Métricas', (group) => {
   group.each.setup(() => testUtils.db().withGlobalTransaction())
 
-  test('telemetrias brutas persistem por alocação (sem exclusão individual)', async ({
+  test('telemetrias brutas existem antes do resumo e são removidas após', async ({
     assert,
+    client,
   }) => {
     const admin = await User.create({
       fullName: 'Admin Del',
@@ -686,14 +709,29 @@ test.group('Manutenção - Exclusão de Telemetrias e Métricas', (group) => {
       userId: admin.id,
       machineId: machine.id,
       startTime: DateTime.now().minus({ minutes: 5 }),
-      endTime: DateTime.now().plus({ minutes: 55 }),
-      status: 'approved',
+      endTime: DateTime.now(),
+      status: 'finished',
     })
 
     await seedTelemetries(allocation.id, 10, 0.5)
 
     const telemetries = await Telemetry.query().where('allocationId', allocation.id)
     assert.equal(telemetries.length, 10)
+
+    const summary = await client
+      .post(`/api/v1/allocations/${allocation.id}/summary`)
+      .loginAs(admin)
+    summary.assertStatus(201)
+
+    const afterSummary = await Telemetry.query()
+      .where('allocationId', allocation.id)
+      .count('* as total')
+    assert.equal(Number(afterSummary[0].$extras.total), 0)
+
+    const metric = await AllocationMetric.findBy('allocationId', allocation.id)
+    assert.isNotNull(metric)
+    assert.isArray(metric!.chartSeries)
+    assert.isAtLeast(metric!.chartSeries!.length, 1)
   })
 
   test('cascade: deletar alocação remove telemetrias e métrica', async ({ assert }) => {
@@ -816,8 +854,9 @@ test.group('Fluxo End-to-End via API do Agente', (group) => {
     })
 
     // === 1. AGENTE ENVIA 24 TELEMETRIAS (simula 2 min a 5s/tick) ===
+    const telemetryBaseMs = DateTime.now().minus({ minutes: 3 }).toMillis()
     for (let i = 0; i < 24; i++) {
-      const telData = generateTelemetry(i, 0.4 + i * 0.02) // Carga crescente
+      const telData = generateTelemetry(i, 0.4 + i * 0.02, telemetryBaseMs) // Carga crescente
 
       const telResponse = await client
         .post('/api/v1/agent/telemetry')
@@ -852,7 +891,7 @@ test.group('Fluxo End-to-End via API do Agente', (group) => {
     assert.isAbove(metric.maxCpuUsage, 0)
     assert.isAtMost(metric.avgCpuUsage, metric.maxCpuUsage)
 
-    // === 5. USER LÊ SEU RESUMO ===
+    // === 5. USER LÊ SEU RESUMO (com chartSeries) ===
     const userSummary = await client
       .get(`/api/v1/allocations/${allocation.id}/summary`)
       .loginAs(user)
@@ -860,13 +899,18 @@ test.group('Fluxo End-to-End via API do Agente', (group) => {
     userSummary.assertBodyContains({
       allocationId: allocation.id,
     })
+    assert.isArray(userSummary.body().chartSeries)
+    assert.isAtLeast(userSummary.body().chartSeries.length, 1)
 
-    // === 6. VERIFICAR QUE HISTÓRICO DE MÁQUINA MOSTRA TELEMETRIA ===
+    // === 6. Após resumo, brutas removidas do histórico paginado ===
     const historyResp = await client
       .get(`/api/v1/machines/${machine.id}/telemetry?page=1&limit=50`)
       .loginAs(admin)
     historyResp.assertStatus(200)
-    assert.isAtLeast(historyResp.body().history.data.length, 24)
+    assert.equal(historyResp.body().history.data.length, 0)
+
+    const rawLeft = await Telemetry.query().where('allocationId', allocation.id).count('* as total')
+    assert.equal(Number(rawLeft[0].$extras.total), 0)
   })
 
   test('telemetria sem alocação ativa é descartada (não persiste)', async ({ client, assert }) => {
@@ -882,12 +926,15 @@ test.group('Fluxo End-to-End via API do Agente', (group) => {
       .header('Authorization', `Bearer ${machine.token}`)
       .json({ data: [generateTelemetry(0, 0.5)] })
 
-    // Deve retornar 204 (aceita mas descarta)
+    // Deve retornar 204 (aceita mas descarta persistência)
     response.assertStatus(204)
 
-    // Sem alocação ativa: dados só no ring buffer, não no buffer de persistência
+    // Sem alocação ativa: dados no ring buffer e no buffer ocioso 24h, não no DB
     const flushed = await telemetryBuffer.flush()
     assert.equal(flushed, 0)
+
+    const idleHistory = idleTelemetryBuffer.getHistory(machine.id)
+    assert.equal(idleHistory.length, 1)
 
     await machine.refresh()
     assert.equal(machine.status, 'offline')
@@ -1275,5 +1322,242 @@ test.group('Telemetry Stream Endpoint', (group) => {
     response.assertStatus(200)
     assert.equal(response.body().total, 0)
     assert.deepEqual(response.body().entries, [])
+  })
+})
+
+// ============================================================================
+// BUFFER OCIOSO 24h + CHART SERIES DE ALOCAÇÃO
+// ============================================================================
+
+function idleSample(
+  timestamp: DateTime,
+  cpuUsage: number,
+  overrides: Record<string, unknown> = {}
+) {
+  return {
+    allocationId: 0,
+    timestamp: timestamp.toISO()!,
+    cpuUsage,
+    cpuTemp: 400,
+    gpuUsage: 200,
+    gpuTemp: 350,
+    ramTotalGb: 320,
+    ramUsedGb: 160,
+    ...overrides,
+  }
+}
+
+test.group('Buffer ocioso 24h e chart series', (group) => {
+  group.each.setup(() => {
+    telemetryBuffer.reset()
+    return testUtils.db().withGlobalTransaction()
+  })
+
+  test('ingest @ 30s agrega 2 amostras/min em bucket TWA', async ({ assert }) => {
+    idleTelemetryBuffer.reset()
+    const machineId = -1001
+    const base = DateTime.now().startOf('minute')
+
+    idleTelemetryBuffer.ingest(machineId, idleSample(base, 100), 30)
+    idleTelemetryBuffer.ingest(machineId, idleSample(base.plus({ seconds: 30 }), 300), 30)
+
+    const history = idleTelemetryBuffer.getHistory(machineId)
+    assert.equal(history.length, 1)
+    assert.equal(history[0].sampleCount, 2)
+    assert.equal(history[0].metrics.cpuUsage, 200)
+  })
+
+  test('ingest @ 60s preserva amostras como capturadas', async ({ assert }) => {
+    idleTelemetryBuffer.reset()
+    const machineId = -1002
+    const base = DateTime.now().startOf('minute')
+
+    idleTelemetryBuffer.ingest(machineId, idleSample(base, 100), 60)
+    idleTelemetryBuffer.ingest(machineId, idleSample(base.plus({ minutes: 1 }), 400), 60)
+
+    const history = idleTelemetryBuffer.getHistory(machineId)
+    assert.equal(history.length, 2)
+    assert.equal(history[0].metrics.cpuUsage, 100)
+    assert.equal(history[1].metrics.cpuUsage, 400)
+  })
+
+  test('compactação move dados > 1h para buckets de 10 min', async ({ assert }) => {
+    idleTelemetryBuffer.reset()
+    const machineId = -1003
+    const now = DateTime.utc()
+    const old = now.minus({ hours: 2 })
+
+    idleTelemetryBuffer.ingest(machineId, idleSample(old, 500), 60)
+    idleTelemetryBuffer.ingest(machineId, idleSample(old.plus({ minutes: 5 }), 600), 60)
+    idleTelemetryBuffer.ingest(machineId, idleSample(now.minus({ minutes: 10 }), 700), 60)
+
+    const history = idleTelemetryBuffer.getHistory(machineId)
+    const lowRes = history.filter((e) => e.resolutionMs === 600_000)
+    const highRes = history.filter((e) => e.resolutionMs === 60_000)
+
+    assert.isAtLeast(lowRes.length, 1)
+    assert.isAtLeast(highRes.length, 1)
+  })
+
+  test('buffer ocioso não recebe amostras durante alocação ativa', async ({ client, assert }) => {
+    const machine = await Machine.create({
+      name: 'PC-IDLE-SKIP',
+      description: 'Máquina idle skip',
+      status: 'available',
+    })
+
+    const user = await User.create({
+      fullName: 'Aluno Idle Skip',
+      email: 'aluno.idleskip@teste.com',
+      password: 'senha123',
+      role: 'user',
+    })
+
+    await Allocation.create({
+      userId: user.id,
+      machineId: machine.id,
+      startTime: DateTime.now().minus({ minutes: 1 }),
+      endTime: DateTime.now().plus({ minutes: 59 }),
+      status: 'approved',
+    })
+
+    await client
+      .post('/api/v1/agent/telemetry')
+      .header('Authorization', `Bearer ${machine.token}`)
+      .json({ data: [generateTelemetry(0, 0.5)] })
+
+    assert.equal(idleTelemetryBuffer.getHistory(machine.id).length, 0)
+  })
+
+  test('GET /machines/:id/telemetry expõe idleHistory', async ({ client, assert }) => {
+    const admin = await User.create({
+      fullName: 'Admin Idle Hist',
+      email: 'admin.idlehist@teste.com',
+      password: 'senha123',
+      role: 'admin',
+    })
+
+    const machine = await Machine.create({
+      name: 'PC-IDLE-HIST',
+      description: 'Máquina idle history API',
+      status: 'available',
+    })
+
+    await client
+      .post('/api/v1/agent/telemetry')
+      .header('Authorization', `Bearer ${machine.token}`)
+      .json({ data: [generateTelemetry(0, 0.5)] })
+
+    const response = await client
+      .get(`/api/v1/machines/${machine.id}/telemetry`)
+      .loginAs(admin)
+
+    response.assertStatus(200)
+    assert.property(response.body(), 'idleHistory')
+    assert.isAtLeast(response.body().idleHistory.points.length, 1)
+    assert.isArray(response.body().idleHistory.chartSeries)
+    assert.equal(response.body().idleHistory.meta.retentionHours, 24)
+    assert.equal(response.body().idleHistory.meta.chartBucketMinutes, 15)
+  })
+
+  test('chartSeries com intervalo 300s não gera pontos 0 espúrios', async ({ client, assert }) => {
+    const admin = await User.create({
+      fullName: 'Admin Sparse',
+      email: 'admin.sparse@teste.com',
+      password: 'senha123',
+      role: 'admin',
+    })
+
+    const machine = await Machine.create({
+      name: 'PC-SPARSE-300',
+      description: 'Máquina intervalo 300s',
+      status: 'available',
+    })
+
+    const start = DateTime.now().minus({ hours: 4 })
+    const end = DateTime.now()
+
+    const allocation = await Allocation.create({
+      userId: admin.id,
+      machineId: machine.id,
+      startTime: start,
+      endTime: end,
+      status: 'finished',
+    })
+
+    for (let i = 0; i < 48; i++) {
+      await Telemetry.create({
+        allocationId: allocation.id,
+        timestamp: start.plus({ seconds: i * 300 }).toISO()!,
+        cpuUsage: 500 + i * 10,
+        cpuTemp: 450,
+        gpuUsage: 300,
+        gpuTemp: 350,
+        ramTotalGb: 320,
+        ramUsedGb: 160,
+        diskReadMbps: 100,
+        diskWriteMbps: 80,
+        downloadMbps: 50,
+        uploadMbps: 20,
+        moboTemperature: 320,
+      })
+    }
+
+    const summary = await client
+      .post(`/api/v1/allocations/${allocation.id}/summary`)
+      .loginAs(admin)
+    summary.assertStatus(201)
+
+    const body = summary.body()
+    assert.isArray(body.chartSeries)
+    assert.approximately(body.chartSeries.length, 48, 4)
+    assert.equal(body.chartBucketMinutes, 5)
+
+    for (const point of body.chartSeries) {
+      assert.isAbove(point.cpuUsage, 40)
+      assert.notEqual(point.cpuUsage, 0)
+    }
+
+    const rawLeft = await Telemetry.query().where('allocationId', allocation.id).count('* as total')
+    assert.equal(Number(rawLeft[0].$extras.total), 0)
+  })
+
+  test('resolveChartBucketMs adapta bucket à duração da sessão', async ({ assert }) => {
+    assert.equal(resolveChartBucketMs(90 * 60_000), 60_000)
+    const dayMs = 24 * 60 * 60 * 1000
+    assert.equal(resolveChartBucketMs(dayMs), 15 * 60_000)
+    const twoWeeksMs = 14 * 24 * 60 * 60 * 1000
+    const bucket = resolveChartBucketMs(twoWeeksMs)
+    assert.isAbove(bucket, CHART_COARSE_BUCKET_MS)
+    const approxPoints = Math.ceil(twoWeeksMs / bucket)
+    assert.approximately(approxPoints, CHART_MAX_POINTS, 2)
+  })
+
+  test('downsampleToBuckets omite buckets vazios', async ({ assert }) => {
+    const startMs = Date.UTC(2026, 5, 1, 10, 0, 0)
+    const endMs = startMs + 60 * 60 * 1000
+    const samples = [
+      {
+        timestamp: new Date(startMs).toISOString(),
+        cpuUsage: 500,
+        cpuTemp: 400,
+        gpuUsage: 200,
+        gpuTemp: 300,
+      },
+      {
+        timestamp: new Date(startMs + 600_000).toISOString(),
+        cpuUsage: 600,
+        cpuTemp: 420,
+        gpuUsage: 250,
+        gpuTemp: 320,
+      },
+    ]
+
+    const points = downsampleToBuckets(samples, 600_000, startMs, endMs)
+    assert.equal(points.length, 2)
+    assert.notInclude(
+      points.map((p) => p.cpuUsage),
+      0
+    )
   })
 })

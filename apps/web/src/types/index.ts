@@ -183,6 +183,45 @@ export interface Allocation {
   metric?: AllocationMetric;
 }
 
+export interface AllocationChartPoint {
+  timestamp: string | null;
+  cpuUsage: number | null;
+  cpuTemp: number | null;
+  cpuFreqMhz?: number | null;
+  gpuUsage: number | null;
+  gpuTemp: number | null;
+  gpuPowerWatts: number | null;
+  ramTotalGb: number | null;
+  ramUsedGb: number | null;
+  swapTotalGb: number | null;
+  swapUsedGb: number | null;
+  vramTotalGb: number | null;
+  vramUsedGb: number | null;
+  diskReadMbps: number | null;
+  diskWriteMbps: number | null;
+  downloadMbps: number | null;
+  uploadMbps: number | null;
+  moboTemperature: number | null;
+}
+
+export interface MachineIdleHistoryMeta {
+  retentionHours: number;
+  recentResolutionMinutes: number;
+  olderResolutionMinutes: number;
+  pointCount: number;
+  chartBucketMinutes: number;
+  chartPointCount: number;
+  /** Última amostra bruta no buffer (ISO). */
+  lastBufferTimestamp?: string | null;
+  /** Último ponto da série 15 min (ISO). */
+  lastChartTimestamp?: string | null;
+}
+
+export interface MachineIdleHistoryResponse {
+  chartSeries: AllocationChartPoint[];
+  meta: MachineIdleHistoryMeta;
+}
+
 export interface AllocationMetric {
   id: number;
   allocationId: number;
@@ -194,9 +233,16 @@ export interface AllocationMetric {
   maxGpuUsage: number;
   avgGpuTemp: number;
   maxGpuTemp: number;
-  avgRamUsage: number;
-  maxRamUsage: number;
-  // Atualizado para disco I/O
+  avgGpuPowerWatts: number | null;
+  maxGpuPowerWatts: number | null;
+  avgVramTotalGb: number | null;
+  maxVramTotalGb: number | null;
+  avgVramUsedGb: number | null;
+  maxVramUsedGb: number | null;
+  avgRamUsedGb: number | null;
+  maxRamUsedGb: number | null;
+  avgSwapUsedGb: number | null;
+  maxSwapUsedGb: number | null;
   avgDiskReadMbps: number | null;
   maxDiskReadMbps: number | null;
   avgDiskWriteMbps: number | null;
@@ -208,8 +254,10 @@ export interface AllocationMetric {
   avgMoboTemp: number | null;
   maxMoboTemp: number | null;
   sessionDurationMinutes: number;
+  /** Intervalo entre pontos do gráfico (minutos), adaptado à duração da sessão. */
+  chartBucketMinutes?: number;
+  chartSeries?: AllocationChartPoint[];
   createdAt: string;
-  updatedAt: string | null;
 }
 
 export interface Notification {

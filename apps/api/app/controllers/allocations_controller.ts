@@ -4,6 +4,7 @@ import Allocation from '#models/allocation'
 import AllocationMetric from '#models/allocation_metric'
 import Machine from '#models/machine'
 import { summarizeAllocation } from '#services/allocation_summarizer'
+import { serializeAllocationMetric } from '#services/telemetry_api_format'
 import {
   createAllocationValidator,
   updateAllocationValidator,
@@ -554,7 +555,7 @@ export default class AllocationsController {
 
     await notifySessionSummaryReady(allocation, allocation.machine)
 
-    return response.created(metric)
+    return response.created(serializeAllocationMetric(metric))
   }
 
   /**
@@ -585,6 +586,6 @@ export default class AllocationsController {
       })
     }
 
-    return response.ok(allocation.metric)
+    return response.ok(serializeAllocationMetric(allocation.metric))
   }
 }

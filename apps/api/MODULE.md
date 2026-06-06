@@ -58,8 +58,8 @@ node ace test
 - `machines` com `agent_token`, specs (`total_ram_gb`, `total_vram_gb` em **wire GB×10**), `telemetry_preset`, `custom_agent_config`, `host_fingerprint`.
 - `machine_users` — vínculo usuário ↔ máquina provisionada no SO.
 - `allocations` com janela de uso (no seed dev, reservas típicas de **2–4 semanas**).
-- `telemetries` — amostras brutas (wire ×10 para uso/temp; processos em JSON).
-- `allocation_metrics` — TWA e picos por sessão.
+- `telemetries` — amostras brutas durante alocações (wire ×10; removidas após resumo).
+- `allocation_metrics` — TWA, picos por sessão e `chart_series` (série resumida para gráfico).
 - `ssh_connection_attempts` — auditoria de login SSH.
 - `notifications` — caixa de entrada por usuário.
 
@@ -70,6 +70,22 @@ node ace test
 $TWA = \frac{\sum (v_i \cdot \Delta t_i)}{T_{total}}$
 
 - **Fallback de GPU:** dados nulos/zerados de GPU são ignorados na consolidação, sem interromper o cálculo das demais métricas.
+
+### Retenção e buffers
+
+| Contexto | Onde fica | Resolução | Retenção |
+|----------|-----------|-----------|----------|
+| Máquina **ociosa** | Buffer em memória (`telemetry_idle_buffer`) | 1 min (última 1 h); 10 min (1 h–24 h) | 24 h; perdido ao reiniciar a API |
+| **Alocação ativa** | `telemetries` (DB) | Intervalo do agente (fast/eco/custom) | Até gerar resumo |
+| **Após resumo** | `allocation_metrics.chart_series` | Buckets adaptativos (1–2 min em sessões curtas; múltiplos de **5 min** em sessões longas; até ~100 pontos) | Até prune da alocação (CASCADE) |
+| **Máquina ociosa (gráfico 24 h)** | `idleHistory.chartSeries` via GET `/machines/:id/telemetry` | **15 min/ponto** fixo (~96 pts / 24 h), TWA sobre buffer 1 min + 10 min | Mesmo buffer ocioso |
+
+- Intervalo de captura **< 60 s** (ocioso): amostras agregadas em buckets de 1 min (TWA).
+- Intervalo **≥ 60 s** (ocioso): pontos guardados como capturados.
+- **Gráfico de resumo:** `resolveChartBucketMs(duração)` garante ≤ **100 pontos** (sem zoom no front); sessões curtas usam grade de 1 min; sessões longas usam múltiplos de 5 min (ex.: 24 h ≈ 15 min/ponto, ~96 pts).
+- Buckets sem amostras são **omitidos** (evita pontos 0% espúrios, ex.: intervalo 300 s).
+- Intervalo máximo de captura (custom/presets): **300 s (5 min)** — grade grossa do gráfico usa múltiplos desse valor.
+- `POST /allocations/:id/summary` gera métricas TWA + `chartSeries` e **remove** telemetrias brutas.
 
 ## Observações
 
@@ -948,7 +964,7 @@ Regenera o token de autenticação da máquina (rotação de segurança).
 
 ##### `GET /api/v1/machines/:id/telemetry`
 
-Histórico de telemetria da máquina.
+Histórico de telemetria da máquina (alocações paginadas) + buffer ocioso 24 h + snapshot realtime.
 
 **Permissão:** Admin
 
@@ -964,28 +980,28 @@ Histórico de telemetria da máquina.
 
 ```json
 {
-  "meta": { "total": 500, "perPage": 100, "currentPage": 1, "lastPage": 5 },
-  "data": [
-    {
-      "id": 1,
-      "machineId": 1,
-      "cpuUsage": 850,
-      "cpuTemp": 720,
-      "gpuUsage": 620,
-      "gpuTemp": 680,
-      "ramTotalGb": 2560,
-      "ramUsedGb": 1400,
-      "vramTotalGb": 480,
-      "vramUsedGb": 120,
-      "downloadMbps": 50,
-      "uploadMbps": 10,
-      "timestamp": "2026-01-28T12:00:00.000Z"
+  "realtime": { "cpuUsage": 12.5, "timestamp": "2026-06-05T12:00:00.000Z" },
+  "idleHistory": {
+    "points": [
+      { "timestamp": "2026-06-05T11:00:00.000Z", "cpuUsage": 8.2, "gpuUsage": null }
+    ],
+    "meta": {
+      "retentionHours": 24,
+      "recentResolutionMinutes": 1,
+      "olderResolutionMinutes": 10,
+      "pointCount": 42
     }
-  ]
+  },
+  "history": {
+    "meta": { "total": 0, "perPage": 100, "currentPage": 1 },
+    "data": []
+  }
 }
 ```
 
-> 📊 **Nota:** `cpuUsage`/`gpuUsage` e temperaturas: escala ×10 (850 = 85,0%). RAM/VRAM no histórico: wire GB×10 no banco; o endpoint pode serializar em GB decimal conforme o controller.
+> `idleHistory` só acumula com máquina **sem alocação ativa** no momento do POST do agente. Valores normalizados (÷10 para uso/temp). Após restart da API o buffer ocioso fica vazio.
+
+> `history.data`: telemetrias brutas de alocações ainda não resumidas (somente sessões com capturas pendentes de resumo).
 
 ---
 
@@ -1218,21 +1234,25 @@ Gerar resumo/métricas de uma sessão finalizada.
 {
   "id": 1,
   "allocationId": 1,
-  "avgCpuUsage": 450,
-  "maxCpuUsage": 850,
-  "avgGpuUsage": 200,
-  "maxGpuUsage": 600,
-  "avgRamUsage": 550,
-  "maxRamUsage": 750,
-  "avgCpuTemp": 650,
-  "maxCpuTemp": 780,
-  "avgGpuTemp": 580,
-  "maxGpuTemp": 700,
-  "totalDataPoints": 720,
+  "avgCpuUsage": 45.0,
+  "maxCpuUsage": 85.0,
+  "avgGpuUsage": 20.0,
+  "maxGpuUsage": 60.0,
+  "avgRamUsedGb": 14.0,
+  "maxRamUsedGb": 22.0,
   "sessionDurationMinutes": 240,
+  "chartSeries": [
+    {
+      "timestamp": "2026-01-28T10:00:00.000Z",
+      "cpuUsage": 42.1,
+      "gpuUsage": null
+    }
+  ],
   "createdAt": "2026-01-28T12:00:00.000Z"
 }
 ```
+
+> Telemetrias brutas da alocação são **removidas** após resumo bem-sucedido; use `chartSeries` para gráfico histórico da sessão.
 
 **Erros:**
 

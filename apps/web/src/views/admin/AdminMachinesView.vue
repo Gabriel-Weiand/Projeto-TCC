@@ -59,7 +59,11 @@ function goToView(m: Machine) {
 
 function goToEdit(m: Machine, event?: Event) {
   event?.stopPropagation();
-  router.push({ name: "admin-machine-edit", params: { id: m.id } });
+  router.push({
+    name: "admin-machine-edit",
+    params: { id: m.id },
+    query: { from: "admin-machines" },
+  });
 }
 
 async function handleDelete(m: Machine, event: Event) {

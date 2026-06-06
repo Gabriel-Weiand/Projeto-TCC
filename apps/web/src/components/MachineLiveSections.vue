@@ -1,20 +1,30 @@
 <script setup lang="ts">
+import { ref } from "vue";
 import type { Machine, RealtimeTelemetry } from "@/types";
 import {
   diskPartitionKey,
   diskUsedPct as diskUsedPctUtil,
   sortDisksBySize,
 } from "@/utils/machineDisks";
+import CollapsibleSection from "@/components/CollapsibleSection.vue";
+import MachineIdleHistoryChart from "@/components/MachineIdleHistoryChart.vue";
 
 withDefaults(
   defineProps<{
     machine: Machine;
+    machineId: number;
     liveData: RealtimeTelemetry | null;
-    /** Bloco CPU/GPU/RAM/rede em tempo real (somente admin na página da máquina). */
+    /** Bloco CPU/GPU/RAM/rede em tempo real (somente admin). */
     showTelemetry?: boolean;
+    /** Gráfico 24 h (somente admin). */
+    showCharts?: boolean;
   }>(),
-  { showTelemetry: true },
+  { showTelemetry: true, showCharts: false },
 );
+
+const telemetryCollapsed = ref(false);
+const chartsCollapsed = ref(false);
+const disksCollapsed = ref(false);
 
 function calcUsagePct(
   used: number | null | undefined,
@@ -80,225 +90,242 @@ function diskUsedPct(total: number | null, free: number | null): number {
 </script>
 
 <template>
-  <template v-if="showTelemetry">
-    <h2 class="section-title">Telemetria em Tempo Real</h2>
-
-    <div v-if="liveData" class="telemetry-grid">
-    <div class="tele-card">
-      <span class="tele-label">CPU</span>
-      <div class="tele-value" :style="{ color: usageColor(liveData.cpuUsage) }">
-        {{ fmtPct(liveData.cpuUsage) }}%
-      </div>
-      <div class="progress-bar">
-        <div
-          class="progress-fill"
-          :style="{
-            width: (liveData.cpuUsage ?? 0) + '%',
-            background: usageColor(liveData.cpuUsage),
-          }"
-        ></div>
-      </div>
-      <div class="tele-sub-row">
-        <span class="tele-sub" :style="{ color: tempColor(liveData.cpuTemp) }">
-          {{ fmtTemp(liveData.cpuTemp) }} °C
-        </span>
-        <span v-if="liveData.cpuFreqMhz" class="tele-sub tele-muted">
-          {{ liveData.cpuFreqMhz }} MHz
-        </span>
-      </div>
-    </div>
-
-    <div class="tele-card">
-      <div class="tele-label-row">
-        <span class="tele-label">GPU</span>
-        <span
-          v-if="liveData.vramTotalGb != null && liveData.vramTotalGb > 0"
-          class="tele-side-meta"
-        >
-          {{ fmtRamGb(liveData.vramUsedGb) }} / {{ fmtRamGb(liveData.vramTotalGb) }}
-        </span>
-      </div>
-      <div class="tele-value" :style="{ color: usageColor(liveData.gpuUsage) }">
-        {{ fmtPct(liveData.gpuUsage) }}%
-      </div>
-      <div class="progress-bar">
-        <div
-          class="progress-fill"
-          :style="{
-            width: (liveData.gpuUsage ?? 0) + '%',
-            background: usageColor(liveData.gpuUsage),
-          }"
-        ></div>
-      </div>
-      <div class="tele-sub-row">
-        <span class="tele-sub" :style="{ color: tempColor(liveData.gpuTemp) }">
-          {{ fmtTemp(liveData.gpuTemp) }} °C
-        </span>
-        <span v-if="liveData.gpuPowerWatts != null" class="tele-sub tele-muted">
-          {{ liveData.gpuPowerWatts }} W
-        </span>
-      </div>
-    </div>
-
-    <div v-if="liveData.ramTotalGb != null" class="tele-card">
-      <span class="tele-label">RAM</span>
-      <div
-        class="tele-value"
-        :style="{ color: calcUsageColor(liveData.ramUsedGb, liveData.ramTotalGb) }"
-      >
-        {{ calcUsagePct(liveData.ramUsedGb, liveData.ramTotalGb) }}%
-      </div>
-      <div class="progress-bar">
-        <div
-          class="progress-fill"
-          :style="{
-            width: calcUsagePct(liveData.ramUsedGb, liveData.ramTotalGb) + '%',
-            background: calcUsageColor(liveData.ramUsedGb, liveData.ramTotalGb),
-          }"
-        ></div>
-      </div>
-      <span class="tele-sub">
-        {{ fmtRamGb(liveData.ramUsedGb) }} / {{ fmtRamGb(liveData.ramTotalGb) }}
-      </span>
-    </div>
-
-    <div v-if="liveData.swapTotalGb != null" class="tele-card">
-      <span class="tele-label">Swap</span>
-      <div
-        class="tele-value"
-        :style="{ color: calcUsageColor(liveData.swapUsedGb, liveData.swapTotalGb) }"
-      >
-        {{ calcUsagePct(liveData.swapUsedGb, liveData.swapTotalGb) }}%
-      </div>
-      <div class="progress-bar">
-        <div
-          class="progress-fill"
-          :style="{
-            width: calcUsagePct(liveData.swapUsedGb, liveData.swapTotalGb) + '%',
-            background: calcUsageColor(liveData.swapUsedGb, liveData.swapTotalGb),
-          }"
-        ></div>
-      </div>
-      <span class="tele-sub">
-        {{ fmtRamGb(liveData.swapUsedGb) }} / {{ fmtRamGb(liveData.swapTotalGb) }}
-      </span>
-    </div>
-
-    <div class="tele-card">
-      <span class="tele-label">Disco (I/O)</span>
-      <div class="tele-io-values">
-        <span
-          ><span class="io-down">↓</span> {{ fmtMbps(liveData.diskReadMbps) }}
-          <small>Mbps</small></span
-        >
-        <span
-          ><span class="io-up">↑</span> {{ fmtMbps(liveData.diskWriteMbps) }}
-          <small>Mbps</small></span
-        >
-      </div>
-    </div>
-
-    <div class="tele-card">
-      <span class="tele-label">Rede</span>
-      <div class="tele-io-values">
-        <span
-          ><span class="io-down">↓</span> {{ fmtMbps(liveData.downloadMbps) }}
-          <small>Mbps</small></span
-        >
-        <span
-          ><span class="io-up">↑</span> {{ fmtMbps(liveData.uploadMbps) }}
-          <small>Mbps</small></span
-        >
-      </div>
-    </div>
-
-    <div v-if="liveData.moboTemperature != null" class="tele-card">
-      <span class="tele-label">Placa-Mãe</span>
-      <div class="tele-value" :style="{ color: tempColor(liveData.moboTemperature) }">
-        {{ fmtTemp(liveData.moboTemperature) }} °C
-      </div>
-    </div>
-  </div>
-    <div v-else class="empty-state" style="padding: 1.5rem 0">
-      Sem dados de telemetria disponíveis.
-    </div>
-  </template>
-
-  <template v-if="machine.disks && machine.disks.length > 0">
-    <h2 class="section-title section-spaced">Partições de Disco</h2>
-    <div class="disk-table">
-      <div class="disk-header">
-        <span class="disk-col device-col">Dispositivo</span>
-        <span class="disk-col mount-col">Montagem</span>
-        <span class="disk-col fs-col">FS</span>
-        <span class="disk-col free-col">Livre</span>
-        <span class="disk-col size-col">Total</span>
-        <span class="disk-col bar-col">Uso</span>
-      </div>
-      <div
-        v-for="(d, i) in sortDisksBySize(machine.disks)"
-        :key="diskPartitionKey(d, i)"
-        class="disk-row-detail"
-      >
-        <span class="disk-col device-col">
-          <code>{{ d.device }}</code>
-        </span>
-        <span class="disk-col mount-col">{{ d.mountpoint }}</span>
-        <span class="disk-col fs-col">
-          <span class="badge badge-info" style="font-size: 0.65rem">{{
-            d.fstype || "--"
-          }}</span>
-        </span>
-        <span
-          class="disk-col free-col"
-          :class="{
-            'text-success': (d.freeGb ?? 0) > 50,
-            'text-warning': (d.freeGb ?? 0) > 10 && (d.freeGb ?? 0) <= 50,
-            'text-danger': (d.freeGb ?? 0) <= 10 && d.freeGb != null,
-          }"
-        >
-          {{ fmtGb(d.freeGb) }}
-        </span>
-        <span class="disk-col size-col">{{ fmtGb(d.totalGb) }}</span>
-        <span class="disk-col bar-col">
-          <div class="disk-bar-track">
+  <div class="machine-sections">
+    <CollapsibleSection
+      v-if="showTelemetry"
+      v-model:collapsed="telemetryCollapsed"
+      title="Telemetria"
+    >
+      <div v-if="liveData" class="telemetry-grid">
+        <div class="tele-card">
+          <span class="tele-label">CPU</span>
+          <div class="tele-value" :style="{ color: usageColor(liveData.cpuUsage) }">
+            {{ fmtPct(liveData.cpuUsage) }}%
+          </div>
+          <div class="progress-bar">
             <div
-              class="disk-bar-fill"
+              class="progress-fill"
               :style="{
-                width: diskUsedPct(d.totalGb, d.freeGb) + '%',
-                background:
-                  diskUsedPct(d.totalGb, d.freeGb) > 90
-                    ? 'var(--danger)'
-                    : diskUsedPct(d.totalGb, d.freeGb) > 70
-                      ? 'var(--warning)'
-                      : 'var(--success)',
+                width: (liveData.cpuUsage ?? 0) + '%',
+                background: usageColor(liveData.cpuUsage),
               }"
             ></div>
           </div>
-          <span class="disk-pct-label">{{ diskUsedPct(d.totalGb, d.freeGb) }}%</span>
-        </span>
+          <div class="tele-sub-row">
+            <span class="tele-sub" :style="{ color: tempColor(liveData.cpuTemp) }">
+              {{ fmtTemp(liveData.cpuTemp) }} °C
+            </span>
+            <span v-if="liveData.cpuFreqMhz" class="tele-sub tele-muted">
+              {{ liveData.cpuFreqMhz }} MHz
+            </span>
+          </div>
+        </div>
+
+        <div class="tele-card">
+          <div class="tele-label-row">
+            <span class="tele-label">GPU</span>
+            <span
+              v-if="liveData.vramTotalGb != null && liveData.vramTotalGb > 0"
+              class="tele-side-meta"
+            >
+              {{ fmtRamGb(liveData.vramUsedGb) }} / {{ fmtRamGb(liveData.vramTotalGb) }}
+            </span>
+          </div>
+          <div class="tele-value" :style="{ color: usageColor(liveData.gpuUsage) }">
+            {{ fmtPct(liveData.gpuUsage) }}%
+          </div>
+          <div class="progress-bar">
+            <div
+              class="progress-fill"
+              :style="{
+                width: (liveData.gpuUsage ?? 0) + '%',
+                background: usageColor(liveData.gpuUsage),
+              }"
+            ></div>
+          </div>
+          <div class="tele-sub-row">
+            <span class="tele-sub" :style="{ color: tempColor(liveData.gpuTemp) }">
+              {{ fmtTemp(liveData.gpuTemp) }} °C
+            </span>
+            <span v-if="liveData.gpuPowerWatts != null" class="tele-sub tele-muted">
+              {{ liveData.gpuPowerWatts }} W
+            </span>
+          </div>
+        </div>
+
+        <div v-if="liveData.ramTotalGb != null" class="tele-card">
+          <span class="tele-label">RAM</span>
+          <div
+            class="tele-value"
+            :style="{ color: calcUsageColor(liveData.ramUsedGb, liveData.ramTotalGb) }"
+          >
+            {{ calcUsagePct(liveData.ramUsedGb, liveData.ramTotalGb) }}%
+          </div>
+          <div class="progress-bar">
+            <div
+              class="progress-fill"
+              :style="{
+                width: calcUsagePct(liveData.ramUsedGb, liveData.ramTotalGb) + '%',
+                background: calcUsageColor(liveData.ramUsedGb, liveData.ramTotalGb),
+              }"
+            ></div>
+          </div>
+          <span class="tele-sub">
+            {{ fmtRamGb(liveData.ramUsedGb) }} / {{ fmtRamGb(liveData.ramTotalGb) }}
+          </span>
+        </div>
+
+        <div v-if="liveData.swapTotalGb != null" class="tele-card">
+          <span class="tele-label">Swap</span>
+          <div
+            class="tele-value"
+            :style="{ color: calcUsageColor(liveData.swapUsedGb, liveData.swapTotalGb) }"
+          >
+            {{ calcUsagePct(liveData.swapUsedGb, liveData.swapTotalGb) }}%
+          </div>
+          <div class="progress-bar">
+            <div
+              class="progress-fill"
+              :style="{
+                width: calcUsagePct(liveData.swapUsedGb, liveData.swapTotalGb) + '%',
+                background: calcUsageColor(liveData.swapUsedGb, liveData.swapTotalGb),
+              }"
+            ></div>
+          </div>
+          <span class="tele-sub">
+            {{ fmtRamGb(liveData.swapUsedGb) }} / {{ fmtRamGb(liveData.swapTotalGb) }}
+          </span>
+        </div>
+
+        <div class="tele-card">
+          <span class="tele-label">Disco (I/O)</span>
+          <div class="tele-io-values">
+            <span
+              ><span class="io-down">↓</span> {{ fmtMbps(liveData.diskReadMbps) }}
+              <small>Mbps</small></span
+            >
+            <span
+              ><span class="io-up">↑</span> {{ fmtMbps(liveData.diskWriteMbps) }}
+              <small>Mbps</small></span
+            >
+          </div>
+        </div>
+
+        <div class="tele-card">
+          <span class="tele-label">Rede</span>
+          <div class="tele-io-values">
+            <span
+              ><span class="io-down">↓</span> {{ fmtMbps(liveData.downloadMbps) }}
+              <small>Mbps</small></span
+            >
+            <span
+              ><span class="io-up">↑</span> {{ fmtMbps(liveData.uploadMbps) }}
+              <small>Mbps</small></span
+            >
+          </div>
+        </div>
+
+        <div v-if="liveData.moboTemperature != null" class="tele-card">
+          <span class="tele-label">Placa-Mãe</span>
+          <div class="tele-value" :style="{ color: tempColor(liveData.moboTemperature) }">
+            {{ fmtTemp(liveData.moboTemperature) }} °C
+          </div>
+        </div>
       </div>
-    </div>
-  </template>
+      <div v-else class="empty-state section-empty">
+        Sem dados de telemetria disponíveis.
+      </div>
+    </CollapsibleSection>
+
+    <CollapsibleSection
+      v-if="showCharts"
+      v-model:collapsed="chartsCollapsed"
+      title="Gráficos"
+    >
+      <MachineIdleHistoryChart
+        :machine-id="machineId"
+        :active="!chartsCollapsed"
+      />
+    </CollapsibleSection>
+
+    <CollapsibleSection
+      v-if="machine.disks && machine.disks.length > 0"
+      v-model:collapsed="disksCollapsed"
+      title="Partições"
+    >
+      <div class="disk-table">
+        <div class="disk-header">
+          <span class="disk-col device-col">Dispositivo</span>
+          <span class="disk-col mount-col">Montagem</span>
+          <span class="disk-col fs-col">FS</span>
+          <span class="disk-col free-col">Livre</span>
+          <span class="disk-col size-col">Total</span>
+          <span class="disk-col bar-col">Uso</span>
+        </div>
+        <div
+          v-for="(d, i) in sortDisksBySize(machine.disks)"
+          :key="diskPartitionKey(d, i)"
+          class="disk-row-detail"
+        >
+          <span class="disk-col device-col">
+            <code>{{ d.device }}</code>
+          </span>
+          <span class="disk-col mount-col">{{ d.mountpoint }}</span>
+          <span class="disk-col fs-col">
+            <span class="badge badge-info" style="font-size: 0.65rem">{{
+              d.fstype || "--"
+            }}</span>
+          </span>
+          <span
+            class="disk-col free-col"
+            :class="{
+              'text-success': (d.freeGb ?? 0) > 50,
+              'text-warning': (d.freeGb ?? 0) > 10 && (d.freeGb ?? 0) <= 50,
+              'text-danger': (d.freeGb ?? 0) <= 10 && d.freeGb != null,
+            }"
+          >
+            {{ fmtGb(d.freeGb) }}
+          </span>
+          <span class="disk-col size-col">{{ fmtGb(d.totalGb) }}</span>
+          <span class="disk-col bar-col">
+            <div class="disk-bar-track">
+              <div
+                class="disk-bar-fill"
+                :style="{
+                  width: diskUsedPct(d.totalGb, d.freeGb) + '%',
+                  background:
+                    diskUsedPct(d.totalGb, d.freeGb) > 90
+                      ? 'var(--danger)'
+                      : diskUsedPct(d.totalGb, d.freeGb) > 70
+                        ? 'var(--warning)'
+                        : 'var(--success)',
+                }"
+              ></div>
+            </div>
+            <span class="disk-pct-label">{{ diskUsedPct(d.totalGb, d.freeGb) }}%</span>
+          </span>
+        </div>
+      </div>
+    </CollapsibleSection>
+  </div>
 </template>
 
 <style scoped>
-.section-title {
-  font-size: 1.1rem;
-  font-weight: 600;
-  color: var(--text-primary);
+.machine-sections {
+  display: flex;
+  flex-direction: column;
+  gap: 1.5rem;
   margin-bottom: 1rem;
 }
 
-.section-spaced {
-  margin-top: 2rem;
+.section-empty {
+  padding: 1.5rem 0;
 }
 
 .telemetry-grid {
   display: grid;
   grid-template-columns: repeat(6, minmax(0, 1fr));
   gap: 0.75rem;
-  margin-bottom: 1rem;
 }
 
 @media (max-width: 1200px) {
@@ -334,12 +361,6 @@ function diskUsedPct(total: number | null, free: number | null): number {
 
 .telemetry-grid .progress-fill {
   transition: width 0.2s ease, background-color 0.2s ease;
-}
-
-.tele-value small {
-  font-size: 0.65em;
-  font-weight: 400;
-  opacity: 0.7;
 }
 
 .progress-fill {
@@ -404,7 +425,6 @@ function diskUsedPct(total: number | null, free: number | null): number {
   border: 1px solid var(--border-subtle);
   border-radius: var(--radius);
   overflow: hidden;
-  margin-bottom: 1rem;
   background: var(--bg-card);
 }
 

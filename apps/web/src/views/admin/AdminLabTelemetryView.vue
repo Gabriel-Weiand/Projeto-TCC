@@ -124,7 +124,8 @@ async function handleSave() {
       <strong>eco</strong> até o primeiro heartbeat.
       <strong>Custom</strong> só vale se o admin configurar na página da máquina.
       <strong>CPU</strong> e <strong>RAM / Swap</strong> são sempre coletadas; intervalo entre
-      <strong>{{ TELEMETRY_PRESET_INTERVAL_MIN }}s</strong> e <strong>600s</strong>; lote até
+      <strong>{{ TELEMETRY_PRESET_INTERVAL_MIN }}s</strong> e
+      <strong>{{ TELEMETRY_INTERVAL_MAX }}s</strong>; lote até
       <strong>{{ TELEMETRY_BATCH_MAX }}</strong> amostras.
     </p>
 

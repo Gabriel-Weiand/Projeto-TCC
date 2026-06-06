@@ -12,7 +12,7 @@ const telemetrySetSchema = vine.object({
 })
 
 const presetProfileSchema = vine.object({
-  intervalSeconds: vine.number().min(10).max(600),
+  intervalSeconds: vine.number().min(10).max(300),
   batchSize: vine.number().min(1).max(15),
   telemetrySet: telemetrySetSchema,
 })

@@ -5,6 +5,68 @@ import logger from '@adonisjs/core/services/logger'
 import { DateTime } from 'luxon'
 import { notifyAllocationAutoFinished } from '#services/notification_service'
 import { sftpEndsAt } from '#services/allocation_access'
+import {
+  downsampleToBuckets,
+  parseTimestampMs,
+  resolveChartBucketMs,
+  chartBucketMinutes,
+  type ChartSeriesPoint,
+  type TelemetrySample,
+} from '#services/telemetry_downsample'
+
+function telemetryToSample(row: Telemetry): TelemetrySample {
+  return {
+    timestamp: row.timestamp,
+    cpuUsage: row.cpuUsage,
+    cpuTemp: row.cpuTemp,
+    cpuFreqMhz: row.cpuFreqMhz ?? undefined,
+    gpuUsage: row.gpuUsage,
+    gpuTemp: row.gpuTemp,
+    gpuPowerWatts: row.gpuPowerWatts ?? undefined,
+    vramTotalGb: row.vramTotalGb ?? undefined,
+    vramUsedGb: row.vramUsedGb ?? undefined,
+    ramTotalGb: row.ramTotalGb ?? undefined,
+    ramUsedGb: row.ramUsedGb ?? undefined,
+    swapTotalGb: row.swapTotalGb ?? undefined,
+    swapUsedGb: row.swapUsedGb ?? undefined,
+    diskReadMbps: row.diskReadMbps ?? undefined,
+    diskWriteMbps: row.diskWriteMbps ?? undefined,
+    downloadMbps: row.downloadMbps ?? undefined,
+    uploadMbps: row.uploadMbps ?? undefined,
+    moboTemperature: row.moboTemperature ?? undefined,
+  }
+}
+
+/**
+ * Gera série temporal resumida para gráfico (bucket adaptativo à duração da sessão).
+ */
+export function buildAllocationChartSeries(
+  telemetries: Telemetry[],
+  allocation: Allocation
+): { points: ChartSeriesPoint[]; bucketMs: number } {
+  if (telemetries.length === 0) {
+    return { points: [], bucketMs: resolveChartBucketMs(0) }
+  }
+
+  const rangeStartMs = allocation.startTime.toMillis()
+  const rangeEndMs = allocation.endTime.toMillis()
+  const bucketMs = resolveChartBucketMs(rangeEndMs - rangeStartMs)
+
+  const inRange = telemetries.filter((row) => {
+    const ts = parseTimestampMs(row.timestamp)
+    return ts >= rangeStartMs && ts <= rangeEndMs
+  })
+
+  if (inRange.length === 0) {
+    return { points: [], bucketMs }
+  }
+
+  const samples = inRange.map(telemetryToSample)
+  return {
+    points: downsampleToBuckets(samples, bucketMs, rangeStartMs, rangeEndMs),
+    bucketMs,
+  }
+}
 
 /**
  * Calcula métricas agregadas usando Time-Weighted Average (Média Ponderada no Tempo).
@@ -139,11 +201,18 @@ export async function summarizeAllocation(
   if (telemetries.length === 0) return null
 
   const metrics = calculateMetrics(telemetries, allocation)
+  const { points: chartSeries, bucketMs } = buildAllocationChartSeries(telemetries, allocation)
 
-  return AllocationMetric.create({
+  const metric = await AllocationMetric.create({
     allocationId: allocation.id,
     ...metrics,
+    chartSeries: chartSeries as unknown as Record<string, unknown>[],
+    chartBucketMinutes: chartBucketMinutes(bucketMs),
   })
+
+  await Telemetry.query().where('allocationId', allocation.id).delete()
+
+  return metric
 }
 
 /**
@@ -164,6 +233,7 @@ export async function autoFinalizeExpired(): Promise<number> {
       await allocation.save()
       await allocation.load('machine')
       await notifyAllocationAutoFinished(allocation, allocation.machine)
+      await summarizeAllocation(allocation)
       count++
     } catch (error) {
       logger.error(`[AutoFinalize] Failed for allocation ${allocation.id}:`, error)

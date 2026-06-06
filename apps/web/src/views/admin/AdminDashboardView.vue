@@ -15,6 +15,10 @@ const usersStore = useUsersStore();
 
 const loading = ref(true);
 
+/** Um GET /machines traz latestTelemetry de todas (buffer + fallback bucket ocioso). */
+const REFRESH_MS = 60_000;
+const LIVE_WINDOW_MS = 24 * 60 * 60 * 1000;
+
 let refreshInterval: ReturnType<typeof setInterval> | null = null;
 
 onMounted(async () => {
@@ -28,19 +32,18 @@ onMounted(async () => {
     loading.value = false;
   }
 
-  // Auto-refresh: máquinas+telemetria a cada 10s, alocações a cada 30s
   let tick = 0;
   refreshInterval = setInterval(async () => {
     tick++;
     try {
       await machinesStore.fetchMachines();
-      if (tick % 3 === 0) {
+      if (tick % 2 === 0) {
         await allocationsStore.fetchAllocations();
       }
     } catch {
-      // silently ignore refresh errors
+      /* ignore */
     }
-  }, 10_000);
+  }, REFRESH_MS);
 });
 
 onUnmounted(() => {
@@ -52,12 +55,14 @@ onUnmounted(() => {
 
 const totalMachines = computed(() => machinesStore.machines.length);
 const onlineMachines = computed(
-  () => machinesStore.machines.filter((m) => m.status !== "offline" && m.status !== "disabled").length,
+  () =>
+    machinesStore.machines.filter(
+      (m) => m.status !== "offline" && m.status !== "disabled",
+    ).length,
 );
 const totalUsers = computed(() => usersStore.users.length);
 const pendingAllocations = computed(
-  () =>
-    allocationsStore.allocations.filter((a) => a.status === "pending").length,
+  () => allocationsStore.allocations.filter((a) => a.status === "pending").length,
 );
 const scheduledAllocations = computed(
   () =>
@@ -70,6 +75,27 @@ const activeAllocations = computed(
     allocationsStore.allocations.filter(
       (a) => a.status === "approved" && !isNowBeforeUtc(a.startTime),
     ).length,
+);
+
+function isMachineActive(m: Machine): boolean {
+  const now = Date.now();
+  if (m.lastSeenAt) {
+    const seen = new Date(m.lastSeenAt).getTime();
+    if (Number.isFinite(seen) && now - seen <= LIVE_WINDOW_MS) return true;
+  }
+  if (m.latestTelemetry?.timestamp) {
+    const ts = new Date(m.latestTelemetry.timestamp).getTime();
+    if (Number.isFinite(ts) && now - ts <= LIVE_WINDOW_MS) return true;
+  }
+  return false;
+}
+
+const activeMachines = computed(() =>
+  machinesStore.machines.filter((m) => isMachineActive(m)),
+);
+
+const inactiveMachines = computed(() =>
+  machinesStore.machines.filter((m) => !isMachineActive(m)),
 );
 
 function statusColor(m: Machine) {
@@ -106,6 +132,14 @@ function primarySessionLabel(m: Machine): string | null {
   if (typeof first === "string") return first;
   return first.username ?? first.name ?? null;
 }
+
+function goToMachine(m: Machine) {
+  router.push({
+    name: "machine-detail",
+    params: { id: m.id },
+    query: { from: "admin" },
+  });
+}
 </script>
 
 <template>
@@ -117,7 +151,6 @@ function primarySessionLabel(m: Machine): string | null {
     <div v-if="loading" class="empty-state">Carregando...</div>
 
     <template v-else>
-      <!-- Stat cards -->
       <div class="stats-row">
         <div class="stat-card">
           <span class="stat-label">Máquinas</span>
@@ -145,28 +178,29 @@ function primarySessionLabel(m: Machine): string | null {
         </div>
       </div>
 
-      <!-- Machine status overview -->
-      <h2 class="section-title">Visão Geral das Máquinas</h2>
-      <div class="machine-status-grid">
+      <h2 class="section-title">
+        Máquinas ativas
+        <span class="section-count text-muted">{{ activeMachines.length }}</span>
+      </h2>
+      <p class="section-hint text-secondary">
+        Heartbeat ou telemetria nas últimas 24 h — atualização via GET /machines a cada
+        {{ REFRESH_MS / 1000 }} s.
+      </p>
+      <div v-if="activeMachines.length === 0" class="empty-state section-empty">
+        Nenhuma máquina com sinal recente.
+      </div>
+      <div v-else class="machine-status-grid">
         <div
-          v-for="m in machinesStore.machines"
+          v-for="m in activeMachines"
           :key="m.id"
           class="card machine-status-card clickable"
-          @click="
-            router.push({
-              name: 'machine-detail',
-              params: { id: m.id },
-              query: { from: 'admin' },
-            })
-          "
+          @click="goToMachine(m)"
         >
           <div class="ms-top">
             <span class="ms-dot" :style="{ background: statusColor(m) }"></span>
             <span class="ms-name">{{ m.name }}</span>
           </div>
-          <span class="ms-status text-secondary" style="font-size: 0.82rem">{{
-            statusLabel(m.status)
-          }}</span>
+          <span class="ms-status text-secondary">{{ statusLabel(m.status) }}</span>
 
           <template v-if="m.latestTelemetry">
             <div class="ms-telemetry">
@@ -203,13 +237,35 @@ function primarySessionLabel(m: Machine): string | null {
             </div>
           </template>
 
-          <div
-            v-if="primarySessionLabel(m)"
-            class="ms-user text-muted"
-            style="font-size: 0.78rem; margin-top: auto"
-          >
+          <div v-if="primarySessionLabel(m)" class="ms-user text-muted">
             Logado: {{ primarySessionLabel(m) }}
           </div>
+        </div>
+      </div>
+
+      <h2 class="section-title section-spaced">
+        Máquinas inativas
+        <span class="section-count text-muted">{{ inactiveMachines.length }}</span>
+      </h2>
+      <p class="section-hint text-secondary">
+        Sem heartbeat nem telemetria nas últimas 24 h.
+      </p>
+      <div v-if="inactiveMachines.length === 0" class="empty-state section-empty">
+        Todas as máquinas têm sinal recente.
+      </div>
+      <div v-else class="machine-status-grid">
+        <div
+          v-for="m in inactiveMachines"
+          :key="m.id"
+          class="card machine-status-card clickable machine-status-card--inactive"
+          @click="goToMachine(m)"
+        >
+          <div class="ms-top">
+            <span class="ms-dot" :style="{ background: statusColor(m) }"></span>
+            <span class="ms-name">{{ m.name }}</span>
+          </div>
+          <span class="ms-status text-secondary">{{ statusLabel(m.status) }}</span>
+          <span class="ms-offline-hint text-muted">Sem telemetria recente</span>
         </div>
       </div>
     </template>
@@ -236,9 +292,31 @@ function primarySessionLabel(m: Machine): string | null {
 }
 
 .section-title {
+  display: flex;
+  align-items: baseline;
+  gap: 0.5rem;
   font-size: 1.1rem;
   font-weight: 600;
   color: var(--text-primary);
+  margin-bottom: 0.35rem;
+}
+
+.section-spaced {
+  margin-top: 2rem;
+}
+
+.section-count {
+  font-size: 0.85rem;
+  font-weight: 500;
+}
+
+.section-hint {
+  font-size: 0.82rem;
+  margin: 0 0 1rem;
+}
+
+.section-empty {
+  padding: 1.25rem 0;
   margin-bottom: 1rem;
 }
 
@@ -246,6 +324,7 @@ function primarySessionLabel(m: Machine): string | null {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
   gap: 0.75rem;
+  margin-bottom: 0.5rem;
 }
 
 .clickable {
@@ -264,6 +343,11 @@ function primarySessionLabel(m: Machine): string | null {
   flex-direction: column;
   gap: 0.4rem;
   padding: 1rem 1.25rem;
+  min-height: 7.5rem;
+}
+
+.machine-status-card--inactive {
+  opacity: 0.82;
 }
 
 .ms-top {
@@ -303,5 +387,15 @@ function primarySessionLabel(m: Machine): string | null {
 .ms-tele-row span:last-child {
   width: 36px;
   text-align: right;
+}
+
+.ms-user {
+  font-size: 0.78rem;
+  margin-top: auto;
+}
+
+.ms-offline-hint {
+  font-size: 0.78rem;
+  margin-top: auto;
 }
 </style>

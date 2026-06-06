@@ -658,46 +658,58 @@ def apply_provisioning(provisioning_data: list) -> None:
             )
             user_info = pwd.getpwnam(uname)
 
-        home = f"/home/{uname}"
-        if os.path.isdir(home):
+        try:
+            home = user_info.pw_dir
+            if not home:
+                raise OSError(f"home ausente para {uname}")
+
+            if not os.path.isdir(home):
+                print(f"[OS] Recriando home ausente: {home}")
+                os.makedirs(home, mode=0o700, exist_ok=True)
             subprocess.run(["chmod", "700", home], check=False)
+            shutil.chown(home, user=uname, group=uname)
 
-        ssh_dir = os.path.join(home, ".ssh")
-        auth_keys = os.path.join(ssh_dir, "authorized_keys")
-        os.makedirs(ssh_dir, mode=0o700, exist_ok=True)
+            ssh_dir = os.path.join(home, ".ssh")
+            auth_keys = os.path.join(ssh_dir, "authorized_keys")
+            os.makedirs(ssh_dir, mode=0o700, exist_ok=True)
 
-        current_key = ""
-        if os.path.exists(auth_keys):
-            try:
-                with open(auth_keys) as f:
-                    current_key = f.read().strip()
-            except OSError:
-                pass
+            current_key = ""
+            if os.path.isfile(auth_keys):
+                try:
+                    with open(auth_keys) as f:
+                        current_key = f.read().strip()
+                except OSError:
+                    pass
 
-        if revoke_key:
-            if current_key:
+            if revoke_key:
                 with open(auth_keys, "w") as f:
                     f.write("")
-                print(f"[ACCESS] Chave SSH revogada para {uname}")
-        elif pubkey_to_write is not None and current_key != pubkey_to_write:
-            with open(auth_keys, "w") as f:
-                f.write(pubkey_to_write + "\n")
+                if current_key:
+                    print(f"[ACCESS] Chave SSH revogada para {uname}")
+            elif pubkey_to_write is not None and current_key != pubkey_to_write:
+                with open(auth_keys, "w") as f:
+                    f.write(pubkey_to_write + ("\n" if pubkey_to_write else ""))
+                print(f"[OS] Chave SSH atualizada para {uname}")
 
-        os.chmod(auth_keys, 0o600)
-        shutil.chown(ssh_dir, user=uname, group=uname)
-        shutil.chown(auth_keys, user=uname, group=uname)
+            if os.path.isfile(auth_keys):
+                os.chmod(auth_keys, 0o600)
+            shutil.chown(ssh_dir, user=uname, group=uname)
+            if os.path.isfile(auth_keys):
+                shutil.chown(auth_keys, user=uname, group=uname)
 
-        prev_state = LAST_ACCESS_STATE.get(uname)
-        if prev_state == "full_shell" and state == "sftp_only":
-            print(f"[ACCESS] {uname}: full_shell → sftp_only (encerrando processos)")
-            subprocess.run(["pkill", "-u", uname], stderr=subprocess.DEVNULL)
+            prev_state = LAST_ACCESS_STATE.get(uname)
+            if prev_state == "full_shell" and state == "sftp_only":
+                print(f"[ACCESS] {uname}: full_shell → sftp_only (encerrando processos)")
+                subprocess.run(["pkill", "-u", uname], stderr=subprocess.DEVNULL)
 
-        target_shell = SFTP_SHELL if state == "sftp_only" else "/bin/bash"
-        if user_info.pw_shell != target_shell:
-            subprocess.run(["usermod", "-s", target_shell, uname], check=True)
-            print(f"[OS] Shell de {uname} alterado para {target_shell}")
+            target_shell = SFTP_SHELL if state == "sftp_only" else "/bin/bash"
+            if user_info.pw_shell != target_shell:
+                subprocess.run(["usermod", "-s", target_shell, uname], check=True)
+                print(f"[OS] Shell de {uname} alterado para {target_shell}")
 
-        LAST_ACCESS_STATE[uname] = state
+            LAST_ACCESS_STATE[uname] = state
+        except Exception as user_err:
+            print(f"[OS] Erro ao provisionar {uname}: {user_err}")
 
 def _host_fingerprint() -> str | None:
     """Extrai o Fingerprint SHA256 da chave ed25519 da máquina (para o front validar)."""

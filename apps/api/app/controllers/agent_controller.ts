@@ -3,6 +3,8 @@ import { DateTime } from 'luxon'
 import { telemetryReportValidator } from '#validators/telemetry'
 import { heartbeatValidator, syncSpecsValidator } from '#validators/agent'
 import { telemetryBuffer } from '#services/telemetry_buffer'
+import { idleTelemetryBuffer } from '#services/telemetry_idle_buffer'
+import { resolveMachineIntervalSeconds } from '#services/telemetry_presets'
 import { machineCache } from '#services/machine_cache'
 import HeartbeatService from '#services/heartbeat_service'
 import Allocation from '#models/allocation'
@@ -80,6 +82,8 @@ export default class AgentController {
         telemetryBuffer.add(machine.id, item)
       } else {
         telemetryBuffer.updateRealtime(machine.id, item)
+        const intervalSeconds = resolveMachineIntervalSeconds(machine, false)
+        idleTelemetryBuffer.ingest(machine.id, item, intervalSeconds)
       }
     }
 

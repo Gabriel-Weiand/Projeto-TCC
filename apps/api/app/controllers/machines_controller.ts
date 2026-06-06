@@ -15,6 +15,8 @@ import {
   updateMachineUserAccessType,
 } from '#services/machine_provisioned_users'
 import { telemetryBuffer } from '#services/telemetry_buffer'
+import { idleTelemetryBuffer } from '#services/telemetry_idle_buffer'
+import { normalizeChartSeriesPoint } from '#services/telemetry_api_format'
 import { machineCache } from '#services/machine_cache'
 import { DateTime } from 'luxon'
 import { cancelAllocationsForMaintenance } from '#services/notification_service'
@@ -86,6 +88,12 @@ export default class MachinesController {
     }))
   }
 
+  private resolveParkTelemetry(machineId: number) {
+    const live = telemetryBuffer.getLatest(machineId)
+    if (live) return live
+    return idleTelemetryBuffer.getLatestEntry(machineId)?.metrics ?? null
+  }
+
   private serializeMachineForApi(
     machine: Machine,
     rawTelemetry: unknown,
@@ -128,7 +136,7 @@ export default class MachinesController {
     const machinesWithTelemetry = machines.map((machine) =>
       this.serializeMachineForApi(
         machine,
-        telemetryBuffer.getLatest(machine.id),
+        this.resolveParkTelemetry(machine.id),
         occupiedMachineIds
       )
     )
@@ -173,7 +181,7 @@ export default class MachinesController {
     return response.ok(
       this.serializeMachineForApi(
         machine,
-        telemetryBuffer.getLatest(machine.id),
+        this.resolveParkTelemetry(machine.id),
         occupiedMachineIds
       )
     )
@@ -213,7 +221,7 @@ export default class MachinesController {
     const occupiedMachineIds = await buildOccupiedMachineIds()
     const presented = this.serializeMachineForApi(
       machine,
-      telemetryBuffer.getLatest(machine.id),
+      this.resolveParkTelemetry(machine.id),
       occupiedMachineIds
     ) as Record<string, unknown>
 
@@ -253,8 +261,20 @@ export default class MachinesController {
     const allocationIds = allocations.map((a) => a.id)
 
     if (allocationIds.length === 0) {
+      const idleEntries = idleTelemetryBuffer.getHistory(machine.id)
+      const idleChartRaw = idleTelemetryBuffer.getChartSeries(machine.id)
+      const idleMeta = idleTelemetryBuffer.getMeta(machine.id)
       return response.ok({
         realtime: this.normalizeTelemetry(telemetryBuffer.getLatest(machine.id)),
+        idleHistory: {
+          points: idleEntries.map((e) =>
+            normalizeChartSeriesPoint(e.metrics as unknown as Record<string, unknown>)
+          ),
+          chartSeries: idleChartRaw.map((p) =>
+            normalizeChartSeriesPoint(p as unknown as Record<string, unknown>)
+          ),
+          meta: idleMeta,
+        },
         history: { data: [], meta: { total: 0, perPage: limit, currentPage: page } },
       })
     }
@@ -267,9 +287,21 @@ export default class MachinesController {
       .paginate(page, limit)
 
     const latestRealtime = telemetryBuffer.getLatest(machine.id)
+    const idleEntries = idleTelemetryBuffer.getHistory(machine.id)
+    const idleChartRaw = idleTelemetryBuffer.getChartSeries(machine.id)
+    const idleMeta = idleTelemetryBuffer.getMeta(machine.id)
 
     return response.ok({
       realtime: this.normalizeTelemetry(latestRealtime),
+      idleHistory: {
+        points: idleEntries.map((e) =>
+          normalizeChartSeriesPoint(e.metrics as unknown as Record<string, unknown>)
+        ),
+        chartSeries: idleChartRaw.map((p) =>
+          normalizeChartSeriesPoint(p as unknown as Record<string, unknown>)
+        ),
+        meta: idleMeta,
+      },
       history: telemetries,
     })
   }
