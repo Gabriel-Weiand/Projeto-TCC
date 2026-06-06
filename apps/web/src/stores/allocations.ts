@@ -26,6 +26,7 @@ export const useAllocationsStore = defineStore("allocations", () => {
     startTime: string;
     endTime: string;
     reason?: string;
+    homeMountpoint?: string;
     userId?: number;
   }) {
     const { data } = await api.post<Allocation>("/api/v1/allocations", payload);

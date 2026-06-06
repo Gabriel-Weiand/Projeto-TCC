@@ -207,7 +207,11 @@ test.group('Agent API', (group) => {
     customHb.assertStatus(200)
     customHb.assertBodyContains({
       agentConfig: {
-        telemetry: { telemetryPreset: 'custom', telemetryMode: 'custom' },
+        telemetry: {
+          telemetryPreset: 'custom',
+          telemetryMode: 'custom',
+          intervalSeconds: 12,
+        },
       },
     })
   })
@@ -573,7 +577,33 @@ test.group('Agent API', (group) => {
   })
 
   // =========================================================================
-  // 6. SEGURANÇA
+  // 6. DESCOMISSIONAMENTO (exclusão admin)
+  // =========================================================================
+
+  test('heartbeat com pendingRemoval retorna decommission e provisioning vazio', async ({
+    client,
+    assert,
+  }) => {
+    const machine = await Machine.create({
+      name: 'PC-DECOM',
+      description: 'Lab',
+      token: 't-decom',
+      status: 'offline',
+      customAgentConfig: { pendingRemoval: true },
+    })
+
+    const response = await client
+      .post('/api/v1/agent/heartbeat')
+      .header('Authorization', `Bearer ${machine.token}`)
+      .json({ provisionedOsUsers: ['lab.orphan'] })
+
+    response.assertStatus(200)
+    assert.isTrue(response.body().decommission)
+    assert.deepEqual(response.body().provisioning, [])
+  })
+
+  // =========================================================================
+  // 7. SEGURANÇA
   // =========================================================================
 
   test('deve rejeitar requisição sem token', async ({ client }) => {

@@ -1,384 +1,643 @@
 # Módulo Agente (Lab Agent Daemon)
 
-## Papel e Arquitetura
+Documentação de referência do daemon `agentd.py` — comunicação com a API AdonisJS, provisionamento POSIX/SSH, telemetria de hardware e auditoria de segurança.
 
-O agente roda localmente nas máquinas físicas do laboratório operando num modelo de **State Enforcement (Pull Model)**. Ele não aguarda conexões; ele ativamente consulta a API e aplica o estado desejado no Sistema Operacional Linux.
-
-Ele é responsável por:
-
-1. **Provisionamento Dinâmico:** Criar usuários no Linux (`useradd`), injetar chaves públicas (`authorized_keys`) e aplicar regras de exclusão (`userdel`).
-2. **Controle de Acesso:** Alternar o shell do usuário entre Bash (`/bin/bash` - liberado) e SFTP (`/usr/lib/sftp-server` - bloqueado) com base no horário da alocação.
-3. **Gerenciamento de Processos:** Executar `pkill -u <user>` no exato fim de uma sessão para limpar processos órfãos.
-4. **Telemetria de Hardware:** Monitorar CPU, RAM, Swap, Discos, VRAM, Temperatura e Potência da GPU.
-5. **Auditoria de Segurança:** Fazer _parsing_ do log de SSH (`/var/log/auth.log`) para detectar invasões e listar processos pesados rodando.
-
-## Variantes
-
-Atualmente, o projeto foca no **Agente Servidor (Linux)**: opera headless (sem interface gráfica), manipulando usuários POSIX e conexões SSH/SFTP.
+**Código-fonte:** `apps/agent/agentd.py`  
+**Rotas consumidas:** `apps/api/start/routes.ts` → prefixo `/api/v1/agent`  
+**Lógica de resposta (heartbeat):** `apps/api/app/services/heartbeat_service.ts`  
+**Multi-disco / home na reserva:** `apps/api/app/services/disk_partitions.ts`, `allocation_home_mount.ts`
 
 ---
 
-## Ciclos de Comunicação (Polling)
+## Sumário
 
-O agente utiliza exclusivamente três rotas da API central. Todas exigem o header `Authorization: Bearer <TOKEN>` da máquina.
-
-### 1. `PUT /api/v1/agent/sync-specs` (Setup de Boot)
-
-Envia, entre outros, `totalVramGb` e `totalRamGb` como **inteiro GB×10** (ex.: 12,0 GB VRAM → `120`; 15,5 GB RAM → `155`), alinhado à telemetria. VRAM/modelo vêm do backend do vendor (`_collect_gpu_specs`: NVML na NVIDIA, sysfs AMD, lspci como fallback). iGPU sem VRAM dedicada omite `totalVramGb`.
-
-Executada **apenas uma vez** quando o `agentd.py` inicia.
-
-- **O que faz:** Lê informações físicas e fixas — Modelo da CPU, Modelo da GPU, Total de RAM e Partições de Disco.
-- **Por que existe:** Garante que a base de dados do laboratório reflete a realidade do hardware atual, mesmo que a máquina tenha recebido um upgrade de memória.
-
-### 2. `POST /api/v1/agent/heartbeat` (Comando e Controle)
-
-Executada em ciclo contínuo a cada **30 segundos** (intervalo fixo, não alterável).
-
-- **O que envia (Agente → API):**
-  - `connectedUsers`: Contas `lab.*` logadas ativamente via TTY ou SSH (demais usuários do SO são ignorados).
-  - `provisionedOsUsers`: Lista de contas `lab.*` que existem no `passwd` do Linux (base para o Drift Detection).
-  - `sshAttempts`: Array de até **50** logs extraídos do `/var/log/auth.log` (invasões, falhas, etc). Enviado apenas quando acumula 20 tentativas ou bate meio-dia (12:00 UTC).
-
-- **O que recebe (API → Agente):**
-  - `agentConfig.telemetry`: Cadência e conteúdo ditados pelo admin na API (`telemetry_preset`: `fast` | `eco` | `custom`; em `custom`, o JSON `custom_agent_config` define `intervalSeconds`, `batchSize`, `telemetrySet`, etc.).
-  - `provisioning`: Array de usuários que precisam existir na máquina, com suas chaves SSH e `accessState` (`full_shell` ou `sftp_only`).
-
-### 3. `POST /api/v1/agent/telemetry` (Fluxo de Dados Dinâmico)
-
-Executada de forma variável, com cadência ditada pelo `agentConfig` recebido no Heartbeat.
-
-- **O que faz:** Entrega métricas brutas (Uso, Temperatura, Potência) de CPU e GPU, além de processos em execução com alta carga (threshold: **>5% CPU** ou **>500 MB RAM**).
+1. [Papel e arquitetura](#1-papel-e-arquitetura)
+2. [Configuração (.env)](#2-configuração-env)
+3. [Autenticação](#3-autenticação)
+4. [Mapa de rotas da API](#4-mapa-de-rotas-da-api)
+5. [GET /api/config — bootstrap de telemetria](#5-get-apiconfig--bootstrap-de-telemetria)
+6. [PUT /api/v1/agent/sync-specs](#6-put-apiv1agentsync-specs)
+7. [POST /api/v1/agent/heartbeat](#7-post-apiv1agentheartbeat)
+8. [POST /api/v1/agent/telemetry](#8-post-apiv1agenttelemetry)
+9. [Multi-disco, home e conflitos](#9-multi-disco-home-e-conflitos)
+10. [Descomissionamento (exclusão admin)](#10-descomissionamento-exclusão-admin)
+11. [Ciclo de vida de alocação](#11-ciclo-de-vida-de-alocação)
+12. [Provisionamento no Linux](#12-provisionamento-no-linux)
+13. [Telemetria — campos e justificativas](#13-telemetria--campos-e-justificativas)
+14. [Threads e loop principal](#14-threads-e-loop-principal)
+15. [GPU — backends e detecção](#15-gpu--backends-e-detecção)
+16. [Auditoria SSH](#16-auditoria-ssh)
+17. [Resiliência e falhas](#17-resiliência-e-falhas)
+18. [Hardening no boot](#18-hardening-no-boot)
 
 ---
 
-## Fluxo de Comando e Controle (Heartbeat)
+## 1. Papel e arquitetura
 
-O Heartbeat é o cérebro do laboratório. O Python diz à API "o que está acontecendo", a API calcula o _Drift_ (desvio da realidade) e devolve "o que deve ser feito".
+O agente opera num modelo **State Enforcement (Pull Model)**:
 
-### Payload de Request (Agente → API)
+- Não aceita conexões externas.
+- A cada intervalo fixo (~30 s) consulta a API e **reconcilia** o estado desejado com o Linux.
+- Não há fila local de ordens nem ACL persistida em disco — apenas cache em memória (`LAST_ACCESS_STATE`, `AGENT_CONFIG`, `SSH_AUDIT_BUFFER`).
+
+### Responsabilidades
+
+| Área | O que faz |
+|------|-----------|
+| **Provisionamento** | `useradd`, `usermod`, chaves `authorized_keys`, `userdel`, limpeza multi-partição |
+| **Controle de acesso** | Bash (`/bin/bash`) vs SFTP (`sftp-server`) conforme fase da alocação |
+| **Processos** | `pkill -u` na transição `full_shell` → `sftp_only` e na remoção de conta |
+| **Telemetria** | CPU, GPU, RAM, swap, discos, rede, temperaturas, usuários ativos, processos pesados |
+| **Auditoria** | Parse de `/var/log/auth.log` → tentativas SSH para a API |
+| **Inventário** | `sync-specs` atualiza CPU, GPU, RAM, discos, IP, fingerprint do host |
+
+### Variante suportada
+
+**Agente servidor Linux** — headless, usuários POSIX prefixo `lab.`, SSH/SFTP.
+
+---
+
+## 2. Configuração (.env)
+
+| Variável | Obrigatória | Descrição |
+|----------|-------------|-----------|
+| `MACHINE_TOKEN` | **Sim** | Bearer token da máquina (128 hex). Gerado no seed ou admin → regenerar token. |
+| `SERVER_URL` | Não | Base da API (padrão `http://localhost:3333`). Sem barra final. |
+| `MACHINE_NAME` | Não | Nome exibido no log; padrão = hostname. |
+
+O agente monta `API_BASE = {SERVER_URL}/api/v1/agent`.
+
+**Intervalos fixos no código (não configuráveis via .env):**
+
+| Constante | Valor | Motivo |
+|-----------|-------|--------|
+| `HEARTBEAT_INTERVAL` | 30 s | Controle de acesso e drift; independente do preset de telemetria |
+| Buffer SSH máximo | 500 entradas | Evita OOM se API ficar offline por semanas |
+| Despacho SSH | ≥20 entradas **ou** 12:00 UTC | Reduz writes no banco sem perder eventos críticos |
+| Lote SSH por heartbeat | máx. 50 (validado na API) | Proteção contra payload gigante |
+
+Telemetria (`intervalSeconds`, `batchSize`, `telemetrySet`) vem da API via heartbeat ou `GET /api/config` no boot.
+
+---
+
+## 3. Autenticação
+
+Todas as rotas `/api/v1/agent/*` exigem:
+
+```http
+Authorization: Bearer <MACHINE_TOKEN>
+Content-Type: application/json
+Accept: application/json
+```
+
+Middleware: `machine_auth_middleware.ts` → `machineCache.getByToken(token)`.
+
+| Resposta | Código API | Comportamento do agente |
+|----------|------------|-------------------------|
+| Token ausente/inválido | 401 `INVALID_TOKEN` | **Não altera o SO** — evita wipe acidental se token rotacionado sem atualizar `.env` |
+| Token válido | 200 | Aplica `provisioning` / `decommission` |
+| Timeout / rede | exceção | Log `[C2] Erro no Heartbeat`; SO permanece no último estado aplicado |
+
+---
+
+## 4. Mapa de rotas da API
+
+| Método | Rota | Quando roda | Controller |
+|--------|------|-------------|------------|
+| GET | `/api/config` | 1× no boot (opcional) | Público — presets de telemetria |
+| PUT | `/api/v1/agent/sync-specs` | 1× no boot | `AgentController.syncSpecs` |
+| POST | `/api/v1/agent/heartbeat` | A cada 30 s | `AgentController.heartbeat` → `HeartbeatService` |
+| POST | `/api/v1/agent/telemetry` | A cada `intervalSeconds` | `AgentController.telemetry` |
+
+Relacionamento com o front/admin:
+
+- Presets e políticas de lab: `LabSettingsController`, `.env` (`LAB_ALLOCATION_*`)
+- Discos e `onlyMainDisk`: `MachinesController` (PUT máquina)
+- `homeMountpoint` na reserva: `AllocationsController` → validado antes de gravar
+- Gatilho de processos on-demand: admin → `POST /machines/:id/request-process-report` → campo `onDemandProcessConfig` no próximo heartbeat
+
+---
+
+## 5. GET /api/config — bootstrap de telemetria
+
+**Função:** `bootstrap_telemetry_from_lab_config()` — executada antes do primeiro heartbeat.
+
+**Por quê:** Se a API estiver online no boot, o agente já inicia com o preset default do lab (ex.: `eco`) em vez do fallback hardcoded local.
+
+**Resposta usada:**
 
 ```json
 {
-  "connectedUsers": ["lab.gabriel_weiand"],
-  "provisionedOsUsers": ["lab.gabriel_weiand", "lab.aluno_dois"],
-  "sshAttempts": [
-    {
-      "sourceIp": "192.168.1.100",
-      "targetUsername": "root",
-      "status": "failed",
-      "authMethod": "password"
+  "telemetry": {
+    "defaultOfflinePreset": "eco",
+    "presets": {
+      "eco": { "intervalSeconds": 60, "batchSize": 15, "telemetrySet": { ... } },
+      "fast": { ... }
     }
-  ]
+  }
 }
 ```
 
-### Payload de Resposta (API → Agente)
+Se falhar (API offline, timeout 5 s), permanece `_ECO_TELEMETRY_OFFLINE` até o primeiro heartbeat 200.
+
+---
+
+## 6. PUT /api/v1/agent/sync-specs
+
+**Quando:** Uma vez após boot (thread principal, antes das workers).
+
+**Objetivo:** Registrar hardware **estável** no banco. Telemetria dinâmica (uso %) não passa por aqui.
+
+### Request (corpo JSON)
+
+| Campo | Tipo | Origem no agente | Justificativa |
+|-------|------|------------------|---------------|
+| `cpuModel` | string | `/proc/cpuinfo` → `model name` | Identificação no painel e relatórios |
+| `gpuModel` | string? | NVML (NVIDIA) ou `lspci -mm` | Exibição; fallback quando driver não expõe nome |
+| `totalRamGb` | int | `psutil.virtual_memory().total` → **GB×10** | Formato wire único (155 = 15,5 GB) |
+| `totalVramGb` | int? | `_GPU.vram()` total → GB×10 | Omitido se iGPU / VRAM dedicada = 0 |
+| `ipAddress` | string? | UDP connect trick / interface local | IP interno da estação |
+| `hostFingerprint` | string? | `ssh-keygen -l -f /etc/ssh/ssh_host_ed25519_key.pub` | Front valida fingerprint na conexão SSH |
+| `disks` | array | `_disk_partitions()` | Inventário de partições; ver abaixo |
+
+#### Item de `disks[]`
+
+| Campo | Descrição |
+|-------|-----------|
+| `device` | `/dev/nvme0n1p1`, etc. |
+| `mountpoint` | `/`, `/data/lab`, … |
+| `fstype` | `ext4`, `xfs`, `btrfs`, … (filtro: filesystems “reais”) |
+| `totalGb` | Capacidade (1 decimal) |
+| `freeGb` | Espaço livre (1 decimal) |
+| `role` | `system` \| `user` — classificação local espelhada em `#services/disk_partitions.ts` |
+
+**API:** `mergeDiskPartitionsFromAgent` preserva flags admin (`mainDisk`, `role`) ao atualizar `totalGb`/`freeGb` do agente.
+
+### Response 200
+
+```json
+{
+  "synced": true,
+  "machine": { "id", "name", "cpuModel", "gpuModel", "totalVramGb", "totalRamGb" }
+}
+```
+
+---
+
+## 7. POST /api/v1/agent/heartbeat
+
+**Intervalo:** 30 s (`HEARTBEAT_INTERVAL`) — **não** segue `intervalSeconds` da telemetria.
+
+**Papel:** Canal de **comando e controle**. A telemetria pesada vai em `/telemetry`.
+
+### 7.1 Request — campos enviados pelo agente
+
+```json
+{
+  "connectedUsers": ["lab.gabriel_santos"],
+  "provisionedOsUsers": ["lab.gabriel_santos", "lab.aluno_dois"],
+  "sshAttempts": [ { ... } ]
+}
+```
+
+| Campo | Tipo | Captura | Justificativa |
+|-------|------|---------|---------------|
+| `connectedUsers` | `string[]` | `psutil.users()` filtrado `lab.*` | API grava `machine.current_sessions`; dashboard “quem está online”; **ignora root e contas locais** |
+| `provisionedOsUsers` | `string[]` | `pwd.getpwall()` filtrado `lab.*` | **Drift detection:** compara SO real vs `machine_users` + alocações; API remove linhas órfãs do inventário |
+| `sshAttempts` | array (0–50) | Buffer de `parse_ssh_line(auth.log)` | Auditoria de segurança; flood detection; **opcional** — só anexado se buffer ≥20 **ou** minuto 0 de 12:00 UTC |
+
+#### Objeto `sshAttempts[]`
+
+| Campo | Valores | Origem no log |
+|-------|---------|---------------|
+| `sourceIp` | IPv4/IPv6 | Regex `from ([\d\.]+)` |
+| `targetUsername` | string | Usuário alvo da tentativa |
+| `status` | `success` \| `failed` \| `invalid_user` | `Accepted` / `Failed` / `Invalid user` |
+| `authMethod` | `publickey`, `password`, null | Grupo capturado em `Accepted (\w+)` |
+| `clientFingerprint` | `SHA256:...` ou null | Só em login por chave bem-sucedida |
+
+**Por que não enviar SSH a cada heartbeat?** Reduz carga no banco; eventos acumulam na thread `ssh_audit_worker` (tail de `/var/log/auth.log`).
+
+**Por que 12:00 UTC?** Garante flush diário mesmo com pouca atividade.
+
+### 7.2 Response — campos recebidos pela API
 
 ```json
 {
   "status": "acknowledged",
+  "decommission": false,
   "agentConfig": {
     "telemetry": {
       "intervalSeconds": 5,
       "batchSize": 10,
-      "telemetryPreset": "complete"
+      "telemetryPreset": "fast",
+      "telemetryMode": "auto",
+      "telemetrySet": { "cpu": true, "gpu": true, ... },
+      "onDemandProcessConfig": { "requestTimestamp": "...", "thresholds": { ... } }
     }
   },
   "provisioning": [
     {
       "systemUsername": "lab.aluno_t5",
-      "sshPublicKey": "ssh-ed25519 AAAAC3...",
-      "accessState": "sftp_only"
-    },
-    {
-      "systemUsername": "lab.gabriel_weiand",
-      "sshPublicKey": "ssh-ed25519 AAAAC3...",
-      "accessState": "full_shell"
+      "sshPublicKey": "ssh-ed25519 AAAA...",
+      "accessState": "sftp_only",
+      "revokeSshKey": false,
+      "homeDirectory": "/data/lab/lab.aluno_t5"
     }
-  ]
+  ],
+  "accessControl": { "shouldBlock": false },
+  "currentAllocation": {
+    "id": 42,
+    "userId": 7,
+    "userName": "Aluno",
+    "endTime": "2026-06-10T18:00:00.000Z",
+    "phase": "active",
+    "graceEndsAt": "...",
+    "sftpEndsAt": "..."
+  }
 }
 ```
 
-- `sftp_only`: preparação T-N, janela SFTP pós-reserva, ou bloqueio sem bash.
-- `full_shell`: sessão ativa ou grace (bash até `graceEndsAt`).
-- `revokeSshKey: true` / `sshPublicKey` vazio: agente trunca `~/.ssh/authorized_keys` (fase `no_key`).
+| Campo | Descrição |
+|-------|-----------|
+| `status` | Sempre `acknowledged` em sucesso |
+| `decommission` | `true` se admin iniciou exclusão da máquina (`customAgentConfig.pendingRemoval`) — agente chama `_purge_all_lab_users()` |
+| `agentConfig.telemetry` | Preset efetivo: **eco** ocioso, **fast** em alocação ativa/grace, **custom** se máquina usa preset custom |
+| `provisioning[]` | Lista **completa** desejada agora (declarativa, não delta) |
+| `accessControl.shouldBlock` | Reservado; sempre `false` (bloqueio é por shell/chave) |
+| `currentAllocation` | Preenchido em fase `active` ou `grace` — UI countdown / estender |
 
-Os instantes `graceEndsAt` e `sftpEndsAt` também vêm em `currentAllocation` quando há sessão “quente” (`active` ou `grace`).
+#### Item de `provisioning[]`
 
-### Ação do Agente com a Resposta
+| Campo | Valores | Efeito no agente |
+|-------|---------|------------------|
+| `systemUsername` | `lab.*` | Nome POSIX (`useradd` / `usermod`) |
+| `sshPublicKey` | `ssh-ed25519 ...` ou vazio | Escrita em `~/.ssh/authorized_keys`; **só ed25519** é aceita |
+| `accessState` | `full_shell` \| `sftp_only` | `/bin/bash` vs `SFTP_SHELL` |
+| `revokeSshKey` | boolean | Se `true`, trunca `authorized_keys` (fase `no_key`) |
+| `homeDirectory` | path absoluto, opcional | `useradd -d` na **criação**; ver [Multi-disco](#9-multi-disco-home-e-conflitos) |
 
-1. **Configuração Dinâmica:** Ajusta o intervalo da Thread de Telemetria com base no `agentConfig`.
-2. **Reconciliação (Drift):** Se a API não listou um usuário que estava em `provisionedOsUsers`, o agente roda `userdel` e `pkill` nele.
-3. **Execução de Políticas:** Para cada item em `provisioning`, o agente garante que:
-   - A conta existe e a chave SSH bate com o arquivo local.
-   - Transição `full_shell` → `sftp_only`: `pkill -u` antes de `usermod -s`.
-   - Se `accessState == sftp_only`, shell → SFTP; se `full_shell`, shell → `/bin/bash`.
-   - Se `revokeSshKey` ou chave vazia, trunca `authorized_keys`.
-   - `provisioning: []` ainda executa drift (remove `lab.*` não listados).
+**API — quem entra em `provisioning`:**
 
-**Importante:** `apply_provisioning` só roda quando o `POST /heartbeat` retorna **HTTP 200**. Não há fila local de ordens nem ACL persistida em disco — apenas o cache em memória `LAST_ACCESS_STATE` (para detectar transição `full_shell` → `sftp_only` e disparar `pkill`).
+1. Usuários com `machine_users.access_type` fixo (`shell` \| `sftp` \| `revoked`) — ignora ciclo de alocação.
+2. Usuários `auto` com alocação `approved`/`finished` em fase ≠ `none`/`teardown` — via `#services/allocation_access`.
 
----
+**Side effects na API (por heartbeat 200):**
 
-## Resiliência e falhas de conectividade
+- `machine.lastSeenAt = now`
+- `machine.currentSessions = connectedUsers`
+- Upsert `machine_users` + `lastActiveAt` se `full_shell`
+- Grava `sshAttempts` → `ssh_connection_attempts`
+- Remove `machine_users` se SO não lista mais o usuário e API não precisa dele
 
-O modelo é **pull declarativo**: a cada ~30 s o agente pergunta “o que deve existir agora?” e a API responde com a lista completa `provisioning[]`. Não são deltas nem eventos empilhados.
+### 7.3 Processamento no agente (`apply_provisioning`)
 
-### API indisponível (rede, API desligada, timeout)
+```
+FASE 1 — Drift
+  Para cada lab.* no passwd NÃO listado em provisioning → _purge_lab_user()
 
-- O loop em `heartbeat_worker` captura a exceção, loga `[C2] Erro no Heartbeat` e **não** altera o SO.
-- O Linux permanece no **último estado aplicado com sucesso** (contas, shells, chaves).
-- A thread de telemetria também falha ao enviar lotes; cadência e preset seguem o último `agentConfig` recebido ou o fallback **eco** (`_ECO_TELEMETRY_OFFLINE` / `GET /api/config` no boot).
-- Ao restabelecer a conexão, **um** heartbeat reconcilia tudo de uma vez com a política **atual** da API (que pode já ter passado `endTime`, grace, revogação de chave, etc.).
+FASE 2 — Scan órfãos
+  Diretórios lab.* em partições user sem passwd → rmtree
 
-### Máquina do agente cai (reboot, kernel panic, `agentd` morto)
+FASE 3 — Provisionar cada item
+  useradd (se KeyError) com -d homeDirectory
+  ~/.ssh/authorized_keys, chmod/chown
+  pkill se full_shell → sftp_only
+  usermod -s bash | sftp
+```
 
-- Do lado do **SO**: o último provisionamento permanece em `/etc/passwd`, shells e `authorized_keys` até alguém mudar manualmente ou o `agentd` voltar e sincronizar.
-- Do lado da **API**: alocações e fases seguem o relógio (auto-finalize, `lifecycleStatus`); `machine_users` permanece no banco; `lastSeenAt` para de atualizar.
-- Quando o agente reinicia: `sync-specs` no boot, depois heartbeats normais; a API pode pedir recriação imediata se havia alocação ativa e a conta sumiu do SO (teste `drift: deve forçar recriação` em `agent.spec.ts`).
-
-### Quem “guarda” o quê
-
-| Componente | Persiste | Congela sem sync |
-|------------|----------|------------------|
-| **API** | Alocações, `machine_users`, políticas `.env` | Não — fases avançam por tempo |
-| **Agente (SO)** | Contas `lab.*` no disco | Sim — até próximo heartbeat 200 |
-| **Agente (processo)** | `LAST_ACCESS_STATE`, `AGENT_CONFIG`, buffer SSH | Perdido no restart do `agentd` |
-
-### Dessincronia esperada
-
-Enquanto agente e API não conversam, o usuário pode ver no front uma fase (`active`, `grace`, `sftp`) que **ainda não** foi refletida no Linux, ou o contrário — bash ativo no SO depois que a API já considera `post_sftp`/`no_key`. Isso se corrige no próximo sync bem-sucedido; não há mecanismo de “travamento” da alocação no banco por falta de heartbeat.
-
-`provisioning: []` em resposta válida **ainda** remove contas `lab.*` órfãs (drift). Durante outage da API, lista vazia **não** é aplicada — o SO fica como estava.
+**Crítico:** Só executa se HTTP **200**. Lista vazia `provisioning: []` **ainda** remove contas órfãs (exceto durante outage da API — exceção não aplicada).
 
 ---
 
-## Fluxo de Telemetria (Data-Heavy)
+## 8. POST /api/v1/agent/telemetry
 
-Para otimizar o I/O do banco de dados, o agente empacota (_batching_) várias leituras e as envia juntas para a API com a cadência definida pelo Heartbeat.
+**Intervalo:** `AGENT_CONFIG.telemetry.intervalSeconds` (5–300+ conforme preset).
 
-### Payload de Telemetria
+**Batching:** Acumula `batchSize` amostras em buffer; POST único com `{ "data": [ ... ] }`.
+
+### Roteamento na API
+
+| Situação | Destino |
+|----------|---------|
+| Alocação `approved` ativa no instante da amostra | `telemetryBuffer` + persistência futura ligada à alocação |
+| Máquina ociosa | `telemetryBuffer` realtime + `idleTelemetryBuffer` (histórico ocioso) |
+
+### Amostra (`data[]`) — campos
+
+| Campo | Wire | Real | Condicionado por `telemetrySet` | Justificativa |
+|-------|------|------|----------------------------------|---------------|
+| `timestamp` | ISO UTC | — | sempre | Correlação temporal / gráficos |
+| `cpuUsage` | int ×10 | % | `cpu` | Carga agregada do host |
+| `cpuTemp` | int ×10 | °C | `temperatures` | Thermal throttling / alertas |
+| `cpuFreqMhz` | int | MHz | `cpu` | Contexto de carga (turbo) |
+| `moboTemperature` | int ×10 | °C | `temperatures` | Sensores placa-mãe |
+| `gpuUsage` | int ×10 | % | `gpu` | Utilização GPU |
+| `gpuTemp` | int ×10 | °C | `gpu` | Termal GPU |
+| `gpuPowerWatts` | int | W | `gpu` | Consumo (NVML/AMD sysfs) |
+| `ramTotalGb` | int ×10 | GB | `ramAndSwap` | Capacidade |
+| `ramUsedGb` | int ×10 | GB | `ramAndSwap` | Pressão de memória |
+| `swapTotalGb` | int ×10 | GB | `ramAndSwap` | Swap configurado |
+| `swapUsedGb` | int ×10 | GB | `ramAndSwap` | Swap em uso |
+| `vramTotalGb` | int ×10 | GB | `gpu` | VRAM dedicada |
+| `vramUsedGb` | int ×10 | GB | `gpu` | VRAM em uso |
+| `diskReadMbps` | int | Mbps | `diskIO` | Throughput agregado leitura |
+| `diskWriteMbps` | int | Mbps | `diskIO` | Throughput agregado escrita |
+| `disksInfo` | array | — | `diskSpace` ou `diskIO` | Por-partição: `device`, `mountpoint`, `totalGb`, `freeGb`, I/O opcional |
+| `downloadMbps` | int | Mbps | `networkIO` | Tráfego recebido |
+| `uploadMbps` | int | Mbps | `networkIO` | Tráfego enviado |
+| `activeUsers` | array | — | `activeUsers` | Sessões `lab.*` (detalhe TTY/SSH) |
+| `processes` | array | — | on-demand (5 batches) | Top processos pesados |
+
+**Valores omitidos / null:** Métrica desligada no preset → campo ausente ou `null` (API normaliza para UI `—`).
+
+#### `processes[]` (on-demand)
+
+Disparado quando admin solicita relatório → heartbeat inclui `onDemandProcessConfig.requestTimestamp` → agente seta `PROCESS_BATCHES_REMAINING = 5`.
+
+Thresholds default (`processThresholds` / on-demand):
+
+| Métrica | Limiar | Inclusão |
+|---------|--------|----------|
+| CPU | ≥ 2% (`cpuPercent` ×10) | OR |
+| RAM | ≥ 200 MB | OR |
+| VRAM | ≥ 50 MB | OR |
+| Disk read | ≥ 1000 Kbps | OR |
+| Disk write | ≥ 1000 Kbps | |
+
+Ordenação: VRAM > CPU > RAM > read > write; top `topX` (default 10).
+
+---
+
+## 9. Multi-disco, home e conflitos
+
+### Modelo de dados (API)
+
+- `machines.disks[]`: cada partição com `role` (`system` \| `user`) e `mainDisk` (exatamente um `user` principal).
+- `machines.only_main_disk`: se `true`, reserva só aceita o mount principal.
+- `allocations.home_mountpoint`: volume escolhido na reserva (nullable → default = principal).
+
+### Resolução na API
+
+```
+homeDirectory = {homeMountpoint}/{systemUsername}
+```
+
+Ex.: mount `/data/lab` + user `lab.gabriel_santos` → `/data/lab/lab.gabriel_santos`.
+
+Funções: `normalizeAllocationHomeMount`, `listAllocatableDiskMountpoints`, `resolveHomeDirectory`.
+
+### O que o agente faz
+
+| Momento | Comportamento |
+|---------|---------------|
+| **Criação** (`useradd`) | Se `homeDirectory` presente → `-d {homeDirectory}`; senão home padrão do SO (`/home/lab.*`) |
+| **Conta já existe** | **Não migra home** — `usermod -d` não é chamado. Nova reserva em outro disco com mesma conta reutiliza home antigo até `userdel` |
+| **Remoção** (`_purge_lab_user`) | `userdel -r -f` + varredura em **todas** as partições `role=user` + `/home/{uname}` + paths do passwd |
+
+### Conflitos tratados
+
+| Cenário | Tratamento |
+|---------|------------|
+| Reserva pede `/data` mas `onlyMainDisk=true` | API rejeita na criação (`422`) |
+| Mount inválido / sistema | API rejeita — agente nunca recebe |
+| Duas reservas sequenciais, discos diferentes | Home fixo na 1ª criação; admin deve aguardar teardown (`endTime + 7d`) ou remover usuário manualmente |
+| Dados órfãos após `userdel` falho parcial | `_scan_orphan_lab_dirs()` remove dirs `lab.*` sem passwd em partições user |
+| Admin remove usuário provisionado | DELETE `machine_users` → próximo heartbeat sem item → drift + purge multi-partição |
+| Mesmo usuário, duas alocações | API escolhe **fase dominante** (`resolveDominantAccessForUser`) — prevalece `active`/`grace` sobre `no_key` antiga |
+| sync-specs atualiza discos | `mergeDiskPartitionsFromAgent` mantém `mainDisk`/`role` admin |
+
+### Diagrama reserva → home
+
+```text
+[Front: ReservationFormFields]
+        │ homeMountpoint (select de listAllocatableDiskMountpoints)
+        ▼
+[API: allocations_controller.store]
+        │ normalizeAllocationHomeMount(machine.disks, onlyMainDisk, ...)
+        ▼
+[DB: allocations.home_mountpoint]
+        ▼
+[HeartbeatService: resolveHomeDirectory → provisioning[].homeDirectory]
+        ▼
+[Agent: useradd -d homeDirectory]
+```
+
+---
+
+## 10. Descomissionamento (exclusão admin)
+
+Fluxo em **duas fases** (`DELETE /api/v1/machines/:id`):
+
+### Fase 1 — `202 Accepted`
+
+1. Cancela alocações `pending`/`approved` (notifica usuários).
+2. Apaga todos `machine_users`.
+3. Seta `customAgentConfig.pendingRemoval = true`, `status = offline`.
+4. Front aguarda ~35 s e repete DELETE.
+
+### Heartbeat com `pendingRemoval`
+
+API retorna:
 
 ```json
-{
-  "data": [
-    {
-      "timestamp": "2026-06-15T17:30:00.000Z",
-      "cpuUsage": 450,
-      "cpuTemp": 650,
-      "cpuFreqMhz": 4200,
-      "gpuUsage": 800,
-      "gpuTemp": 700,
-      "gpuPowerWatts": 150,
-      "ramTotalGb": 320,
-      "ramUsedGb": 165,
-      "vramTotalGb": 120,
-      "vramUsedGb": 45,
-      "diskReadMbps": 300,
-      "diskWriteMbps": 150,
-      "downloadMbps": 50,
-      "uploadMbps": 10,
-      "processes": [
-        {
-          "pid": 1234,
-          "name": "python3",
-          "username": "lab.gabriel_weiand",
-          "cpuPercent": 850,
-          "ramGb": 10
-        }
-      ]
-    }
-  ]
-}
+{ "decommission": true, "provisioning": [], ... }
 ```
 
-### Convenção de Precisão Numérica
+Agente:
 
-| Campo                                | Transmissão           | Valor real → Wire                   |
-| ------------------------------------ | --------------------- | ----------------------------------- |
-| Porcentagem (CPU, GPU, `cpuPercent`) | Inteiro × 10          | `45.0%` → `450`                     |
-| Temperatura                          | Inteiro × 10          | `65.0 °C` → `650`                   |
-| Gigabytes (RAM, VRAM, `ramGb`)       | Inteiro × 10          | `16.5 GB` → `165` / `5.6 GB` → `56` |
-| Potência GPU                         | Inteiro direto (W)    | `150 W` → `150`                     |
-| I/O de rede/disco                    | Inteiro direto (Mbps) | `300 Mbps` → `300`                  |
+```python
+_purge_all_lab_users()  # userdel + resquícios em todas partições user
+```
 
-> **Regra de memória:** todos os campos de gigabytes (`ramTotalGb`, `ramUsedGb`, `vramTotalGb`, `vramUsedGb`, `ramGb` em processos) representam o valor real em GB com **uma casa decimal**, transmitido como inteiro × 10. Ou seja, o wire value `56` significa `5.6 GB`, `320` significa `32.0 GB`. Potência e I/O de rede/disco são os únicos inteiros diretos.
+### Fase 2 — `204 No Content`
 
-### Threshold de Captura de Processos
+Remove registro `machines`, limpa `telemetryBuffer` / `idleTelemetryBuffer`.
 
-Um processo só entra no array `processes` se satisfizer **ao menos um** dos critérios:
-
-- CPU acima de **5%** (`cpuPercent > 50` no formato inteiro × 10)
-- RAM acima de **0.5 GB** (`ramGb > 5` no formato inteiro × 10)
+**Por que duas fases?** Token ainda válido entre fases → agente recebe ordem de limpeza **antes** do registro sumir (401 impediria drift).
 
 ---
 
-## Ciclo de Vida do Agente
+## 11. Ciclo de vida de alocação
 
-```
-┌─────────────────────────────────────────────────────────────────────────────────┐
-│                           1. BOOT DA MÁQUINA                                    │
-│  - Lê .env (SERVER_URL, MACHINE_TOKEN)                                          │
-│  - GET /api/config → telemetria inicial eco (ou presets do lab se API online)   │
-│  - PUT /api/v1/agent/sync-specs (Registra Hardware no Backend)                  │
-└──────────────────────────────────────┬──────────────────────────────────────────┘
-                                       │
-┌──────────────────────────────────────▼──────────────────────────────────────────┐
-│                           2. LOOP PRINCIPAL (Daemon)                            │
-│                                                                                 │
-│  [Thread 1] A cada 30s: POST /api/v1/agent/heartbeat                            │
-│    ├─ Envia tentativas do /var/log/auth.log e usuários logados                  │
-│    └─ Recebe Ordens: Ajusta useradd, authorized_keys e usermod -s               │
-│                                                                                 │
-│  [Thread 2] A cada X segundos (Ajustado via Heartbeat): POST /api/v1/agent/telemetry │
-│    ├─ Coleta NVML / sysfs / psutil                                              │
-│    └─ Envia Buffer para o AdonisJS consolidar.                                  │
-└──────────────────────────────────────┬──────────────────────────────────────────┘
-                                       │
-┌──────────────────────────────────────▼──────────────────────────────────────────┐
-│                           3. EVENTOS DINÂMICOS                                  │
-│  - Preparação T-5: API manda criar usuário antecipado, Agente trava via SFTP.   │
-│  - Hora da Alocação: API envia full_shell, Agente libera terminal SSH (Bash).   │
-│  - Fim da Alocação: API tira full_shell, Agente fecha terminal e roda pkill -u. │
-│  - Acesso Ilegal: API corta acesso, Agente expulsa usuário.                     │
-└─────────────────────────────────────────────────────────────────────────────────┘
-```
-
----
-
-## Ciclo de vida completo de uma alocação (API → Agente)
-
-A API **não empurra eventos** para o agente. A cada heartbeat (~30s) ela recalcula, para cada máquina, quais alocações `approved` ou `finished` ainda exigem conta Linux e qual **fase de acesso** cada usuário está. O serviço `#services/allocation_access` define as fases; o `#services/heartbeat_service` monta o array `provisioning`; o `agentd.py` aplica no SO.
-
-Variáveis (padrões em `apps/api/.env.example`):
+Variáveis (`.env` / `lab_config`):
 
 | Variável | Padrão | Papel |
 |----------|--------|--------|
-| `LAB_ALLOCATION_PREPARE_MINUTES` | 5 | T-N: conta + chave, shell SFTP antes do `startTime` |
-| `LAB_ALLOCATION_GRACE_MINUTES` | 10 | Bash extra após `endTime` (só `approved`, não `finished`) |
-| `LAB_ALLOCATION_POST_SFTP_MINUTES` | 1440 | SFTP **com chave** após o grace (ou após `endTime` se finalizou cedo) |
-| `LAB_ALLOCATION_DELETE_USER_DAYS` | 7 | Conta some do `provisioning` → drift faz `userdel` |
-| *(via grace)* | — | Intervalo entre reservas = `LAB_ALLOCATION_GRACE_MINUTES` (API) |
+| `LAB_ALLOCATION_PREPARE_MINUTES` | 5 | T-N: SFTP + chave antes de `startTime` |
+| `LAB_ALLOCATION_GRACE_MINUTES` | 10 | Bash extra após `endTime` |
+| `LAB_ALLOCATION_POST_SFTP_MINUTES` | 1440 | SFTP com chave pós-grace |
+| `LAB_ALLOCATION_DELETE_USER_DAYS` | 7 | Após isso → fase `teardown` → fora do `provisioning` |
 
-### Fases de acesso (`resolveAccessPhase`)
+### Fases (`approved`, término natural)
 
-Referência temporal: sempre o `endTime` gravado na alocação (UTC), exceto onde indicado.
-
-**Reserva `approved` (término natural no horário reservado):**
-
-```
-startTime - prepare          → prepare
-[startTime, endTime)         → active
-[endTime, endTime + grace)   → grace        (full_shell; botão estender)
-[endTime+grace, sftpEndsAt)  → post_sftp    (sftp_only + chave)
-[sftpEndsAt, endTime + 7d)   → no_key       (sftp_only, revokeSshKey)
-[≥ endTime + 7d]             → teardown     (fora do provisioning)
+```text
+prepare → active → grace → post_sftp → no_key → teardown
+  SFTP     BASH     BASH     SFTP+key    SFTP no key   (sem provisioning)
 ```
 
-Com:
+**`finished` (POST finish):** pula grace; `sftpEndsAt = endTime`; depois `no_key` → teardown.
 
-- `graceEndsAt = endTime + graceMinutes`
-- `sftpEndsAt = endTime + graceMinutes + postSftpMinutes`
+### Mapa fase → provisioning
 
-**Reserva `finished` (POST `/allocations/:id/finish` — finalização antecipada):**
+| Fase | `accessState` | Chave | Agente |
+|------|---------------|-------|--------|
+| `prepare` | `sftp_only` | sim | useradd + SFTP + keys |
+| `active` | `full_shell` | sim | bash |
+| `grace` | `full_shell` | sim | bash (telemetria “quente”) |
+| `post_sftp` | `sftp_only` | sim | pkill + SFTP |
+| `no_key` | `sftp_only` | revogada | esvazia authorized_keys |
+| `teardown` | — | — | **não** listado → drift remove |
 
-- **Sem grace nem SFTP com chave:** bash encerra no `endTime` real; `sftpEndsAt = endTime`.
-- `graceEndsAt = endTime`
-- Depois: `no_key` até `endTime + 7 dias`, então `teardown`.
+---
 
-**Fora da janela:** `none` (ex.: reserva futura além de T-N, ou após teardown).
+## 12. Provisionamento no Linux
 
-### Mapa fase → ordem no `provisioning`
+### Conta
 
-| Fase | `accessState` | Chave SSH | Efeito no agente |
-|------|---------------|-----------|------------------|
-| `prepare` | `sftp_only` | sim | `useradd` se preciso; shell SFTP; injeta `authorized_keys` |
-| `active` | `full_shell` | sim | `usermod -s /bin/bash`; chave ativa |
-| `grace` | `full_shell` | sim | Igual `active` (sessão “quente” para telemetria) |
-| `post_sftp` | `sftp_only` | sim | `pkill -u` se vinha de bash; shell SFTP; chave mantida |
-| `no_key` | `sftp_only` | revogada | `revokeSshKey` → esvazia `authorized_keys`; shell continua SFTP |
-| `teardown` | — | — | Usuário **não** entra em `provisioning` |
+- Prefixo `lab.` + `users.system_username`
+- Grupo `lab` (`groupadd -f lab` no boot)
+- UMASK 077 via `login.defs` + `useradd -K UMASK=0077`
+- Permissões: home `700`, `.ssh` `700`, `authorized_keys` `600`
+- **Sem senha** — apenas chave pública
+- **Sem sudo** — controle é shell vs SFTP, não privilégio root
 
-Apenas chaves `ssh-ed25519` são aceitas no agente; demais formatos são ignorados na escrita.
+### Transições críticas
 
-### Permissões e o que o agente **não** faz
-
-- **Não há sudo:** o grupo `sudo` não é gerenciado; acesso é **shell** (bash vs SFTP), não privilégio root.
-- **Conta POSIX:** prefixo `lab.` + `systemUsername` do usuário no banco; grupo `lab`; home `700`, `.ssh` `700`, `authorized_keys` `600`.
-- **Senha:** o agente nunca define senha de login — só chave pública.
-- **Bloqueio global:** `accessControl.shouldBlock` permanece `false`; o bloqueio é por `accessState` e revogação de chave.
-
-### Criação e manutenção de usuário no Linux
-
-1. **Primeira necessidade** (fase `prepare` ou posterior): API inclui o usuário em `provisioning` → agente `useradd -m -s /bin/bash -G lab` (shell inicial bash; política ajusta em seguida).
-2. **Chave:** escrita em `/home/lab.<user>/.ssh/authorized_keys` se mudou ou se ainda não existia.
-3. **Shell:** `usermod -s` para `/bin/bash` ou `SFTP_SHELL` conforme `accessState`.
-4. **Transição bash → SFTP:** se o último estado foi `full_shell` e a ordem passa a `sftp_only`, o agente roda **`pkill -u`** antes do `usermod -s` (encerra sessões e processos órfãos).
-5. **Inventário API:** `machine_users` é atualizado no heartbeat (`updateOrCreate`); `lastActiveAt` só em `full_shell`.
-
-### Finalização de sessão
-
-| Evento | Quem | Efeito no ciclo |
-|--------|------|-----------------|
-| Relógio atinge `endTime` (`approved`) | Tempo | API passa `active` → `grace` → `post_sftp` → `no_key` → `teardown` |
-| POST `finish` | Usuário/admin | `status = finished`, `endTime = now`; pula grace; entra direto em SFTP com chave |
-| POST `extend` | Usuário (no grace) | Aumenta `endTime`; prolonga bash e adia fases seguintes |
-| `pkill` no agente | Heartbeat | Ao sair de `full_shell` para `sftp_only` (fim natural ou pós-grace) |
-
-O front pode exibir `currentAllocation.phase`, `graceEndsAt` e `sftpEndsAt` retornados no heartbeat quando a máquina está em fase quente.
+```
+full_shell → sftp_only : pkill -u  THEN  usermod -s SFTP_SHELL
+revokeSshKey=true      : truncate authorized_keys
+drift / decommission   : _purge_lab_user → multi-partição
+```
 
 ### SFTP pós-reserva
 
-- **Objetivo:** permitir copiar artefatos da home após o bash, sem terminal interativo.
-- **Com chave (`post_sftp`):** mesmo usuário `lab.*`, shell restrito a SFTP, `authorized_keys` válido.
-- **Sem chave (`no_key`):** shell ainda SFTP, mas `revokeSshKey: true` — login por chave deixa de funcionar; conta POSIX pode permanecer até o teardown.
+Objetivo: copiar artefatos da home sem terminal. Shell = `SFTP_SHELL` detectado no boot (`which sftp-server` / glob openssh).
 
-Duração padrão da janela com chave: **24 h** (`postSftpMinutes = 1440`), somada ao grace em reservas `approved`.
+---
 
-### Remoção de usuário (`userdel`)
+## 13. Telemetria — campos e justificativas
 
-Dois mecanismos complementares:
+### Convenção numérica (wire)
 
-1. **Drift (agente):** após cada heartbeat, o agente remove do SO todo `lab.*` que **não** apareceu em `provisioning` na resposta (FASE 1 de `apply_provisioning`: `pkill -u`, `userdel -r -f`). `provisioning: []` ainda executa essa limpeza.
-2. **Inventário (API):** se o SO não lista mais o usuário em `provisionedOsUsers` e a API não precisa dele (`phasesByUserId` vazio), a linha em `machine_users` é apagada.
+| Tipo | Formato | Exemplo |
+|------|---------|---------|
+| Percentuais | ×10 int | 45,0% → `450` |
+| Temperaturas | ×10 int | 65,0°C → `650` |
+| Gigabytes | ×10 int | 16,5 GB → `165` |
+| Potência GPU | int W | 150 W → `150` |
+| I/O rede/disco | int Mbps | 300 Mbps → `300` |
 
-A remoção física ocorre quando a fase vira **`teardown`**: `now >= endTime + LAB_ALLOCATION_DELETE_USER_DAYS` para aquela alocação. Até lá, fases `post_sftp` / `no_key` ainda mantêm o usuário na lista de provisionamento (sem bash útil após revogação).
+### Presets (API → agente)
 
-### Várias alocações do mesmo usuário na mesma máquina
+| Modo | Preset típico | Quando |
+|------|---------------|--------|
+| Ociosa | `eco` | Sem alocação em active/grace |
+| Em uso | `fast` | Alocação active/grace |
+| Admin custom | `custom` | `machines.custom_agent_config` |
 
-O heartbeat escolhe **uma fase dominante por `userId`** (maior “rank”: `active`/`grace` > `prepare`/`post_sftp` > `no_key`). Ex.: reserva nova em `prepare` enquanto uma antiga `finished` ainda está em `no_key` → a nova fase prevalece e o usuário volta a ter chave/bash conforme a reserva nova.
+`buildAgentTelemetryConfig` também aplica `clampCustomTelemetryInterval` (mín. 2 s).
 
-### Countdown de 7 dias — reserva nova antes do fim?
+---
 
-**Não há “reset” de um único timer global.** Cada alocação define seu próprio marco:
+## 14. Threads e loop principal
 
-```text
-deleteUserAt = allocation.endTime + deleteUserDays   (padrão: +7 dias)
+```
+main()
+  ├─ hardening (group lab, UMASK)
+  ├─ bootstrap_telemetry_from_lab_config()
+  ├─ sync_specs()
+  ├─ Thread: heartbeat_worker()     → 30 s
+  ├─ Thread: telemetry_worker()     → intervalSeconds
+  └─ Thread: ssh_audit_worker()     → tail auth.log
 ```
 
-- A alocação **antiga**, ao atingir `endTime + 7d`, entra em `teardown` e **deixa de pedir** provisionamento por aquela reserva.
-- Se o mesmo usuário tiver uma **reserva nova** ainda em `prepare` / `active` / `grace` / `post_sftp` / `no_key`, ele **continua** em `provisioning` por causa da alocação nova → o agente **não** remove a conta no drift.
-- Quando a reserva nova terminar, o prazo de remoção passa a ser **`endTime` da nova reserva + 7 dias**, independentemente do prazo que a reserva antiga já teria cumprido.
+| Thread | Bloqueio | Compartilha |
+|--------|----------|-------------|
+| Heartbeat | `CONFIG_LOCK` ao ler/escrever config e buffer SSH | `AGENT_CONFIG`, `SSH_AUDIT_BUFFER` |
+| Telemetria | `CONFIG_LOCK` ao ler interval/batch | `AGENT_CONFIG`, `PROCESS_BATCHES_REMAINING` |
+| SSH audit | `CONFIG_LOCK` ao append buffer | `SSH_AUDIT_BUFFER` |
 
-Ou seja: uma reserva subsequente **não reinicia** o relógio da reserva anterior; ela **impede a exclusão** enquanto durar e estabelece um **novo** `endTime + 7d` quando for a única (ou dominante) ainda relevante.
+---
 
-### Diagrama resumido (reserva `approved`, padrões 5 / 10 / 1440 / 7)
+## 15. GPU — backends e detecção
+
+Ordem em `_detect_gpu_backend()`:
+
+1. **NVIDIA** (`pynvml`) — uso, temp, VRAM, power
+2. **AMD** (`amdgpu` sysfs) — `gpu_busy_percent`, VRAM, power hwmon
+3. **Intel** (i915/xe sysfs) — freq ratio como proxy de uso
+4. **_NullBackend** — zeros silenciosos
+
+Multi-GPU: usa índice 0 NVML; comentário no código para iterar `nvmlDeviceGetCount()` se necessário.
+
+---
+
+## 16. Auditoria SSH
+
+- Arquivo: `/var/log/auth.log` (hardcoded — typical Debian/Ubuntu)
+- Rotação: detecta mudança de inode → reopen
+- Boot: `seek END` — não reenvia histórico antigo
+- Parser: `parse_ssh_line` — ignora linhas sem `sshd`
+
+Eventos gravados em `ssh_connection_attempts` (API) + notificação flood (`checkSshFailureFlood`).
+
+---
+
+## 17. Resiliência e falhas
+
+| Evento | SO | API | Agente (processo) |
+|--------|----|----|-------------------|
+| API offline | Congela último estado | Fases avançam por tempo | Exceção logada; retry 30 s |
+| Reboot máquina | Persiste passwd/keys | `lastSeenAt` stale → offline efetivo | Restart → sync-specs + heartbeat |
+| Token inválido | Congela | — | 401 → **não** purge (segurança) |
+| pendingRemoval | Purge no próximo 200 | Aguarda 2º DELETE | `_purge_all_lab_users` |
+
+**Dessincronia esperada:** UI pode mostrar fase `post_sftp` enquanto SO ainda tem bash até próximo heartbeat 200.
+
+---
+
+## 18. Hardening no boot
+
+Idempotente em `main()`:
+
+1. `groupadd -f lab`
+2. Substitui `UMASK` em `/etc/login.defs` por `077`
+
+Falhas logadas como aviso — daemon continua.
+
+---
+
+## Referência rápida — arquivos relacionados
+
+| Caminho | Conteúdo |
+|---------|----------|
+| `apps/agent/agentd.py` | Implementação |
+| `apps/agent/.env.example` | Variáveis |
+| `apps/api/app/controllers/agent_controller.ts` | Entrada HTTP agente |
+| `apps/api/app/services/heartbeat_service.ts` | provisioning, decommission |
+| `apps/api/app/services/machine_decommission.ts` | Exclusão admin 2 fases |
+| `apps/api/app/services/disk_partitions.ts` | Roles, mainDisk, homeDirectory |
+| `apps/api/app/services/allocation_access.ts` | Fases prepare→teardown |
+| `apps/api/app/services/telemetry_presets.ts` | Presets eco/fast/custom |
+| `apps/api/tests/functional/agent.spec.ts` | Testes contrato agente |
+| `apps/web/src/stores/machines.ts` | DELETE com retry 35 s |
+
+---
+
+## Diagrama geral
 
 ```text
-        prepare   active      grace      post_sftp        no_key          teardown
-          │────────│──────────│──────────│────────────────│───────────────│
-T-5m      │  SFTP  │   BASH   │   BASH   │  SFTP+chave    │ SFTP sem chave │ (fora do
-          │ +chave │  +chave  │  +chave  │                │                │  provisioning)
-          ▼        ▼          ▼          ▼                ▼                ▼
-      startTime  endTime   +10min    +24h após grace   até end+7d      ≥ end+7d
+┌─────────────┐     sync-specs (boot)      ┌─────────────┐
+│   agentd    │ ─────────────────────────► │   AdonisJS  │
+│   (Linux)   │     heartbeat (30s)        │     API     │
+│             │ ◄───────────────────────── │             │
+│             │     telemetry (Ns)         │             │
+└─────────────┘ ─────────────────────────► └─────────────┘
+       │                                           │
+       │ useradd/usermod/userdel                   │ allocations
+       │ pkill, authorized_keys                    │ machine_users
+       ▼                                           ▼
+  /etc/passwd                                 PostgreSQL
+  /home, /data/*, …                           + Redis/cache
 ```
-
-### Telemetria ligada à alocação
-
-- Com fase `active` ou `grace`, a API marca a máquina como “ocupada” para preset de telemetria e preenche `currentAllocation`.
-- POST `/agent/telemetry` persiste amostras no banco só se houver alocação `approved` no instante da coleta; sem alocação, só atualiza buffer realtime no dashboard.
-
-### Gap entre reservas (contexto API)
-
-`LAB_ALLOCATION_GRACE_MINUTES` define também o espaço mínimo entre reservas no calendário; o agente não implementa gap — só obedece ao `provisioning` atual.

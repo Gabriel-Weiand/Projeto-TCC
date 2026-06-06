@@ -4,6 +4,7 @@ import { useRoute, useRouter } from "vue-router";
 import { useMachinesStore } from "@/stores/machines";
 import { useMachineGroupsStore } from "@/stores/machineGroups";
 import MachineTelemetryPanel from "@/components/MachineTelemetryPanel.vue";
+import AdminMachineDisksTab from "@/components/admin/machine/AdminMachineDisksTab.vue";
 import AdminMachineUsersTab from "@/components/admin/machine/AdminMachineUsersTab.vue";
 import AdminMachineSshTab from "@/components/admin/machine/AdminMachineSshTab.vue";
 import type { Machine, MachineOperationalMode } from "@/types";
@@ -22,6 +23,7 @@ const error = ref("");
 const activeTab = ref("infos");
 const editTabs = [
   { id: "infos", label: "Informações" },
+  { id: "discos", label: "Discos" },
   { id: "telemetria", label: "Telemetria" },
   { id: "usuarios", label: "Usuários" },
   { id: "ssh", label: "SSH" },
@@ -31,6 +33,7 @@ const form = reactive({
   name: "",
   description: "",
   ipAddress: "",
+  publicIpAddress: "",
   sshPort: "",
   operationalMode: "available" as MachineOperationalMode,
   machineGroupId: "" as string,
@@ -63,6 +66,7 @@ function loadForm(m: Machine) {
   form.name = m.name;
   form.description = m.description || "";
   form.ipAddress = m.ipAddress || "";
+  form.publicIpAddress = m.publicIpAddress || "";
   form.sshPort = m.sshPort != null ? String(m.sshPort) : "";
   form.operationalMode = resolveOperationalMode(m);
   form.machineGroupId =
@@ -125,6 +129,7 @@ async function handleSave() {
       name: form.name.trim(),
       description: form.description.trim(),
       ipAddress: form.ipAddress.trim() || null,
+      publicIpAddress: form.publicIpAddress.trim() || null,
       sshPort: parseSshPortInput(form.sshPort),
       status: form.operationalMode,
       machineGroupId: form.machineGroupId
@@ -215,6 +220,17 @@ function copyToken() {
                 </p>
               </div>
               <div class="field">
+                <label class="field-label">IP público</label>
+                <input
+                  v-model="form.publicIpAddress"
+                  type="text"
+                  placeholder="Ex.: IP do NAT ou DNS público"
+                />
+                <p class="field-hint text-muted">
+                  Opcional — usado para orientar conexões externas ao laboratório.
+                </p>
+              </div>
+              <div class="field">
                 <label class="field-label">
                   Porta SSH <span class="text-muted">(vazio = 22)</span>
                 </label>
@@ -261,6 +277,12 @@ function copyToken() {
             <div v-else-if="activeTab === 'telemetria'" class="telemetry-tab">
               <MachineTelemetryPanel :machine="machine" @saved="onTelemetrySaved" />
             </div>
+
+            <AdminMachineDisksTab
+              v-else-if="activeTab === 'discos'"
+              :machine="machine"
+              @saved="onTelemetrySaved"
+            />
 
             <AdminMachineUsersTab
               v-else-if="activeTab === 'usuarios'"

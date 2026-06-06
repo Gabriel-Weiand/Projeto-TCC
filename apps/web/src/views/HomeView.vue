@@ -8,6 +8,7 @@ import { useMachinesStore } from "@/stores/machines";
 import { useAuthStore } from "@/stores/auth";
 import { useLabConfigStore } from "@/stores/labConfig";
 import { useNotificationsStore } from "@/stores/notifications";
+import { useUsersStore } from "@/stores/users";
 import type { Allocation, Machine } from "@/types";
 import { wallClockToUtcIso } from "@/utils/datetime";
 import {
@@ -29,6 +30,7 @@ const machinesStore = useMachinesStore();
 const auth = useAuthStore();
 const lab = useLabConfigStore();
 const notifications = useNotificationsStore();
+const usersStore = useUsersStore();
 const route = useRoute();
 const router = useRouter();
 
@@ -44,6 +46,8 @@ const MACHINE_STATUS_LABELS: Record<Machine["status"], string> = {
   offline: "Inativa",
   maintenance: "Manutenção",
 };
+
+const isAdmin = computed(() => auth.user?.role === "admin");
 
 const panelAlignStyle = computed(() => {
   if (!showForm.value || panelAlign.value.height <= 0) return undefined;
@@ -178,11 +182,13 @@ const focusMachineId = computed((): number | null => {
 function emptyReservationForm(machineId: string | number = "") {
   return {
     machineId,
+    targetUserId: "" as number | "",
     startDate: "",
     startTime: "",
     endDate: "",
     endTime: "",
     reason: "",
+    homeMountpoint: "",
   };
 }
 
@@ -215,6 +221,9 @@ async function applyReservationFromRoute() {
 
 onMounted(async () => {
   await machinesStore.fetchMachines();
+  if (auth.user?.role === "admin") {
+    await usersStore.fetchUsers();
+  }
   await loadGanttAllocations();
   await applyReservationFromRoute();
 });
@@ -256,6 +265,10 @@ async function handleCreate() {
       startTime,
       endTime,
       reason: form.value.reason.trim().slice(0, ALLOCATION_REASON_MAX_LENGTH) || undefined,
+      homeMountpoint: form.value.homeMountpoint.trim() || undefined,
+      userId: isAdmin.value && form.value.targetUserId
+        ? Number(form.value.targetUserId)
+        : undefined,
     });
     showForm.value = false;
     await Promise.all([loadGanttAllocations(), notifications.fetchNotifications()]);
@@ -304,11 +317,15 @@ async function handleCreate() {
           <form class="panel-body" @submit.prevent="handleCreate">
             <ReservationFormFields
               v-model:machine-id="form.machineId"
+              v-model:target-user-id="form.targetUserId"
               v-model:start-date="form.startDate"
               v-model:start-time="form.startTime"
               v-model:end-date="form.endDate"
               v-model:end-time="form.endTime"
               v-model:reason="form.reason"
+              v-model:home-mountpoint="form.homeMountpoint"
+              :is-admin="isAdmin"
+              :users="usersStore.users"
               show-machine-picker
               :machines="machinesStore.machines"
               :status-labels="MACHINE_STATUS_LABELS"

@@ -40,6 +40,10 @@ export default class Allocation extends BaseModel {
   @column({ consume: (value: any) => Boolean(value) })
   declare userHidden: boolean
 
+  /** Montagem de disco escolhida para home do usuário Unix (ex.: /home, /data). */
+  @column()
+  declare homeMountpoint: string | null
+
   @column.dateTime({ autoCreate: true })
   declare createdAt: DateTime
 

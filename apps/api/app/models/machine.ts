@@ -60,6 +60,14 @@ export default class Machine extends BaseModel {
   @column()
   declare ipAddress: string | null
 
+  /** IP público (NAT/port-forward) definido pelo admin; distinto do IP local do agente. */
+  @column()
+  declare publicIpAddress: string | null
+
+  /** Quando true, alocações só podem usar a partição marcada como mainDisk. */
+  @column({ consume: (value: unknown) => Boolean(value) })
+  declare onlyMainDisk: boolean
+
   /** null = SSH na porta 22 */
   @column()
   declare sshPort: number | null

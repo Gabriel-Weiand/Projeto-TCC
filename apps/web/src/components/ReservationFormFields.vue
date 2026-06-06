@@ -1,7 +1,13 @@
 <script setup lang="ts">
-import { computed } from "vue";
-import type { Machine } from "@/types";
+import { computed, watch } from "vue";
+import type { Machine, User } from "@/types";
+import {
+  defaultHomeMountForMachine,
+  formatDiskOptionLabel,
+  listAllocatableDiskMountpoints,
+} from "@/utils/machineDisks";
 import ReservationMachinePicker from "@/components/ReservationMachinePicker.vue";
+import SearchableUserPicker from "@/components/SearchableUserPicker.vue";
 import LabWallClockDateInput from "@/components/LabWallClockDateInput.vue";
 import LabWallClockTimeInput from "@/components/LabWallClockTimeInput.vue";
 import { ALLOCATION_REASON_MAX_LENGTH } from "@/utils/allocationLabels";
@@ -9,6 +15,8 @@ import { ALLOCATION_REASON_MAX_LENGTH } from "@/utils/allocationLabels";
 const props = withDefaults(
   defineProps<{
     showMachinePicker?: boolean;
+    isAdmin?: boolean;
+    users?: User[];
     reasonMaxLength?: number;
     machines?: Machine[];
     statusLabels?: Record<Machine["status"], string>;
@@ -18,6 +26,8 @@ const props = withDefaults(
   }>(),
   {
     showMachinePicker: false,
+    isAdmin: false,
+    users: () => [],
     reasonMaxLength: ALLOCATION_REASON_MAX_LENGTH,
     machines: () => [],
     periodReady: false,
@@ -28,25 +38,92 @@ const props = withDefaults(
 
 const periodHasError = computed(() => !!props.periodErrorMessage);
 
+const targetUserId = defineModel<number | "">("targetUserId", { default: "" });
 const machineId = defineModel<string | number>("machineId", { default: "" });
 const startDate = defineModel<string>("startDate", { default: "" });
 const startTime = defineModel<string>("startTime", { default: "" });
 const endDate = defineModel<string>("endDate", { default: "" });
 const endTime = defineModel<string>("endTime", { default: "" });
 const reason = defineModel<string>("reason", { default: "" });
+const homeMountpoint = defineModel<string>("homeMountpoint", { default: "" });
+
+const selectedMachine = computed(() =>
+  props.machines.find((m) => String(m.id) === String(machineId.value)),
+);
+
+const diskOptions = computed(() => {
+  const m = selectedMachine.value;
+  if (!m) return [] as string[];
+  return listAllocatableDiskMountpoints(m.disks, Boolean(m.onlyMainDisk));
+});
+
+const diskChoiceLocked = computed(() => {
+  const m = selectedMachine.value;
+  if (!m || diskOptions.value.length === 0) return false;
+  return Boolean(m.onlyMainDisk) || diskOptions.value.length === 1;
+});
+
+const showDiskSubsection = computed(() => diskOptions.value.length > 0);
+
+const diskHint = computed(() => {
+  const m = selectedMachine.value;
+  if (!m) return "";
+  if (m.onlyMainDisk) return "Volume fixo definido pelo admin.";
+  if (diskOptions.value.length === 1) return "Único volume disponível nesta máquina.";
+  return "Onde a conta Unix será criada.";
+});
+
+function syncHomeMountFromMachine() {
+  const m = selectedMachine.value;
+  if (!m) {
+    homeMountpoint.value = "";
+    return;
+  }
+  homeMountpoint.value = defaultHomeMountForMachine(m);
+}
+
+watch(selectedMachine, () => syncHomeMountFromMachine(), { immediate: true });
+
+watch(homeMountpoint, (val) => {
+  if (!val || !selectedMachine.value) return;
+  if (!diskOptions.value.includes(val)) {
+    syncHomeMountFromMachine();
+  }
+});
 </script>
 
 <template>
   <div class="reservation-fields">
-    <ReservationMachinePicker
-      v-if="props.showMachinePicker && props.statusLabels"
-      v-model="machineId"
-      :machines="props.machines"
-      :status-labels="props.statusLabels"
-      :period-ready="props.periodReady"
-      :period-error-message="props.periodErrorMessage"
-      :period-available="props.periodAvailable"
+    <SearchableUserPicker
+      v-if="isAdmin"
+      v-model="targetUserId"
+      :users="users"
+      placeholder="Selecione o usuário da reserva"
     />
+
+    <div v-if="showMachinePicker && statusLabels" class="machine-block">
+      <ReservationMachinePicker
+        v-model="machineId"
+        :machines="machines"
+        :status-labels="statusLabels"
+        :period-ready="periodReady"
+        :period-error-message="periodErrorMessage"
+        :period-available="periodAvailable"
+      />
+
+      <div v-if="showDiskSubsection" class="machine-disk-row">
+        <p class="disk-hint">{{ diskHint }}</p>
+        <select
+          v-model="homeMountpoint"
+          class="home-disk-select"
+          :disabled="diskChoiceLocked"
+        >
+          <option v-for="mp in diskOptions" :key="mp" :value="mp">
+            {{ formatDiskOptionLabel(mp, selectedMachine?.disks) }}
+          </option>
+        </select>
+      </div>
+    </div>
 
     <section class="reservation-section">
       <h3 class="reservation-section-title">Período</h3>
@@ -99,11 +176,11 @@ const reason = defineModel<string>("reason", { default: "" });
           v-model="reason"
           class="reason-input"
           rows="4"
-          :maxlength="props.reasonMaxLength"
+          :maxlength="reasonMaxLength"
           placeholder="Ex: Treinamento de modelo ML"
         ></textarea>
         <span class="reason-count text-muted" aria-live="polite">
-          {{ reason.length }}/{{ props.reasonMaxLength }}
+          {{ reason.length }}/{{ reasonMaxLength }}
         </span>
       </div>
     </section>
@@ -116,6 +193,41 @@ const reason = defineModel<string>("reason", { default: "" });
   flex-direction: column;
   gap: 1.2rem;
   min-height: 0;
+}
+
+.machine-block {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+}
+
+.machine-disk-row {
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+  padding-left: 0.1rem;
+}
+
+.disk-hint {
+  margin: 0;
+  font-size: 0.78rem;
+  line-height: 1.35;
+  color: var(--text-muted);
+}
+
+.home-disk-select {
+  width: 100%;
+  padding: 0.48rem 0.65rem;
+  font-size: 0.86rem;
+  background: var(--bg-card-solid);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  color: var(--text-primary);
+}
+
+.home-disk-select:disabled {
+  opacity: 0.85;
+  cursor: default;
 }
 
 .reservation-section {

@@ -21,11 +21,18 @@ import { machineCache } from '#services/machine_cache'
 import { DateTime } from 'luxon'
 import { cancelAllocationsForMaintenance } from '#services/notification_service'
 import { normalizeCustomAgentConfig } from '#services/telemetry_presets'
+import { normalizeRealtimeTelemetry } from '#services/telemetry_normalize'
+import { enrichDiskPartitions } from '#services/disk_partitions'
 import {
   buildOccupiedMachineIds,
   normalizeOperationalMode,
   resolveEffectiveMachineStatus,
 } from '#services/machine_effective_status'
+import {
+  finalizeMachineDeletion,
+  isMachinePendingRemoval,
+  prepareMachineDecommission,
+} from '#services/machine_decommission'
 
 export default class MachinesController {
   /** Agente envia GB×10; respostas HTTP ao front em GB (1 decimal). */
@@ -34,57 +41,21 @@ export default class MachinesController {
     return Number(wire) / 10
   }
 
-  /**
-   * Normaliza telemetria bruta (escala 0-1000 / 0-1500) para valores legíveis.
-   * Usage: 0-1000 → 0-100 (porcentagem)
-   * Temp:  0-1500 → 0-150 (°C)
-   * Rede:  Mbps (sem conversão)
-   */
   private normalizeTelemetry(raw: unknown) {
-    if (!raw || typeof raw !== 'object') return null
-    const r = raw as Record<string, unknown>
-
-    return {
-      cpuUsage: Number(r.cpuUsage ?? 0) / 10,
-      cpuTemp: Number(r.cpuTemp ?? 0) / 10,
-      cpuFreqMhz: r.cpuFreqMhz ?? null, // Incluído
-
-      gpuUsage: Number(r.gpuUsage ?? 0) / 10,
-      gpuTemp: Number(r.gpuTemp ?? 0) / 10,
-      gpuPowerWatts: r.gpuPowerWatts != null ? Number(r.gpuPowerWatts) : null,
-
-      ramTotalGb: this.agentGbToApi(r.ramTotalGb as number | null),
-      ramUsedGb: this.agentGbToApi(r.ramUsedGb as number | null),
-      swapTotalGb: this.agentGbToApi(r.swapTotalGb as number | null),
-      swapUsedGb: this.agentGbToApi(r.swapUsedGb as number | null),
-      vramTotalGb: this.agentGbToApi(r.vramTotalGb as number | null),
-      vramUsedGb: this.agentGbToApi(r.vramUsedGb as number | null),
-
-      // Discos e Rede vêm diretamente como o agentd.py manda
-      disksInfo: r.disks ?? null,
-      diskReadMbps: r.diskReadMbps ?? null,
-      diskWriteMbps: r.diskWriteMbps ?? null,
-      downloadMbps: r.downloadMbps ?? null,
-      uploadMbps: r.uploadMbps ?? null,
-
-      moboTemperature: r.moboTemperature != null ? Number(r.moboTemperature) / 10 : null,
-      activeUsers: r.activeUsers ?? null,
-
-      // Timestamp original da coleta
-      timestamp: r.timestamp ? String(r.timestamp) : new Date().toISOString(),
-    }
+    return normalizeRealtimeTelemetry(raw)
   }
 
   /** Partições vindas do agente (JSON) — id estável para keys no front. */
   private mapMachineDisks(disks: unknown) {
-    if (!Array.isArray(disks)) return []
-    return disks.map((d: Record<string, unknown>, index: number) => ({
-      id: typeof d.id === 'number' ? d.id : index,
+    return enrichDiskPartitions(disks).map((d, index) => ({
+      id: index,
       device: d.device,
       mountpoint: d.mountpoint,
       fstype: d.fstype ?? null,
       totalGb: d.totalGb ?? null,
       freeGb: d.freeGb ?? null,
+      role: d.role ?? 'user',
+      mainDisk: Boolean(d.mainDisk),
     }))
   }
 
@@ -207,6 +178,9 @@ export default class MachinesController {
     if (updateData.customAgentConfig !== undefined) {
       updateData.customAgentConfig = normalizeCustomAgentConfig(updateData.customAgentConfig)
     }
+    if (updateData.disks !== undefined) {
+      updateData.disks = enrichDiskPartitions(updateData.disks)
+    }
     machine.merge(updateData)
     await machine.save()
 
@@ -232,17 +206,31 @@ export default class MachinesController {
   }
 
   /**
-   * Remove uma máquina.
+   * Remove uma máquina (duas fases).
+   *
+   * 1ª chamada: descomissiona (cancela reservas, limpa machine_users, pendingRemoval).
+   *    O agente recebe `decommission: true` no heartbeat e remove lab.* em todas as partições.
+   * 2ª chamada: apaga o registro no banco.
    *
    * DELETE /api/v1/machines/:id
    */
   async destroy({ params, response }: HttpContext) {
     const machine = await Machine.findOrFail(params.id)
 
-    machineCache.invalidateById(machine.id)
-    telemetryBuffer.clearMachine(machine.id)
+    if (!isMachinePendingRemoval(machine)) {
+      const cancelledCount = await prepareMachineDecommission(machine)
+      machineCache.invalidateById(machine.id)
+      machineCache.invalidate(machine.token)
 
-    await machine.delete()
+      return response.accepted({
+        status: 'decommissioning',
+        message:
+          'Máquina marcada para descomissionamento. O agente removerá usuários lab.* na próxima sincronização (~30s). Repita a exclusão para remover o registro.',
+        cancelledAllocations: cancelledCount > 0 ? cancelledCount : undefined,
+      })
+    }
+
+    await finalizeMachineDeletion(machine)
 
     return response.noContent()
   }

@@ -297,13 +297,22 @@ test.group('Machines', (group) => {
       status: 'available',
     })
 
-    // Act
+    // Act — 1ª fase: descomissionamento
     const response = await client.delete(`/api/v1/machines/${machine.id}`).loginAs(admin)
 
     // Assert
-    response.assertStatus(204)
+    response.assertStatus(202)
+    response.assertBodyContains({ status: 'decommissioning' })
 
-    // Verifica que foi removida do banco
+    await machine.refresh()
+    assert.isTrue(
+      Boolean((machine.customAgentConfig as Record<string, unknown>)?.pendingRemoval)
+    )
+
+    // 2ª fase: remove registro
+    const final = await client.delete(`/api/v1/machines/${machine.id}`).loginAs(admin)
+    final.assertStatus(204)
+
     const deleted = await Machine.find(machine.id)
     assert.isNull(deleted)
   })

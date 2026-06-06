@@ -35,6 +35,8 @@ export default class extends BaseSchema {
       // Soft-delete: oculta do histórico do usuário, mas mantém no admin
       table.boolean('user_hidden').defaultTo(false).notNullable()
 
+      table.string('home_mountpoint', 255).nullable()
+
       table.timestamp('created_at')
       table.timestamp('updated_at')
     })

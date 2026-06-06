@@ -37,6 +37,7 @@ const diskItemSchema = vine.object({
   fstype: vine.string().trim().maxLength(32).optional(),
   totalGb: vine.number().min(0).max(100000).optional().nullable(),
   freeGb: vine.number().min(0).max(100000).optional().nullable(),
+  role: vine.enum(['system', 'user'] as const).optional(),
 })
 
 /**

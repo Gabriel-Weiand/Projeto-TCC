@@ -4,6 +4,76 @@ export function diskPartitionKey(d: DiskPartition, index = 0): string {
   return `${d.device}|${d.mountpoint}|${index}`;
 }
 
+export function listUserDiskPartitions(
+  disks: DiskPartition[] | null | undefined,
+): DiskPartition[] {
+  if (!disks?.length) return [];
+  return disks.filter((d) => (d.role ?? "user") === "user" && d.mountpoint);
+}
+
+export function listUserDiskMountpoints(
+  disks: DiskPartition[] | null | undefined,
+): string[] {
+  return listUserDiskPartitions(disks).map((d) => d.mountpoint);
+}
+
+export function resolveMainDiskMountpoint(
+  disks: DiskPartition[] | null | undefined,
+): string | null {
+  const userDisks = listUserDiskPartitions(disks);
+  const main = userDisks.find((d) => d.mainDisk);
+  if (main) return main.mountpoint;
+  return userDisks[0]?.mountpoint ?? null;
+}
+
+export function listAllocatableDiskMountpoints(
+  disks: DiskPartition[] | null | undefined,
+  onlyMainDisk: boolean,
+): string[] {
+  if (onlyMainDisk) {
+    const main = resolveMainDiskMountpoint(disks);
+    return main ? [main] : [];
+  }
+  return listUserDiskMountpoints(disks);
+}
+
+export function applyMainDiskSelection(
+  disks: DiskPartition[],
+  mountpoint: string,
+): DiskPartition[] {
+  return disks.map((d) => ({
+    ...d,
+    mainDisk: (d.role ?? "user") === "user" && d.mountpoint === mountpoint,
+  }));
+}
+
+export function defaultHomeMountForMachine(machine: {
+  disks?: DiskPartition[] | null;
+  onlyMainDisk?: boolean;
+}): string {
+  const allowed = listAllocatableDiskMountpoints(
+    machine.disks,
+    Boolean(machine.onlyMainDisk),
+  );
+  return allowed[0] ?? resolveMainDiskMountpoint(machine.disks) ?? "";
+}
+
+export function formatDiskOptionLabel(
+  mountpoint: string,
+  disks: DiskPartition[] | null | undefined,
+): string {
+  const part = listUserDiskPartitions(disks).find((d) => d.mountpoint === mountpoint);
+  if (!part) return mountpoint;
+  const size =
+    part.totalGb != null ? `${part.totalGb} GB` : "";
+  const main = part.mainDisk ? " · principal" : "";
+  return size ? `${mountpoint} (${size})${main}` : `${mountpoint}${main}`;
+}
+
+export function partitionRoleLabel(role: DiskPartition["role"]): string {
+  return role === "system" ? "Sistema" : "Usuário";
+}
+
 /** Partição com maior capacidade total (para cards resumidos do parque). */
 export function getLargestDisk(
   disks: DiskPartition[] | null | undefined,

@@ -252,7 +252,7 @@ export function buildAgentTelemetryConfig(
   const labPresets = getLabTelemetryPresets()
 
   if (isMachineTelemetryCustom(machine)) {
-    const intervalSeconds = clampTelemetryInterval(
+    const intervalSeconds = clampCustomTelemetryInterval(
       typeof customConfig.intervalSeconds === 'number'
         ? customConfig.intervalSeconds
         : isInAllocation

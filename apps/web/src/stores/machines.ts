@@ -44,8 +44,29 @@ export const useMachinesStore = defineStore("machines", () => {
   }
 
   async function deleteMachine(id: number) {
-    await api.delete(`/api/v1/machines/${id}`);
-    machines.value = machines.value.filter((m) => m.id !== id);
+    const maxAttempts = 10;
+    const waitMs = 35_000;
+
+    for (let attempt = 0; attempt < maxAttempts; attempt++) {
+      const response = await api.delete(`/api/v1/machines/${id}`);
+
+      if (response.status === 204) {
+        machines.value = machines.value.filter((m) => m.id !== id);
+        return;
+      }
+
+      if (response.status === 202) {
+        if (attempt === maxAttempts - 1) {
+          throw new Error(
+            "Descomissionamento ainda em andamento. Aguarde o agente sincronizar e tente excluir novamente.",
+          );
+        }
+        await new Promise((resolve) => setTimeout(resolve, waitMs));
+        continue;
+      }
+
+      throw new Error(`Resposta inesperada ao excluir máquina: HTTP ${response.status}`);
+    }
   }
 
   async function fetchMachineAllocations(

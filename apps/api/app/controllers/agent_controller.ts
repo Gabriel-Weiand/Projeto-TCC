@@ -8,6 +8,7 @@ import { resolveMachineIntervalSeconds } from '#services/telemetry_presets'
 import { machineCache } from '#services/machine_cache'
 import HeartbeatService from '#services/heartbeat_service'
 import Allocation from '#models/allocation'
+import { enrichDiskPartitions, mergeDiskPartitionsFromAgent } from '#services/disk_partitions'
 
 export default class AgentController {
   async heartbeat({ authenticatedMachine, request, response }: HttpContext) {
@@ -35,7 +36,7 @@ export default class AgentController {
     machine.merge(machineData)
 
     if (disks !== undefined && Array.isArray(disks)) {
-      machine.disks = disks
+      machine.disks = mergeDiskPartitionsFromAgent(disks, machine.disks)
     }
 
     await machine.save()
@@ -56,7 +57,14 @@ export default class AgentController {
 
   async telemetry({ authenticatedMachine, request, response }: HttpContext) {
     const machine = authenticatedMachine!
-    const { data } = await request.validateUsing(telemetryReportValidator)
+    const body = request.body() as { data?: Record<string, unknown>[] }
+    if (Array.isArray(body?.data)) {
+      body.data = body.data.map((item) => ({
+        ...item,
+        disksInfo: item.disksInfo ?? item.disks ?? null,
+      }))
+    }
+    const { data } = await telemetryReportValidator.validate(body)
 
     if (data.length === 0) return response.noContent()
 

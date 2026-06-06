@@ -22,6 +22,7 @@ import {
   type AccessType,
 } from '#services/machine_provisioned_users'
 import { getLabAccessConfig } from '#services/lab_config'
+import { resolveHomeDirectory } from '#services/disk_partitions'
 
 export default class HeartbeatService {
   /**
@@ -38,6 +39,18 @@ export default class HeartbeatService {
   ) {
     const now = DateTime.utc()
     const access = getLabAccessConfig()
+
+    if (machine.customAgentConfig && (machine.customAgentConfig as Record<string, unknown>).pendingRemoval) {
+      const telemetry = buildAgentTelemetryConfig(machine, false)
+      return {
+        status: 'acknowledged',
+        decommission: true,
+        agentConfig: { telemetry },
+        provisioning: [],
+        accessControl: { shouldBlock: false },
+        currentAllocation: null,
+      }
+    }
 
     if (payload.sshAttempts && payload.sshAttempts.length > 0) {
       try {
@@ -163,11 +176,17 @@ export default class HeartbeatService {
         }
       )
 
+      const homeDirectory = resolveHomeDirectory(
+        user.systemUsername,
+        allocation.homeMountpoint
+      )
+
       provisioning.push({
         systemUsername: user.systemUsername,
         sshPublicKey: allocationProv.sshPublicKey,
         accessState: allocationProv.accessState,
         revokeSshKey: allocationProv.revokeSshKey,
+        ...(homeDirectory ? { homeDirectory } : {}),
       })
     }
 

@@ -4,6 +4,7 @@ import type { Machine, RealtimeTelemetry } from "@/types";
 import {
   diskPartitionKey,
   diskUsedPct as diskUsedPctUtil,
+  partitionRoleLabel,
   sortDisksBySize,
 } from "@/utils/machineDisks";
 import CollapsibleSection from "@/components/CollapsibleSection.vue";
@@ -26,12 +27,25 @@ const telemetryCollapsed = ref(false);
 const chartsCollapsed = ref(false);
 const disksCollapsed = ref(false);
 
-function calcUsagePct(
+function usagePctWidth(
+  used: number | null | undefined,
+  total: number | null | undefined,
+): number {
+  if (used == null || total == null || total === 0) return 0;
+  return (used / total) * 100;
+}
+
+function fmtPctDisplay(val: number | null | undefined): string {
+  if (val == null) return "—";
+  return `${val.toFixed(1)}%`;
+}
+
+function fmtUsagePctFromPair(
   used: number | null | undefined,
   total: number | null | undefined,
 ): string {
   if (used == null || total == null || total === 0) return "—";
-  return ((used / total) * 100).toFixed(1);
+  return `${((used / total) * 100).toFixed(1)}%`;
 }
 
 function calcUsageColor(
@@ -59,29 +73,34 @@ function tempColor(val: number | null | undefined): string {
   return "var(--danger)";
 }
 
-function fmtGb(val: number | null | undefined): string {
-  if (val == null) return "--";
-  return val.toFixed(1) + " GB";
-}
-
-function fmtRamGb(val: number | null | undefined): string {
-  if (val == null) return "--";
-  return val.toFixed(1) + " GB";
-}
-
-function fmtPct(val: number | null | undefined): string {
-  if (val == null) return "—";
-  return val.toFixed(1);
-}
-
 function fmtTemp(val: number | null | undefined): string {
   if (val == null) return "—";
   return val.toFixed(1);
 }
 
+function fmtGb(val: number | null | undefined): string {
+  if (val == null) return "—";
+  return val.toFixed(1) + " GB";
+}
+
+function fmtRamPair(
+  used: number | null | undefined,
+  total: number | null | undefined,
+): string | null {
+  if (used == null && total == null) return null;
+  const usedLabel = used != null ? `${used.toFixed(1)} GB` : "—";
+  const totalLabel = total != null ? `${total.toFixed(1)} GB` : "—";
+  return `${usedLabel} / ${totalLabel}`;
+}
+
 function fmtMbps(val: number | null | undefined): string {
   if (val == null) return "—";
   return Number(val).toFixed(1);
+}
+
+function fmtTempLine(val: number | null | undefined): string {
+  if (val == null) return "— °C";
+  return `${val.toFixed(1)} °C`;
 }
 
 function diskUsedPct(total: number | null, free: number | null): number {
@@ -98,9 +117,18 @@ function diskUsedPct(total: number | null, free: number | null): number {
     >
       <div v-if="liveData" class="telemetry-grid">
         <div class="tele-card">
-          <span class="tele-label">CPU</span>
+          <div class="tele-label-row">
+            <span class="tele-label">CPU</span>
+            <span
+              v-if="liveData.moboTemperature != null"
+              class="tele-side-meta mobo-meta"
+              :style="{ color: tempColor(liveData.moboTemperature) }"
+            >
+              MOBO: {{ fmtTemp(liveData.moboTemperature) }} °C
+            </span>
+          </div>
           <div class="tele-value" :style="{ color: usageColor(liveData.cpuUsage) }">
-            {{ fmtPct(liveData.cpuUsage) }}%
+            {{ fmtPctDisplay(liveData.cpuUsage) }}
           </div>
           <div class="progress-bar">
             <div
@@ -113,9 +141,9 @@ function diskUsedPct(total: number | null, free: number | null): number {
           </div>
           <div class="tele-sub-row">
             <span class="tele-sub" :style="{ color: tempColor(liveData.cpuTemp) }">
-              {{ fmtTemp(liveData.cpuTemp) }} °C
+              {{ fmtTempLine(liveData.cpuTemp) }}
             </span>
-            <span v-if="liveData.cpuFreqMhz" class="tele-sub tele-muted">
+            <span v-if="liveData.cpuFreqMhz != null" class="tele-sub tele-muted">
               {{ liveData.cpuFreqMhz }} MHz
             </span>
           </div>
@@ -125,14 +153,18 @@ function diskUsedPct(total: number | null, free: number | null): number {
           <div class="tele-label-row">
             <span class="tele-label">GPU</span>
             <span
-              v-if="liveData.vramTotalGb != null && liveData.vramTotalGb > 0"
+              v-if="
+                liveData.vramTotalGb != null &&
+                liveData.vramTotalGb > 0 &&
+                liveData.vramUsedGb != null
+              "
               class="tele-side-meta"
             >
-              {{ fmtRamGb(liveData.vramUsedGb) }} / {{ fmtRamGb(liveData.vramTotalGb) }}
+              {{ liveData.vramUsedGb.toFixed(1) }} GB / {{ liveData.vramTotalGb.toFixed(1) }} GB
             </span>
           </div>
           <div class="tele-value" :style="{ color: usageColor(liveData.gpuUsage) }">
-            {{ fmtPct(liveData.gpuUsage) }}%
+            {{ fmtPctDisplay(liveData.gpuUsage) }}
           </div>
           <div class="progress-bar">
             <div
@@ -145,7 +177,7 @@ function diskUsedPct(total: number | null, free: number | null): number {
           </div>
           <div class="tele-sub-row">
             <span class="tele-sub" :style="{ color: tempColor(liveData.gpuTemp) }">
-              {{ fmtTemp(liveData.gpuTemp) }} °C
+              {{ fmtTempLine(liveData.gpuTemp) }}
             </span>
             <span v-if="liveData.gpuPowerWatts != null" class="tele-sub tele-muted">
               {{ liveData.gpuPowerWatts }} W
@@ -153,47 +185,47 @@ function diskUsedPct(total: number | null, free: number | null): number {
           </div>
         </div>
 
-        <div v-if="liveData.ramTotalGb != null" class="tele-card">
+        <div class="tele-card">
           <span class="tele-label">RAM</span>
           <div
             class="tele-value"
             :style="{ color: calcUsageColor(liveData.ramUsedGb, liveData.ramTotalGb) }"
           >
-            {{ calcUsagePct(liveData.ramUsedGb, liveData.ramTotalGb) }}%
+            {{ fmtUsagePctFromPair(liveData.ramUsedGb, liveData.ramTotalGb) }}
           </div>
           <div class="progress-bar">
             <div
               class="progress-fill"
               :style="{
-                width: calcUsagePct(liveData.ramUsedGb, liveData.ramTotalGb) + '%',
+                width: usagePctWidth(liveData.ramUsedGb, liveData.ramTotalGb) + '%',
                 background: calcUsageColor(liveData.ramUsedGb, liveData.ramTotalGb),
               }"
             ></div>
           </div>
-          <span class="tele-sub">
-            {{ fmtRamGb(liveData.ramUsedGb) }} / {{ fmtRamGb(liveData.ramTotalGb) }}
+          <span v-if="fmtRamPair(liveData.ramUsedGb, liveData.ramTotalGb)" class="tele-sub">
+            {{ fmtRamPair(liveData.ramUsedGb, liveData.ramTotalGb) }}
           </span>
         </div>
 
-        <div v-if="liveData.swapTotalGb != null" class="tele-card">
+        <div class="tele-card">
           <span class="tele-label">Swap</span>
           <div
             class="tele-value"
             :style="{ color: calcUsageColor(liveData.swapUsedGb, liveData.swapTotalGb) }"
           >
-            {{ calcUsagePct(liveData.swapUsedGb, liveData.swapTotalGb) }}%
+            {{ fmtUsagePctFromPair(liveData.swapUsedGb, liveData.swapTotalGb) }}
           </div>
           <div class="progress-bar">
             <div
               class="progress-fill"
               :style="{
-                width: calcUsagePct(liveData.swapUsedGb, liveData.swapTotalGb) + '%',
+                width: usagePctWidth(liveData.swapUsedGb, liveData.swapTotalGb) + '%',
                 background: calcUsageColor(liveData.swapUsedGb, liveData.swapTotalGb),
               }"
             ></div>
           </div>
-          <span class="tele-sub">
-            {{ fmtRamGb(liveData.swapUsedGb) }} / {{ fmtRamGb(liveData.swapTotalGb) }}
+          <span v-if="fmtRamPair(liveData.swapUsedGb, liveData.swapTotalGb)" class="tele-sub">
+            {{ fmtRamPair(liveData.swapUsedGb, liveData.swapTotalGb) }}
           </span>
         </div>
 
@@ -224,13 +256,6 @@ function diskUsedPct(total: number | null, free: number | null): number {
             >
           </div>
         </div>
-
-        <div v-if="liveData.moboTemperature != null" class="tele-card">
-          <span class="tele-label">Placa-Mãe</span>
-          <div class="tele-value" :style="{ color: tempColor(liveData.moboTemperature) }">
-            {{ fmtTemp(liveData.moboTemperature) }} °C
-          </div>
-        </div>
       </div>
       <div v-else class="empty-state section-empty">
         Sem dados de telemetria disponíveis.
@@ -258,6 +283,8 @@ function diskUsedPct(total: number | null, free: number | null): number {
           <span class="disk-col device-col">Dispositivo</span>
           <span class="disk-col mount-col">Montagem</span>
           <span class="disk-col fs-col">FS</span>
+          <span class="disk-col role-col">Tipo</span>
+          <span class="disk-col main-col">Principal</span>
           <span class="disk-col free-col">Livre</span>
           <span class="disk-col size-col">Total</span>
           <span class="disk-col bar-col">Uso</span>
@@ -273,8 +300,23 @@ function diskUsedPct(total: number | null, free: number | null): number {
           <span class="disk-col mount-col">{{ d.mountpoint }}</span>
           <span class="disk-col fs-col">
             <span class="badge badge-info" style="font-size: 0.65rem">{{
-              d.fstype || "--"
+              d.fstype || "—"
             }}</span>
+          </span>
+          <span class="disk-col role-col">
+            <span
+              class="badge"
+              :class="d.role === 'system' ? 'badge-muted' : 'badge-success'"
+              style="font-size: 0.65rem"
+            >
+              {{ partitionRoleLabel(d.role) }}
+            </span>
+          </span>
+          <span class="disk-col main-col">
+            <span v-if="d.mainDisk" class="badge badge-info" style="font-size: 0.65rem">
+              Sim
+            </span>
+            <span v-else class="text-muted">—</span>
           </span>
           <span
             class="disk-col free-col"
@@ -383,6 +425,11 @@ function diskUsedPct(total: number | null, free: number | null): number {
   white-space: nowrap;
 }
 
+.mobo-meta {
+  text-transform: none;
+  letter-spacing: normal;
+}
+
 .tele-sub-row {
   display: flex;
   justify-content: space-between;
@@ -476,6 +523,14 @@ function diskUsedPct(total: number | null, free: number | null): number {
 
 .fs-col {
   width: 70px;
+}
+
+.role-col {
+  width: 72px;
+}
+
+.main-col {
+  width: 64px;
 }
 
 .size-col {

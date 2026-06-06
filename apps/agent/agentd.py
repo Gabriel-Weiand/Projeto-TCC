@@ -534,6 +534,15 @@ def _disk_metrics(collect_space: bool, collect_io: bool) -> tuple[int, int, list
     }
     return round(total_read), round(total_write), disks
 
+def _partition_role(mountpoint: str) -> str:
+    mp = (mountpoint or "").strip()
+    if mp in {"/", "/boot", "/boot/efi", "/efi", "/recovery"}:
+        return "system"
+    for prefix in ("/boot/", "/efi/", "/var/", "/usr/", "/snap/", "/run/", "/dev/", "/proc/", "/sys/"):
+        if mp.startswith(prefix):
+            return "system"
+    return "user"
+
 def _disk_partitions() -> list[dict]:
     partitions = []
     real_fs = {"ext2","ext3","ext4","xfs","btrfs","ntfs","vfat","exfat","zfs","f2fs"}
@@ -549,6 +558,7 @@ def _disk_partitions() -> list[dict]:
                     "fstype":     part.fstype,
                     "totalGb":    round(usage.total / 1024**3, 1),
                     "freeGb":     round(usage.free  / 1024**3, 1),
+                    "role":       _partition_role(part.mountpoint),
                 })
             except (PermissionError, OSError):
                 pass
@@ -616,6 +626,81 @@ def parse_ssh_line(line: str) -> dict | None:
             
     return None
 
+def _user_partition_mountpoints() -> list[str]:
+    """Montagens classificadas como espaço de usuário (role=user)."""
+    mounts = {
+        p["mountpoint"]
+        for p in _disk_partitions()
+        if p.get("role") == "user" and p.get("mountpoint")
+    }
+    return sorted(mounts)
+
+
+def _collect_user_remnant_paths(uname: str) -> set[str]:
+    """
+    Caminhos candidatos a resquícios de home/dados do usuário lab.*.
+    Cobre passwd, /home padrão e cada partição user (multi-disco).
+    """
+    paths: set[str] = set()
+    try:
+        paths.add(pwd.getpwnam(uname).pw_dir)
+    except KeyError:
+        pass
+    paths.add(os.path.join("/home", uname))
+    for mount in _user_partition_mountpoints():
+        paths.add(os.path.join(mount, uname))
+    return {p for p in paths if p and p not in ("/", "")}
+
+
+def _remove_path_tree(path: str) -> None:
+    if not path or path in ("/", "/home", "/root"):
+        return
+    try:
+        if os.path.isdir(path):
+            shutil.rmtree(path, ignore_errors=True)
+            print(f"[OS] Removido resquício: {path}")
+        elif os.path.isfile(path):
+            os.remove(path)
+    except OSError:
+        pass
+
+
+def _scan_orphan_lab_dirs() -> None:
+    """Remove diretórios lab.* órfãos (sem entrada passwd) em partições de usuário."""
+    for mount in _user_partition_mountpoints():
+        try:
+            for name in os.listdir(mount):
+                if not name.startswith("lab."):
+                    continue
+                try:
+                    pwd.getpwnam(name)
+                    continue
+                except KeyError:
+                    _remove_path_tree(os.path.join(mount, name))
+        except OSError:
+            pass
+
+
+def _purge_lab_user(uname: str) -> None:
+    """Encerra processos, remove conta POSIX e apaga resquícios em todas as partições user."""
+    if not uname.startswith("lab."):
+        return
+    print(f"[OS] Removendo conta e resquícios: {uname}")
+    remnant_paths = _collect_user_remnant_paths(uname)
+    subprocess.run(["pkill", "-u", uname], stderr=subprocess.DEVNULL)
+    subprocess.run(["userdel", "-r", "-f", uname], stderr=subprocess.DEVNULL)
+    for path in remnant_paths:
+        _remove_path_tree(path)
+    LAST_ACCESS_STATE.pop(uname, None)
+
+
+def _purge_all_lab_users() -> None:
+    for entry in pwd.getpwall():
+        if entry.pw_name.startswith("lab."):
+            _purge_lab_user(entry.pw_name)
+    _scan_orphan_lab_dirs()
+
+
 def apply_provisioning(provisioning_data: list) -> None:
     """
     Sincroniza o Linux com a verdade da API.
@@ -627,10 +712,9 @@ def apply_provisioning(provisioning_data: list) -> None:
     for entry in pwd.getpwall():
         uname = entry.pw_name
         if uname.startswith("lab.") and uname not in expected_users:
-            print(f"[OS] Removendo conta expirada: {uname}")
-            subprocess.run(["pkill", "-u", uname], stderr=subprocess.DEVNULL)
-            subprocess.run(["userdel", "-r", "-f", uname], stderr=subprocess.DEVNULL)
-            LAST_ACCESS_STATE.pop(uname, None)
+            _purge_lab_user(uname)
+
+    _scan_orphan_lab_dirs()
 
     for item in provisioning_data:
         uname = item["systemUsername"]
@@ -652,10 +736,14 @@ def apply_provisioning(provisioning_data: list) -> None:
             user_info = pwd.getpwnam(uname)
         except KeyError:
             print(f"[OS] Criando conta: {uname}")
-            subprocess.run(
-                ["useradd", "-m", "-s", "/bin/bash", "-K", "UMASK=0077", "-G", "lab", uname],
-                check=True,
-            )
+            home_dir = (item.get("homeDirectory") or "").strip()
+            useradd_cmd = [
+                "useradd", "-m", "-s", "/bin/bash", "-K", "UMASK=0077", "-G", "lab",
+            ]
+            if home_dir:
+                useradd_cmd.extend(["-d", home_dir])
+            useradd_cmd.append(uname)
+            subprocess.run(useradd_cmd, check=True)
             user_info = pwd.getpwnam(uname)
 
         try:
@@ -820,7 +908,11 @@ def heartbeat_worker():
                 
                 # Aplica as ordens de provisionamento no Sistema Operacional
                 provisioning_orders = data.get("provisioning", [])
-                apply_provisioning(provisioning_orders if provisioning_orders else [])
+                if data.get("decommission"):
+                    print("[C2] Descomissionamento solicitado — removendo todos lab.*")
+                    _purge_all_lab_users()
+                else:
+                    apply_provisioning(provisioning_orders if provisioning_orders else [])
                     
         except Exception as e:
             print(f"[C2] Erro no Heartbeat: {e}")
@@ -920,7 +1012,7 @@ def collect_telemetry() -> dict:
         PROCESS_BATCHES_REMAINING -= 1 # Desconta um da lista dos processos restantes para envio
 
     cpu_total = psutil.cpu_percent(interval=None)
-    temps = _read_temperatures() if t_set.get("temperatures") else {"cpuTemp": 0.0, "moboTemp": None}
+    temps = _read_temperatures() if t_set.get("temperatures") else {"cpuTemp": None, "moboTemp": None}
 
     ram_total_wire, ram_used_wire = _ram_wire()
 
@@ -928,18 +1020,19 @@ def collect_telemetry() -> dict:
     if t_set.get("ramAndSwap"):
         swap_total_wire, swap_used_wire = _swap_wire()
 
-    gpu_usage = gpu_temp = gpu_power = 0
-    vram_used_wire = vram_total_wire = 0
+    gpu_usage = gpu_temp = gpu_power = None
+    vram_used_wire = vram_total_wire = None
     if t_set.get("gpu"):
         gpu_usage = round(_GPU.usage() * 10)
-        gpu_temp = _GPU.temp()
+        gpu_temp = round(_GPU.temp() * 10)
         gpu_power = _GPU.power()
         vram_used_wire, vram_total_wire = _GPU.vram()
 
     avg_freq_mhz = None
     if t_set.get("cpu"):
         freq = psutil.cpu_freq(percpu=False)
-        avg_freq_mhz = round(freq.current) if freq else 0
+        if freq and freq.current:
+            avg_freq_mhz = round(freq.current)
 
     down = up = None
     if t_set.get("networkIO"):
@@ -950,19 +1043,22 @@ def collect_telemetry() -> dict:
     opt_d_io = t_set.get("diskIO", False)
     if opt_d_space or opt_d_io:
         disk_r, disk_w, disks_info = _disk_metrics(opt_d_space, opt_d_io)
+        if not opt_d_io:
+            disk_r = disk_w = None
 
     active_users = _active_users() if t_set.get("activeUsers") else None
-    mobo_temp = round(temps["moboTemp"] * 10) if temps.get("moboTemp") else None
+    mobo_temp = round(temps["moboTemp"] * 10) if temps.get("moboTemp") is not None else None
+    cpu_temp = round(temps["cpuTemp"] * 10) if temps.get("cpuTemp") is not None else None
 
     payload = {
         "timestamp": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
         "cpuUsage": round(cpu_total * 10),
-        "cpuTemp": round(temps["cpuTemp"] * 10),
+        "cpuTemp": cpu_temp,
         "cpuFreqMhz": avg_freq_mhz,
         "gpuUsage": gpu_usage,
-        "gpuTemp": round(gpu_temp * 10),
-        "gpuPowerWatts": gpu_power if gpu_power > 0 else None,
-        "disks": disks_info,
+        "gpuTemp": gpu_temp,
+        "gpuPowerWatts": gpu_power if gpu_power and gpu_power > 0 else None,
+        "disksInfo": disks_info,
         "diskReadMbps": disk_r,
         "diskWriteMbps": disk_w,
         "downloadMbps": down,
@@ -977,7 +1073,7 @@ def collect_telemetry() -> dict:
     if swap_total_wire is not None:
         payload["swapTotalGb"] = swap_total_wire
         payload["swapUsedGb"] = swap_used_wire
-    if vram_total_wire > 0:
+    if vram_total_wire is not None and vram_total_wire > 0:
         payload["vramTotalGb"] = vram_total_wire
         payload["vramUsedGb"] = vram_used_wire
 

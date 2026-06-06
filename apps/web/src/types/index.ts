@@ -39,6 +39,9 @@ export interface DiskPartition {
   fstype: string | null;
   totalGb: number | null;
   freeGb: number | null;
+  role?: "system" | "user";
+  /** Volume padrão para home de alocações (admin). */
+  mainDisk?: boolean;
 }
 
 export interface MachineGroupSummary {
@@ -110,6 +113,10 @@ export interface Machine {
   totalRamGb: number | null;
   totalDiskGb: number | null;
   ipAddress: string | null;
+  /** IP público (NAT) definido pelo admin; distinto do IP local do agente. */
+  publicIpAddress?: string | null;
+  /** Restringe reservas ao disco principal (`mainDisk`). */
+  onlyMainDisk?: boolean;
   /** null = porta SSH 22 */
   sshPort: number | null;
   status: "available" | "occupied" | "maintenance" | "offline" | "disabled";
@@ -130,12 +137,12 @@ export interface Machine {
 }
 
 export interface RealtimeTelemetry {
-  timestamp: string; // Garantido agora pelo agente
-  cpuUsage: number;
-  cpuTemp: number;
+  timestamp: string;
+  cpuUsage: number | null;
+  cpuTemp: number | null;
   cpuFreqMhz?: number | null;
-  gpuUsage: number;
-  gpuTemp: number;
+  gpuUsage: number | null;
+  gpuTemp: number | null;
   gpuPowerWatts?: number | null;
   vramTotalGb?: number | null;
   vramUsedGb?: number | null;
@@ -143,13 +150,13 @@ export interface RealtimeTelemetry {
   ramUsedGb?: number | null;
   swapTotalGb?: number | null;
   swapUsedGb?: number | null;
-  disks?: any[] | null;
+  disksInfo?: unknown[] | null;
   diskReadMbps: number | null;
   diskWriteMbps: number | null;
   downloadMbps: number | null;
   uploadMbps: number | null;
   moboTemperature?: number | null;
-  activeUsers: any[] | null;
+  activeUsers: unknown[] | null;
 }
 
 /** Fase operacional (API calcula a partir de `status` + relógio). */
@@ -170,6 +177,8 @@ export interface Allocation {
   startTime: string;
   endTime: string;
   reason: string | null;
+  /** Montagem de disco para home do usuário Unix (ex.: /home, /data). */
+  homeMountpoint?: string | null;
   status: "pending" | "approved" | "denied" | "cancelled" | "finished";
   /** Presente nas respostas da API; use para badge e ações na UI */
   lifecycleStatus?: AllocationLifecycleStatus;

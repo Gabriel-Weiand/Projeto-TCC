@@ -51,6 +51,9 @@ export default class extends BaseSchema {
       // Convertido para JSONB
       table.jsonb('current_sessions').nullable()
 
+      table.boolean('only_main_disk').notNullable().defaultTo(false)
+      table.string('public_ip_address', 45).nullable()
+
       table.timestamp('created_at')
       table.timestamp('updated_at')
     })

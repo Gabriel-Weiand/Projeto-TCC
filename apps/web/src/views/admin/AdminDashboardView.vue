@@ -118,6 +118,14 @@ function statusLabel(s: string) {
   return map[s] || s;
 }
 
+function telePctWidth(val: number | null | undefined): number {
+  return val != null ? val : 0;
+}
+
+function telePctLabel(val: number | null | undefined): string {
+  return val != null ? `${val.toFixed(0)}%` : "—";
+}
+
 function ramUsagePct(t: RealtimeTelemetry): number {
   const total = t.ramTotalGb;
   const used = t.ramUsedGb;
@@ -209,10 +217,10 @@ function goToMachine(m: Machine) {
                 <div class="progress-bar" style="flex: 1">
                   <div
                     class="progress-fill"
-                    :style="{ width: m.latestTelemetry.cpuUsage + '%' }"
+                    :style="{ width: telePctWidth(m.latestTelemetry.cpuUsage) + '%' }"
                   ></div>
                 </div>
-                <span>{{ m.latestTelemetry.cpuUsage.toFixed(0) }}%</span>
+                <span>{{ telePctLabel(m.latestTelemetry.cpuUsage) }}</span>
               </div>
               <div class="ms-tele-row">
                 <span>RAM</span>
@@ -229,10 +237,10 @@ function goToMachine(m: Machine) {
                 <div class="progress-bar" style="flex: 1">
                   <div
                     class="progress-fill"
-                    :style="{ width: m.latestTelemetry.gpuUsage + '%' }"
+                    :style="{ width: telePctWidth(m.latestTelemetry.gpuUsage) + '%' }"
                   ></div>
                 </div>
-                <span>{{ m.latestTelemetry.gpuUsage.toFixed(0) }}%</span>
+                <span>{{ telePctLabel(m.latestTelemetry.gpuUsage) }}</span>
               </div>
             </div>
           </template>

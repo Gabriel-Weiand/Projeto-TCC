@@ -2,6 +2,21 @@ import { BaseSeeder } from '@adonisjs/lucid/seeders'
 import { DateTime } from 'luxon'
 import Machine from '#models/machine'
 import MachineGroup from '#models/machine_group'
+import { enrichDiskPartitions, type DiskPartitionRecord } from '#services/disk_partitions'
+
+type SeedDisk = {
+  device: string
+  mountpoint: string
+  fstype: string
+  totalGb: number
+  freeGb: number
+  role?: 'system' | 'user'
+  mainDisk?: boolean
+}
+
+function seedDisks(raw: SeedDisk[]): DiskPartitionRecord[] {
+  return enrichDiskPartitions(raw)
+}
 
 /**
  * Parque alinhado ao lab de pesquisa em vídeo (CUDA, codecs, deep learning de vídeo).
@@ -69,6 +84,8 @@ export default class extends BaseSeeder {
       'PC-LAB-08': 'SHA256:ingest_4k_host_fp_demo_lab08',
       'PC-LAB-09': 'SHA256:rx7600_detection_host_fp_demo_lab09',
       'PC-LAB-10': 'SHA256:ryzen5600g_editing_host_fp_demo_lab10',
+      'PC-LAB-11': 'SHA256:multi_disk_free_choice_host_fp_demo_lab11',
+      'PC-LAB-12': 'SHA256:multi_disk_main_only_host_fp_demo_lab12',
     }
 
     const machines = [
@@ -87,13 +104,15 @@ export default class extends BaseSeeder {
         status: 'occupied' as const,
         telemetryPreset: 'fast' as const,
         customAgentConfig: baseConfig,
-        disks: [
+        onlyMainDisk: false,
+        disks: seedDisks([
           {
             device: '/dev/nvme0n1p3',
             mountpoint: '/',
             fstype: 'ext4',
             totalGb: 190.2,
             freeGb: 102.6,
+            role: 'system',
           },
           {
             device: '/dev/sda1',
@@ -101,12 +120,14 @@ export default class extends BaseSeeder {
             fstype: 'ext4',
             totalGb: 2000,
             freeGb: 1400,
+            role: 'user',
+            mainDisk: true,
           },
-        ],
+        ]),
       },
       {
         name: 'PC-LAB-02',
-        description: 'RTX 4090 — fine-tuning e inferência batch (reservas longas)',
+        description: 'RTX 4090 — fine-tuning (multi-disco, só disco principal)',
         machineGroupId: groupVideoCuda.id,
         cpuModel: 'Intel Core i9-13900K',
         gpuModel: 'NVIDIA GeForce RTX 4090 24GB',
@@ -118,20 +139,38 @@ export default class extends BaseSeeder {
         status: 'occupied' as const,
         telemetryPreset: 'fast' as const,
         customAgentConfig: baseConfig,
-        disks: [
-          { device: '/dev/nvme0n1p3', mountpoint: '/', fstype: 'ext4', totalGb: 3800, freeGb: 2100 },
+        onlyMainDisk: true,
+        disks: seedDisks([
+          {
+            device: '/dev/nvme0n1p3',
+            mountpoint: '/',
+            fstype: 'ext4',
+            totalGb: 3800,
+            freeGb: 2100,
+            role: 'system',
+          },
           {
             device: '/dev/sdb1',
             mountpoint: '/datasets/raw',
             fstype: 'xfs',
             totalGb: 8000,
             freeGb: 6200,
+            role: 'user',
+            mainDisk: true,
           },
-        ],
+          {
+            device: '/dev/sdc1',
+            mountpoint: '/scratch/fast',
+            fstype: 'xfs',
+            totalGb: 4000,
+            freeGb: 3200,
+            role: 'user',
+          },
+        ]),
       },
       {
         name: 'PC-LAB-03',
-        description: 'RTX A6000 48GB — modelos grandes de vídeo e multi-stream CUDA',
+        description: 'RTX A6000 48GB — multi-disco, escolha livre de volume',
         machineGroupId: groupVideoCuda.id,
         cpuModel: 'AMD Ryzen Threadripper 3970X 32-Core',
         gpuModel: 'NVIDIA RTX A6000 48GB',
@@ -143,10 +182,34 @@ export default class extends BaseSeeder {
         status: 'available' as const,
         telemetryPreset: 'custom' as const,
         customAgentConfig: { ...baseConfig, intervalSeconds: 8, batchSize: 6 },
-        disks: [
-          { device: '/dev/nvme0n1p1', mountpoint: '/', fstype: 'btrfs', totalGb: 2000, freeGb: 450 },
-          { device: '/dev/sda1', mountpoint: '/scratch', fstype: 'xfs', totalGb: 12000, freeGb: 8000 },
-        ],
+        onlyMainDisk: false,
+        disks: seedDisks([
+          {
+            device: '/dev/nvme0n1p1',
+            mountpoint: '/',
+            fstype: 'btrfs',
+            totalGb: 2000,
+            freeGb: 450,
+            role: 'system',
+          },
+          {
+            device: '/dev/nvme0n1p2',
+            mountpoint: '/home',
+            fstype: 'btrfs',
+            totalGb: 500,
+            freeGb: 320,
+            role: 'user',
+          },
+          {
+            device: '/dev/sda1',
+            mountpoint: '/scratch',
+            fstype: 'xfs',
+            totalGb: 12000,
+            freeGb: 8000,
+            role: 'user',
+            mainDisk: true,
+          },
+        ]),
       },
       {
         name: 'PC-LAB-04',
@@ -162,10 +225,26 @@ export default class extends BaseSeeder {
         status: 'maintenance' as const,
         telemetryPreset: 'eco' as const,
         customAgentConfig: baseConfig,
-        disks: [
-          { device: '/dev/nvme0n1p1', mountpoint: '/', fstype: 'ext4', totalGb: 1800, freeGb: 200 },
-          { device: '/dev/sda1', mountpoint: '/render', fstype: 'ext4', totalGb: 6000, freeGb: 1200 },
-        ],
+        onlyMainDisk: false,
+        disks: seedDisks([
+          {
+            device: '/dev/nvme0n1p1',
+            mountpoint: '/',
+            fstype: 'ext4',
+            totalGb: 1800,
+            freeGb: 200,
+            role: 'system',
+          },
+          {
+            device: '/dev/sda1',
+            mountpoint: '/render',
+            fstype: 'ext4',
+            totalGb: 6000,
+            freeGb: 1200,
+            role: 'user',
+            mainDisk: true,
+          },
+        ]),
       },
       {
         name: 'PC-LAB-05',
@@ -181,10 +260,34 @@ export default class extends BaseSeeder {
         status: 'available' as const,
         telemetryPreset: 'fast' as const,
         customAgentConfig: baseConfig,
-        disks: [
-          { device: '/dev/sda1', mountpoint: '/', fstype: 'ext4', totalGb: 500, freeGb: 180 },
-          { device: '/dev/sda2', mountpoint: '/sim', fstype: 'ext4', totalGb: 3500, freeGb: 900 },
-        ],
+        onlyMainDisk: false,
+        disks: seedDisks([
+          {
+            device: '/dev/sda1',
+            mountpoint: '/',
+            fstype: 'ext4',
+            totalGb: 500,
+            freeGb: 180,
+            role: 'system',
+          },
+          {
+            device: '/dev/sda2',
+            mountpoint: '/sim',
+            fstype: 'ext4',
+            totalGb: 3500,
+            freeGb: 900,
+            role: 'user',
+            mainDisk: true,
+          },
+          {
+            device: '/dev/sdb1',
+            mountpoint: '/bulk',
+            fstype: 'ext4',
+            totalGb: 8000,
+            freeGb: 6100,
+            role: 'user',
+          },
+        ]),
       },
       {
         name: 'PC-LAB-06',
@@ -199,10 +302,34 @@ export default class extends BaseSeeder {
         status: 'offline' as const,
         telemetryPreset: 'eco' as const,
         customAgentConfig: { ...baseConfig, telemetrySet: { ...baseConfig.telemetrySet, gpu: false } },
-        disks: [
-          { device: '/dev/nvme0n1p1', mountpoint: '/', fstype: 'ext4', totalGb: 960, freeGb: 400 },
-          { device: '/dev/md0', mountpoint: '/data/video', fstype: 'xfs', totalGb: 24000, freeGb: 18000 },
-        ],
+        onlyMainDisk: true,
+        disks: seedDisks([
+          {
+            device: '/dev/nvme0n1p1',
+            mountpoint: '/',
+            fstype: 'ext4',
+            totalGb: 960,
+            freeGb: 400,
+            role: 'system',
+          },
+          {
+            device: '/dev/md0',
+            mountpoint: '/data/video',
+            fstype: 'xfs',
+            totalGb: 24000,
+            freeGb: 18000,
+            role: 'user',
+            mainDisk: true,
+          },
+          {
+            device: '/dev/sdb1',
+            mountpoint: '/data/staging',
+            fstype: 'xfs',
+            totalGb: 8000,
+            freeGb: 7200,
+            role: 'user',
+          },
+        ]),
       },
       {
         name: 'PC-LAB-07',
@@ -218,13 +345,21 @@ export default class extends BaseSeeder {
         status: 'available' as const,
         telemetryPreset: 'eco' as const,
         customAgentConfig: baseConfig,
-        disks: [
-          { device: '/dev/nvme0n1p1', mountpoint: '/', fstype: 'ext4', totalGb: 1000, freeGb: 520 },
-        ],
+        onlyMainDisk: false,
+        disks: seedDisks([
+          {
+            device: '/dev/nvme0n1p1',
+            mountpoint: '/',
+            fstype: 'ext4',
+            totalGb: 1000,
+            freeGb: 520,
+            role: 'system',
+          },
+        ]),
       },
       {
         name: 'PC-LAB-08',
-        description: 'Ingestão 4K — NVMe + HDD para corpora de pesquisa',
+        description: 'Ingestão 4K — multi-disco, só disco principal (/archive)',
         machineGroupId: groupData.id,
         cpuModel: 'Intel Core i5-12400',
         gpuModel: 'Intel UHD Graphics 730',
@@ -235,10 +370,34 @@ export default class extends BaseSeeder {
         status: 'available' as const,
         telemetryPreset: 'eco' as const,
         customAgentConfig: baseConfig,
-        disks: [
-          { device: '/dev/nvme0n1p1', mountpoint: '/', fstype: 'ext4', totalGb: 512, freeGb: 310 },
-          { device: '/dev/sda1', mountpoint: '/archive', fstype: 'ext4', totalGb: 8000, freeGb: 6500 },
-        ],
+        onlyMainDisk: true,
+        disks: seedDisks([
+          {
+            device: '/dev/nvme0n1p1',
+            mountpoint: '/',
+            fstype: 'ext4',
+            totalGb: 512,
+            freeGb: 310,
+            role: 'system',
+          },
+          {
+            device: '/dev/sda1',
+            mountpoint: '/archive',
+            fstype: 'ext4',
+            totalGb: 8000,
+            freeGb: 6500,
+            role: 'user',
+            mainDisk: true,
+          },
+          {
+            device: '/dev/sdb1',
+            mountpoint: '/ingest',
+            fstype: 'ext4',
+            totalGb: 4000,
+            freeGb: 3600,
+            role: 'user',
+          },
+        ]),
       },
       {
         name: 'PC-LAB-09',
@@ -255,10 +414,34 @@ export default class extends BaseSeeder {
         status: 'occupied' as const,
         telemetryPreset: 'fast' as const,
         customAgentConfig: baseConfig,
-        disks: [
-          { device: '/dev/nvme0n1p1', mountpoint: '/', fstype: 'ext4', totalGb: 1000, freeGb: 640 },
-          { device: '/dev/sda1', mountpoint: '/models', fstype: 'ext4', totalGb: 2000, freeGb: 1500 },
-        ],
+        onlyMainDisk: false,
+        disks: seedDisks([
+          {
+            device: '/dev/nvme0n1p1',
+            mountpoint: '/',
+            fstype: 'ext4',
+            totalGb: 1000,
+            freeGb: 640,
+            role: 'system',
+          },
+          {
+            device: '/dev/nvme0n1p2',
+            mountpoint: '/home',
+            fstype: 'ext4',
+            totalGb: 400,
+            freeGb: 280,
+            role: 'user',
+          },
+          {
+            device: '/dev/sda1',
+            mountpoint: '/models',
+            fstype: 'ext4',
+            totalGb: 2000,
+            freeGb: 1500,
+            role: 'user',
+            mainDisk: true,
+          },
+        ]),
       },
       {
         name: 'PC-LAB-10',
@@ -273,9 +456,103 @@ export default class extends BaseSeeder {
         status: 'available' as const,
         telemetryPreset: 'eco' as const,
         customAgentConfig: baseConfig,
-        disks: [
-          { device: '/dev/nvme0n1p1', mountpoint: '/', fstype: 'ext4', totalGb: 512, freeGb: 200 },
-        ],
+        onlyMainDisk: false,
+        disks: seedDisks([
+          {
+            device: '/dev/nvme0n1p1',
+            mountpoint: '/',
+            fstype: 'ext4',
+            totalGb: 512,
+            freeGb: 200,
+            role: 'system',
+          },
+        ]),
+      },
+      {
+        name: 'PC-LAB-11',
+        description: 'Demo multi-disco — escolha livre (/home ou /data/lab, principal em /data/lab)',
+        machineGroupId: groupData.id,
+        cpuModel: 'Intel Core i7-13700K',
+        gpuModel: 'NVIDIA GeForce RTX 4070 12GB',
+        totalVramGb: 120,
+        totalRamGb: 640,
+        ipAddress: '192.168.8.50',
+        sshPort: null,
+        hostFingerprint: hostFingerprints['PC-LAB-11'],
+        status: 'available' as const,
+        telemetryPreset: 'eco' as const,
+        customAgentConfig: baseConfig,
+        onlyMainDisk: false,
+        disks: seedDisks([
+          {
+            device: '/dev/nvme0n1p1',
+            mountpoint: '/',
+            fstype: 'ext4',
+            totalGb: 900,
+            freeGb: 480,
+            role: 'system',
+          },
+          {
+            device: '/dev/nvme0n1p2',
+            mountpoint: '/home',
+            fstype: 'ext4',
+            totalGb: 600,
+            freeGb: 410,
+            role: 'user',
+          },
+          {
+            device: '/dev/sda1',
+            mountpoint: '/data/lab',
+            fstype: 'xfs',
+            totalGb: 6000,
+            freeGb: 5200,
+            role: 'user',
+            mainDisk: true,
+          },
+        ]),
+      },
+      {
+        name: 'PC-LAB-12',
+        description: 'Demo multi-disco — somente principal (/data/lab, onlyMainDisk)',
+        machineGroupId: groupData.id,
+        cpuModel: 'Intel Core i7-13700K',
+        gpuModel: 'NVIDIA GeForce RTX 4070 12GB',
+        totalVramGb: 120,
+        totalRamGb: 640,
+        ipAddress: '192.168.8.51',
+        sshPort: null,
+        hostFingerprint: hostFingerprints['PC-LAB-12'],
+        status: 'available' as const,
+        telemetryPreset: 'eco' as const,
+        customAgentConfig: baseConfig,
+        onlyMainDisk: true,
+        disks: seedDisks([
+          {
+            device: '/dev/nvme0n1p1',
+            mountpoint: '/',
+            fstype: 'ext4',
+            totalGb: 900,
+            freeGb: 480,
+            role: 'system',
+          },
+          {
+            device: '/dev/nvme0n1p2',
+            mountpoint: '/home',
+            fstype: 'ext4',
+            totalGb: 600,
+            freeGb: 410,
+            role: 'user',
+          },
+          {
+            device: '/dev/sda1',
+            mountpoint: '/data/lab',
+            fstype: 'xfs',
+            totalGb: 6000,
+            freeGb: 5200,
+            role: 'user',
+            mainDisk: true,
+          },
+        ]),
       },
     ]
 
@@ -291,6 +568,8 @@ export default class extends BaseSeeder {
       'PC-LAB-07': 8,
       'PC-LAB-09': 5,
       'PC-LAB-10': 12,
+      'PC-LAB-11': 2,
+      'PC-LAB-12': 2,
     }
 
     console.log('\n--- Tokens das máquinas (MACHINE_TOKEN no agente) ---')

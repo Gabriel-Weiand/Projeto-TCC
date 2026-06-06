@@ -32,6 +32,10 @@ import {
 } from '#services/notification_service'
 import { parseUtcFromIso } from '#utils/datetime'
 import {
+  canChangeAllocationHomeMount,
+  resolveAllocationHomeMountForCreate,
+} from '#services/allocation_home_mount'
+import {
   buildOccupiedMachineIds,
   resolveEffectiveMachineStatus,
 } from '#services/machine_effective_status'
@@ -183,6 +187,12 @@ export default class AllocationsController {
       if (!data.userId) data.userId = user.id
       data.status = resolveInitialAllocationStatus('admin', data.status)
     }
+
+    const homeResolved = resolveAllocationHomeMountForCreate(machine, data.homeMountpoint)
+    if (homeResolved.error) {
+      return response.badRequest({ code: 'INVALID_HOME_MOUNT', message: homeResolved.error })
+    }
+    data.homeMountpoint = homeResolved.homeMountpoint
 
     const allocation = await Allocation.create(data)
     await allocation.load('machine')
@@ -396,6 +406,31 @@ export default class AllocationsController {
     }
 
     const previousStatus = allocation.status
+
+    if (data.homeMountpoint !== undefined) {
+      if (user.role !== 'admin') {
+        return response.forbidden({
+          code: 'CANNOT_CHANGE_HOME_MOUNT',
+          message: 'Somente administradores podem alterar o disco da alocação.',
+        })
+      }
+      if (!canChangeAllocationHomeMount(allocation)) {
+        return response.badRequest({
+          code: 'HOME_MOUNT_LOCKED',
+          message: 'O disco só pode ser alterado enquanto a reserva está aprovada e ainda não começou.',
+        })
+      }
+      await allocation.load('machine')
+      const homeResolved = resolveAllocationHomeMountForCreate(
+        allocation.machine,
+        data.homeMountpoint
+      )
+      if (homeResolved.error) {
+        return response.badRequest({ code: 'INVALID_HOME_MOUNT', message: homeResolved.error })
+      }
+      data.homeMountpoint = homeResolved.homeMountpoint
+    }
+
     allocation.merge(data)
     await allocation.save()
 

@@ -19,12 +19,12 @@ const processSchema = vine.object({
 const telemetrySchema = vine.object({
   timestamp: vine.string(),
 
-  // CPU e GPU
-  cpuUsage: vine.number().min(0).max(1000),
-  cpuTemp: vine.number().min(0).max(1500),
+  // CPU e GPU — null quando métrica não coletada; 0 é valor válido
+  cpuUsage: vine.number().min(0).max(1000).nullable().optional(),
+  cpuTemp: vine.number().min(0).max(1500).nullable().optional(),
   cpuFreqMhz: vine.number().min(0).nullable().optional(),
-  gpuUsage: vine.number().min(0).max(1000),
-  gpuTemp: vine.number().min(0).max(1500),
+  gpuUsage: vine.number().min(0).max(1000).nullable().optional(),
+  gpuTemp: vine.number().min(0).max(1500).nullable().optional(),
   gpuPowerWatts: vine.number().min(0).nullable().optional(),
 
   // ATUALIZADO PARA GB

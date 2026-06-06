@@ -18,6 +18,7 @@ export const createAllocationValidator = vine.compile(
     startTime: vine.string().transform((v) => parseUtcFromIso(v)),
     endTime: vine.string().transform((v) => parseUtcFromIso(v)),
     reason: vine.string().trim().maxLength(200).optional(),
+    homeMountpoint: vine.string().trim().maxLength(255).nullable().optional(),
     status: vine
       .enum(['pending', 'approved', 'denied', 'cancelled', 'finished'] as const)
       .optional(),
@@ -41,6 +42,7 @@ export const updateAllocationValidator = vine.compile(
     startTime: vine.string().transform((value) => parseUtcFromIso(value)).optional(),
     endTime: vine.string().transform((value) => parseUtcFromIso(value)).optional(),
     reason: vine.string().trim().maxLength(200).nullable().optional(),
+    homeMountpoint: vine.string().trim().maxLength(255).nullable().optional(),
     status: vine
       .enum(['pending', 'approved', 'denied', 'cancelled', 'finished'] as const)
       .optional(),

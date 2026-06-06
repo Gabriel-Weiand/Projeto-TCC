@@ -71,8 +71,10 @@ async function handleDelete(m: Machine, event: Event) {
   if (!confirm(`Excluir "${m.name}"? Esta ação não pode ser desfeita.`)) return;
   try {
     await store.deleteMachine(m.id);
-  } catch {
-    alert("Erro ao excluir máquina.");
+  } catch (err) {
+    alert(
+      err instanceof Error ? err.message : "Erro ao excluir máquina.",
+    );
   }
 }
 
