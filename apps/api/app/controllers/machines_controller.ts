@@ -22,7 +22,7 @@ import { DateTime } from 'luxon'
 import { cancelAllocationsForMaintenance } from '#services/notification_service'
 import { normalizeCustomAgentConfig } from '#services/telemetry_presets'
 import { normalizeRealtimeTelemetry } from '#services/telemetry_normalize'
-import { enrichDiskPartitions } from '#services/disk_partitions'
+import { enrichDiskPartitions, validateMachineDiskPolicy } from '#services/disk_partitions'
 import {
   buildOccupiedMachineIds,
   normalizeOperationalMode,
@@ -56,6 +56,7 @@ export default class MachinesController {
       freeGb: d.freeGb ?? null,
       role: d.role ?? 'user',
       mainDisk: Boolean(d.mainDisk),
+      allocatable: d.role === 'user' ? d.allocatable !== false : false,
     }))
   }
 
@@ -180,6 +181,14 @@ export default class MachinesController {
     }
     if (updateData.disks !== undefined) {
       updateData.disks = enrichDiskPartitions(updateData.disks)
+    }
+    const onlyMainDisk =
+      updateData.onlyMainDisk !== undefined ? Boolean(updateData.onlyMainDisk) : machine.onlyMainDisk
+    if (updateData.disks !== undefined) {
+      const policyError = validateMachineDiskPolicy(updateData.disks, onlyMainDisk)
+      if (policyError) {
+        return response.unprocessableEntity({ message: policyError })
+      }
     }
     machine.merge(updateData)
     await machine.save()

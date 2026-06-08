@@ -29,6 +29,7 @@ Documentação de referência do daemon `agentd.py` — comunicação com a API 
 16. [Auditoria SSH](#16-auditoria-ssh)
 17. [Resiliência e falhas](#17-resiliência-e-falhas)
 18. [Hardening no boot](#18-hardening-no-boot)
+19. [Catálogo de funções de captura](#19-catálogo-de-funções-de-captura)
 
 ---
 
@@ -275,7 +276,8 @@ Se falhar (API offline, timeout 5 s), permanece `_ECO_TELEMETRY_OFFLINE` até o 
 | `sshPublicKey` | `ssh-ed25519 ...` ou vazio | Escrita em `~/.ssh/authorized_keys`; **só ed25519** é aceita |
 | `accessState` | `full_shell` \| `sftp_only` | `/bin/bash` vs `SFTP_SHELL` |
 | `revokeSshKey` | boolean | Se `true`, trunca `authorized_keys` (fase `no_key`) |
-| `homeDirectory` | path absoluto, opcional | `useradd -d` na **criação**; ver [Multi-disco](#9-multi-disco-home-e-conflitos) |
+| `homeDirectory` | path absoluto, opcional | `useradd -d` na criação; `usermod -d` se `allowHomeMigration` |
+| `allowHomeMigration` | boolean, opcional | `true` quando reservas antigas só em `no_key` — ver [§9](#correção-implementada-migração-de-home-no_key) |
 
 **API — quem entra em `provisioning`:**
 
@@ -401,12 +403,101 @@ Funções: `normalizeAllocationHomeMount`, `listAllocatableDiskMountpoints`, `re
 |---------|------------|
 | Reserva pede `/data` mas `onlyMainDisk=true` | API rejeita na criação (`422`) |
 | Mount inválido / sistema | API rejeita — agente nunca recebe |
-| Duas reservas sequenciais, discos diferentes | Home fixo na 1ª criação; admin deve aguardar teardown (`endTime + 7d`) ou remover usuário manualmente |
+| Duas reservas sequenciais, discos diferentes | Home na 1ª criação; **migração em `no_key`** da antiga via `allowHomeMigration` ([§9](#correção-implementada-migração-de-home-no_key)) |
 | Dados órfãos após `userdel` falho parcial | `_scan_orphan_lab_dirs()` remove dirs `lab.*` sem passwd em partições user |
 | Admin remove usuário provisionado | DELETE `machine_users` → próximo heartbeat sem item → drift + purge multi-partição |
 | Mesmo usuário, duas alocações | API escolhe **fase dominante** (`resolveDominantAccessForUser`) — prevalece `active`/`grace` sobre `no_key` antiga |
 | sync-specs atualiza discos | `mergeDiskPartitionsFromAgent` mantém `mainDisk`/`role` admin |
 
+### Edge-case: homes em discos diferentes, alocações sobrepostas
+
+Cenário típico:
+
+- Alocação **A** em `/data/lab` → home `/data/lab/lab.aluno` — fase `no_key` ou perto de `teardown`
+- Alocação **B** no **mesmo PC**, disco `/scratch` → home desejado `/scratch/lab.aluno` — fase `active`
+
+**A exclusão/teardown de A interfere na alocação B ativa?**
+
+**Não, na conta nem no acesso.** Motivos:
+
+1. **Provisionamento é por usuário POSIX** (`lab.aluno`), não por alocação nem por disco. O agente recebe **no máximo uma** entrada em `provisioning[]` por `systemUsername`.
+2. **`resolveDominantAccessForUser`** (`allocation_access.ts`) compara todas as alocações `approved`/`finished` do mesmo `userId` na máquina e escolhe a fase de **maior rank** (`PHASE_RANK`: `active`=50 > `grace`=40 > … > `no_key`=10 > `teardown`=0).
+3. Enquanto **B** estiver `active`/`grace`/`prepare`/`post_sftp`, a fase dominante **não** é `teardown` de A → o usuário **permanece** em `provisioning` → o agente **não** executa `_purge_lab_user` (drift só remove quem **não** está na lista).
+4. **`homeDirectory` + `allowHomeMigration` no heartbeat** — vêm da alocação dominante. Na **1ª criação**, `useradd -d`. Se a conta já existe e `allowHomeMigration: true` (só quando reservas antigas estão em `no_key`/`none`/`teardown`), o agente faz `usermod -d` para o disco da reserva nova **sem apagar** a home antiga.
+
+**O que acontece com os dados em cada disco?**
+
+| Momento | Disco A (`/data/lab/...`) | Disco B (`/scratch/...`) | Conta `lab.aluno` |
+|---------|---------------------------|--------------------------|-------------------|
+| A em `no_key`, B `active` | Pasta antiga **permanece** (não há purge por alocação) | Dados novos se o usuário gravar manualmente em `/scratch` | Mantida, bash ativo (dominante B) |
+| A entra em `teardown` sozinha | Pasta **ainda não apagada** | Idem | **Mantida** (B ainda exige provisioning) |
+| B também passa `teardown` + `deleteUserDays` | — | — | Sai de `provisioning` → `_purge_lab_user` |
+| Purge final | `_collect_user_remnant_paths` varre **todas** as partições `user` + `/home` + passwd | Idem — **ambas** as pastas `lab.aluno` são candidatas à remoção | `userdel -r -f` + `rmtree` nos paths |
+
+**Conclusão:** teardown de A **não** derruba sessão, chave nem conta enquanto B (ou outra alocação do mesmo usuário) ainda exigir acesso. A limpeza física é **por conta**, não por alocação/disco — só ocorre quando **nenhuma** alocação daquele usuário na máquina precisa mais de provisioning. Resíduos no disco da alocação antiga podem ficar no filesystem até esse purge final (comportamento intencional para não apagar dados enquanto o mesmo `lab.*` ainda está ativo).
+
+**Diagrama de decisão (API → agente):**
+
+```text
+Alocações do userId na máquina
+        │
+        ▼
+resolveDominantAccessForUser  ──► fase dominante + allocation B
+        │
+        ▼
+phaseToProvisioning + resolveHomeDirectory(B.homeMountpoint)
+        │
+        ▼
+provisioning: [{ systemUsername, accessState, homeDirectory?, ... }]
+        │
+        ▼
+Agente: conta em expected_users?  SIM → não purge
+                                   NÃO → _purge_lab_user (multi-partição)
+```
+
+### Alocações próximas: disco efetivo no login (comportamento atual)
+
+Premissa: alocação **A** já criou `lab.aluno` com home em **disco A** (`useradd -d` no `prepare` de A). Alocação **B** reserva **disco B** no mesmo PC.
+
+| Estado da alocação antiga (A) | Nova reserva (B) | Shell dominante (típico) | Disco/home efetivo no SSH/SFTP **hoje** |
+|------------------------------|------------------|--------------------------|----------------------------------------|
+| `post_sftp` | B em `prepare` | SFTP (`prepare` > `post_sftp`) | **Disco A** — home do `passwd` |
+| `post_sftp` | B `active` | Bash | **Disco A** |
+| `no_key` | B em `prepare` / `active` / `grace` | conforme B | **Disco B** após heartbeat com `allowHomeMigration` |
+| `teardown` (conta ainda não purgada)* | B em `prepare`/`active` | conforme B | **Disco A** até purge, depois **disco B** no próximo `useradd` |
+| Conta purgada (`userdel`) | B em `prepare` (1ª criação) | SFTP → bash | **Disco B** — novo `useradd -d` |
+
+\*Enquanto B mantém o usuário em `provisioning`, A em `teardown` sozinha **não** dispara purge; a linha relevante é “conta purgada” quando **nenhuma** alocação exige mais a conta.
+
+**Janela problemática (aceita):** A ainda em `post_sftp` e B começando — SFTP/bash da reserva nova, mas home permanece no **disco A** até A passar a `no_key` (sem chave útil na home antiga).
+
+### Correção implementada: migração de home em `no_key`
+
+**Quando:** alocação dominante B envia `homeDirectory` em disco B e **nenhuma** outra alocação do mesmo usuário na máquina está em `post_sftp`, `active`, `grace` ou `prepare` — tipicamente, a reserva antiga A só resta em **`no_key`**.
+
+**API** (`allowHomeMigrationForUser` em `allocation_access.ts` → `heartbeat_service.ts`):
+
+```json
+{
+  "systemUsername": "lab.aluno",
+  "homeDirectory": "/scratch/lab.aluno",
+  "allowHomeMigration": true,
+  "accessState": "full_shell",
+  "sshPublicKey": "ssh-ed25519 ..."
+}
+```
+
+**Agente** (`_maybe_migrate_user_home` em `agentd.py`), se `pw_dir` ≠ `homeDirectory`:
+
+1. `pkill -u` (sessões residuais)
+2. `mkdir` + `chown` da nova home
+3. `usermod -d` (sem `-m` — discos distintos)
+4. Fluxo normal grava `authorized_keys` na **nova** home
+5. **Não apaga** arquivos no disco A
+
+**Expiração da alocação A:** quando A entra em `teardown` (`endTime + 7d`), ela **deixa de exigir** provisioning, mas a conta **permanece** enquanto B (ou outra reserva) ainda precisar de acesso. Só quando **nenhuma** alocação do usuário na máquina exigir provisioning é que o drift faz `userdel` + purge multi-partição. Se B ainda estiver ativa, o usuário **continua** no disco B; se B também expirou, purge remove ambas as árvores de dados.
+
+**Limitação remanescente:** overlap com A em `post_sftp` — home fica no disco A até A ir para `no_key`.
 ### Diagrama reserva → home
 
 ```text
@@ -538,6 +629,8 @@ Objetivo: copiar artefatos da home sem terminal. Shell = `SFTP_SHELL` detectado 
 
 `buildAgentTelemetryConfig` também aplica `clampCustomTelemetryInterval` (mín. 2 s).
 
+Implementação detalhada de cada coletor: [§19 Catálogo de funções de captura](#19-catálogo-de-funções-de-captura).
+
 ---
 
 ## 14. Threads e loop principal
@@ -608,6 +701,142 @@ Falhas logadas como aviso — daemon continua.
 
 ---
 
+## 19. Catálogo de funções de captura
+
+Referência de **todas** as funções de coleta em `agentd.py`: origem dos dados (psutil, sysfs, NVML, subprocess, etc.), rota/consumidor e formato wire.
+
+### 19.1 Telemetria periódica (`collect_telemetry`)
+
+| Função / chamada | Biblioteca / origem | API psutil / SO | Campo(s) wire | `telemetrySet` | Justificativa |
+|------------------|---------------------|-----------------|---------------|----------------|---------------|
+| `psutil.cpu_percent(interval=None)` | psutil | CPU global instantânea | `cpuUsage` (×10) | `cpu` | Carga agregada do host; `interval=None` usa delta desde última chamada |
+| `psutil.cpu_freq(percpu=False)` | psutil | Frequência atual MHz | `cpuFreqMhz` | `cpu` | Contexto turbo/throttle junto com uso |
+| `_read_temperatures()` | psutil | `sensors_temperatures()` | `cpuTemp`, `moboTemperature` (×10) | `temperatures` | Ver §19.2 |
+| `_ram_wire()` | psutil | `virtual_memory()` total/available | `ramTotalGb`, `ramUsedGb` (×10) | `ramAndSwap` | Pressão de RAM |
+| `_swap_wire()` | psutil | `swap_memory()` total/used | `swapTotalGb`, `swapUsedGb` (×10) | `ramAndSwap` | Swap em uso |
+| `_GPU.usage()` | backend GPU | NVML / sysfs Intel / AMD busy | `gpuUsage` (×10) | `gpu` | Utilização GPU |
+| `_GPU.temp()` | backend GPU | NVML / `sensors_temperatures` amdgpu | `gpuTemp` (×10) | `gpu` | Termal GPU |
+| `_GPU.power()` | backend GPU | NVML mW / AMD hwmon µW | `gpuPowerWatts` (int W) | `gpu` | Consumo elétrico |
+| `_GPU.vram()` | backend GPU | NVML mem / AMD mem_info_vram_* | `vramTotalGb`, `vramUsedGb` (×10) | `gpu` | Memória dedicada; omitido se total=0 (iGPU) |
+| `_net_delta()` | psutil | `net_io_counters()` + delta monotonic | `downloadMbps`, `uploadMbps` | `networkIO` | Ver §19.3 |
+| `_disk_metrics(space, io)` | psutil | `disk_partitions`, `disk_usage`, `disk_io_counters` | `diskReadMbps`, `diskWriteMbps`, `disksInfo[]` | `diskSpace` / `diskIO` | Ver §19.4 |
+| `_active_users()` | psutil | `users()` filtrado `lab.*` | `activeUsers[]` | `activeUsers` | Sessões TTY/SSH provisionadas |
+| `_get_heavy_processes()` | psutil + pynvml | `process_iter` + NVML compute procs | `processes[]` | on-demand (5 batches) | Ver §19.5 |
+
+**Aquecimento:** `telemetry_worker` chama `psutil.cpu_percent(interval=None)` uma vez antes do loop para estabilizar a primeira leitura de CPU.
+
+### 19.2 `_read_temperatures()`
+
+| Sensor psutil | Chave típica | Campo | Fallback |
+|---------------|--------------|-------|----------|
+| CPU package | `coretemp`, `k10temp`, `cpu_thermal` | `cpuTemp` — **max** dos entries | `acpitz[0]` |
+| Placa-mãe | `acpitz` (se CPU já leu) | `moboTemp` | `null` |
+
+GPU **não** entra aqui — temperatura GPU vem exclusivamente de `_GPU.temp()` para evitar duplicata.
+
+### 19.3 `_net_delta()`
+
+- **Entrada:** `psutil.net_io_counters()` → `bytes_recv`, `bytes_sent`
+- **Estado:** cache global `_net_prev` com `{ t, recv, sent }` e `time.monotonic()`
+- **Cálculo:** `(Δbytes × 8) / 1_000_000 / Δt` → Mbps arredondado
+- **Primeira amostra:** retorna `0, 0` (sem delta anterior)
+
+### 19.4 `_disk_metrics(collect_space, collect_io)`
+
+| Passo | API | Detalhe |
+|-------|-----|---------|
+| I/O agregado | `disk_io_counters()` | `total_read`, `total_write` → Mbps host |
+| I/O por disco | `disk_io_counters(perdisk=True)` | Chave = último segmento de `part.device` |
+| Partições | `disk_partitions(all=False)` | Filtra `fstype` ∈ `real_fs` |
+| Espaço | `disk_usage(mountpoint)` | Por mount: `usagePct` (×10), `freeGb` |
+| Per-part I/O | delta vs `_disk_io_prev["disks"]` | `readMbps`, `writeMbps` em `disksInfo[]` |
+
+**Cache:** `_disk_io_prev` guarda timestamp, totais e bytes por `dev_name` para deltas entre amostras.
+
+**Sync-specs vs telemetria:** `_disk_partitions()` (boot) envia `device`, `fstype`, `totalGb`, `freeGb`, `role`; telemetria envia `usagePct` + I/O opcional sem repetir `device` em todos os presets.
+
+### 19.5 `_get_heavy_processes(thresholds)`
+
+| Fonte | Campos lidos | Uso |
+|-------|--------------|-----|
+| `pynvml.nvmlDeviceGetComputeRunningProcesses` | PID → VRAM MB | Só backend `nvidia` |
+| `psutil.process_iter([...])` | `pid`, `name`, `username`, `cpu_percent`, `memory_info`, `io_counters` | Scan de processos |
+| Delta I/O | cache `_process_io_prev` por PID | `diskReadKbps`, `diskWriteKbps` |
+
+**Filtros:** ignora `root`, `systemd`, `messagebus`. Inclui processo se **qualquer** limiar atingido (CPU %, RAM MB, VRAM MB, read Kbps, write Kbps).
+
+**Saída wire:** `cpuPercent` ×10, `ramMb` inteiro, `vramMb` inteiro, `name` truncado 50 chars.
+
+### 19.6 Heartbeat e inventário
+
+| Função | Biblioteca | API | Consumidor |
+|--------|------------|-----|------------|
+| `_active_users()` | psutil | `users()` | `connectedUsers[]` (só usernames) |
+| `pwd.getpwall()` | stdlib | contas POSIX | `provisionedOsUsers[]` |
+| `parse_ssh_line(line)` | regex / arquivo | tail `/var/log/auth.log` | `sshAttempts[]` (buffer) |
+
+**`_active_users()` detalhe:** cada entry inclui `username`, `terminal`, `host`, `isSsh` (host ∉ localhost/:0), `connectedSince` (epoch). Heartbeat envia só a lista de nomes; telemetria envia objetos completos.
+
+### 19.7 Sync-specs (boot, uma vez)
+
+| Função | Biblioteca / origem | Saída |
+|--------|---------------------|-------|
+| `_cpu_model()` | `/proc/cpuinfo` ou `platform.processor()` | `cpuModel` string |
+| `_collect_gpu_specs()` | pynvml name + `_GPU.vram()`; fallback `_gpu_model_lspci()` | `gpuModel`, `totalVramGb` (×10) |
+| `_ram_wire()` | psutil `virtual_memory()` | `totalRamGb` (×10) |
+| `_local_ip()` | `socket` UDP connect `8.8.8.8:80` | `ipAddress` |
+| `_disk_partitions()` | psutil `disk_partitions` + `disk_usage` | `disks[]` + `_partition_role()` |
+| `_host_fingerprint()` | subprocess `ssh-keygen -l -f .../ssh_host_ed25519_key.pub` | `hostFingerprint` SHA256 |
+
+**`_gpu_model_lspci()`:** subprocess `lspci -mm`, filtra classe VGA / Display / 3D controller (evita NVMe “3D NAND”).
+
+### 19.8 Backends GPU (`_GpuBackend`)
+
+| Classe | Detecção | Métodos | Fontes |
+|--------|----------|---------|--------|
+| `_NvidiaBackend` | `pynvml.nvmlInit()` | `usage`, `temp`, `vram`, `power` | NVML utilization, temperature GPU, memory info, power mW |
+| `_AmdSysfsBackend` | glob `gpu_busy_percent` em DRM | idem | sysfs `gpu_busy_percent`, `mem_info_vram_*`, hwmon `power*_average` |
+| `_IntelSysfsBackend` | glob `rps_cur_freq_mhz` | `usage` proxy freq ratio; `temp` via psutil sensors | sysfs i915/xe |
+| `_NullBackend` | fallback | zeros | Sem GPU mensurável |
+
+**Seleção:** `_detect_gpu_backend()` uma vez no boot; instância global `_GPU`.
+
+**AMD device pick:** `_pick_amd_drm_device_dir()` escolhe card com maior `mem_info_vram_total` (dGPU vs iGPU).
+
+### 19.9 Provisionamento / limpeza (não-telemetria)
+
+| Função | Origem | Papel |
+|--------|--------|-------|
+| `_user_partition_mountpoints()` | `_disk_partitions()` | Lista mounts `role=user` |
+| `_collect_user_remnant_paths(uname)` | pwd + mounts user + `/home` | Paths para `rmtree` pós-`userdel` |
+| `_purge_lab_user` / `_purge_all_lab_users` | subprocess `pkill`, `userdel`; `shutil.rmtree` | Drift e descomissionamento |
+| `_scan_orphan_lab_dirs()` | `os.listdir` em partições user | Dirs `lab.*` sem passwd |
+| `apply_provisioning` | subprocess `useradd`, `usermod`, `chmod`, `chown` | Heartbeat 200 |
+| `_maybe_migrate_user_home` | subprocess `pkill`, `usermod -d`; `os.makedirs` | Heartbeat quando `allowHomeMigration` |
+
+### 19.10 Utilitários de formato
+
+| Função | Transformação |
+|--------|---------------|
+| `_gb_wire(byte_count)` | `round(bytes / 1024³ × 10)` → inteiro GB×10 |
+| `_partition_role(mountpoint)` | Heurística system vs user (espelha API `classifyDiskPartitionRole`) |
+
+### 19.11 Mapa função → rota HTTP
+
+```text
+sync-specs     ← _cpu_model, _collect_gpu_specs, _ram_wire, _local_ip,
+                 _disk_partitions, _host_fingerprint
+
+heartbeat      ← _active_users, pwd.getpwall, parse_ssh_line (buffer)
+
+telemetry      ← collect_telemetry() = todas as entradas §19.1
+
+(provisioning) ← apply_provisioning (sem HTTP de saída; side-effect SO)
+```
+
+---
+
+
 ## Referência rápida — arquivos relacionados
 
 | Caminho | Conteúdo |
@@ -618,7 +847,7 @@ Falhas logadas como aviso — daemon continua.
 | `apps/api/app/services/heartbeat_service.ts` | provisioning, decommission |
 | `apps/api/app/services/machine_decommission.ts` | Exclusão admin 2 fases |
 | `apps/api/app/services/disk_partitions.ts` | Roles, mainDisk, homeDirectory |
-| `apps/api/app/services/allocation_access.ts` | Fases prepare→teardown |
+| `apps/api/app/services/allocation_access.ts` | Fases prepare→teardown; `allowHomeMigrationForUser` |
 | `apps/api/app/services/telemetry_presets.ts` | Presets eco/fast/custom |
 | `apps/api/tests/functional/agent.spec.ts` | Testes contrato agente |
 | `apps/web/src/stores/machines.ts` | DELETE com retry 35 s |

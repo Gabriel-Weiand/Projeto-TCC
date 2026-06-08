@@ -46,12 +46,13 @@ export function deleteUserAt(
 /** Alocação ainda exige linha em machine_users / provisioning no agente. */
 export function allocationNeedsProvisioning(
   allocation: Allocation,
-  now: DateTime = DateTime.utc()
+  now: DateTime = DateTime.utc(),
+  access: LabAccessConfig = getLabAccessConfig()
 ): boolean {
   if (!PROVISIONING_STATUSES.includes(allocation.status as (typeof PROVISIONING_STATUSES)[number])) {
     return false
   }
-  const phase = resolveAccessPhase(allocation, now)
+  const phase = resolveAccessPhase(allocation, now, access)
   return phase !== 'none' && phase !== 'teardown'
 }
 
@@ -161,7 +162,7 @@ export function resolveDominantAccessForUser(
   let best: { phase: AccessPhase; allocation: Allocation } | null = null
 
   for (const allocation of allocations) {
-    if (!allocationNeedsProvisioning(allocation, now)) {
+    if (!allocationNeedsProvisioning(allocation, now, access)) {
       continue
     }
     const phase = resolveAccessPhase(allocation, now, access)
@@ -174,6 +175,42 @@ export function resolveDominantAccessForUser(
   }
 
   return best
+}
+
+const HOME_MIGRATION_BLOCKING_PHASES: AccessPhase[] = ['prepare', 'active', 'grace', 'post_sftp']
+
+/**
+ * Permite migrar a home POSIX para a alocação dominante quando reservas antigas
+ * só restam em no_key (sem SFTP com chave útil na home anterior).
+ */
+export function allowHomeMigrationForUser(
+  allocations: Allocation[],
+  dominantAllocation: Allocation,
+  homeDirectory: string | null | undefined,
+  now: DateTime = DateTime.utc(),
+  access: LabAccessConfig = getLabAccessConfig()
+): boolean {
+  if (!homeDirectory?.trim()) {
+    return false
+  }
+
+  for (const allocation of allocations) {
+    if (allocation.id === dominantAllocation.id) {
+      continue
+    }
+    if (!allocationNeedsProvisioning(allocation, now, access)) {
+      continue
+    }
+    const phase = resolveAccessPhase(allocation, now, access)
+    if (phase === 'none' || phase === 'teardown' || phase === 'no_key') {
+      continue
+    }
+    if (HOME_MIGRATION_BLOCKING_PHASES.includes(phase)) {
+      return false
+    }
+  }
+
+  return true
 }
 
 export function isTelemetryHotPhase(phase: AccessPhase): boolean {

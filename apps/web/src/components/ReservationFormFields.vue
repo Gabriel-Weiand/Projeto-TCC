@@ -5,6 +5,7 @@ import {
   defaultHomeMountForMachine,
   formatDiskOptionLabel,
   listAllocatableDiskMountpoints,
+  listUserDiskMountpoints,
 } from "@/utils/machineDisks";
 import ReservationMachinePicker from "@/components/ReservationMachinePicker.vue";
 import SearchableUserPicker from "@/components/SearchableUserPicker.vue";
@@ -70,6 +71,10 @@ const diskHint = computed(() => {
   if (!m) return "";
   if (m.onlyMainDisk) return "Volume fixo definido pelo admin.";
   if (diskOptions.value.length === 1) return "Único volume disponível nesta máquina.";
+  const total = listUserDiskMountpoints(m.disks).length;
+  if (total > diskOptions.value.length) {
+    return `${diskOptions.value.length} de ${total} volumes disponíveis para reserva.`;
+  }
   return "Onde a conta Unix será criada.";
 });
 

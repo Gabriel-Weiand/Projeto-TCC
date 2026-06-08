@@ -34,7 +34,20 @@ export function listAllocatableDiskMountpoints(
     const main = resolveMainDiskMountpoint(disks);
     return main ? [main] : [];
   }
-  return listUserDiskMountpoints(disks);
+  return listUserDiskPartitions(disks)
+    .filter((d) => d.allocatable !== false)
+    .map((d) => d.mountpoint);
+}
+
+export function resolveDefaultAllocationHomeMount(
+  disks: DiskPartition[] | null | undefined,
+  onlyMainDisk: boolean,
+): string {
+  const allowed = listAllocatableDiskMountpoints(disks, onlyMainDisk);
+  if (allowed.length === 0) return "";
+  const main = resolveMainDiskMountpoint(disks);
+  if (main && allowed.includes(main)) return main;
+  return allowed[0] ?? "";
 }
 
 export function applyMainDiskSelection(
@@ -44,6 +57,10 @@ export function applyMainDiskSelection(
   return disks.map((d) => ({
     ...d,
     mainDisk: (d.role ?? "user") === "user" && d.mountpoint === mountpoint,
+    allocatable:
+      (d.role ?? "user") === "user" && d.mountpoint === mountpoint
+        ? true
+        : d.allocatable,
   }));
 }
 
@@ -51,11 +68,10 @@ export function defaultHomeMountForMachine(machine: {
   disks?: DiskPartition[] | null;
   onlyMainDisk?: boolean;
 }): string {
-  const allowed = listAllocatableDiskMountpoints(
+  return resolveDefaultAllocationHomeMount(
     machine.disks,
     Boolean(machine.onlyMainDisk),
   );
-  return allowed[0] ?? resolveMainDiskMountpoint(machine.disks) ?? "";
 }
 
 export function formatDiskOptionLabel(

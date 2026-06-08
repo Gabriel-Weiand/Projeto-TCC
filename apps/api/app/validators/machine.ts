@@ -57,6 +57,7 @@ export const updateMachineValidator = vine.compile(
           freeGb: vine.number().min(0).nullable().optional(),
           role: vine.enum(['system', 'user'] as const).optional(),
           mainDisk: vine.boolean().optional(),
+          allocatable: vine.boolean().optional(),
         })
       )
       .maxLength(32)

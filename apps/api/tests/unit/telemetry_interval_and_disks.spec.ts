@@ -7,7 +7,9 @@ import {
   classifyDiskPartitionRole,
   enrichDiskPartitions,
   listAllocatableDiskMountpoints,
+  mergeDiskPartitionsFromAgent,
   normalizeAllocationHomeMount,
+  resolveDefaultAllocationHomeMount,
   resolveMainDiskMountpoint,
 } from '#services/disk_partitions'
 import { canChangeAllocationHomeMount } from '#services/allocation_home_mount'
@@ -114,6 +116,65 @@ test.group('Disk partitions', () => {
       { device: 'sdb1', mountpoint: '/home', role: 'user', mainDisk: true },
     ])
     assert.equal(resolveMainDiskMountpoint(disks), '/home')
+  })
+
+  test('allocatable filtra volumes no dropdown quando onlyMainDisk=false', async ({ assert }) => {
+    const disks = enrichDiskPartitions([
+      { device: 'sdb1', mountpoint: '/home', role: 'user', mainDisk: true, allocatable: true },
+      { device: 'sdc1', mountpoint: '/data', role: 'user', allocatable: true },
+      { device: 'sdd1', mountpoint: '/scratch', role: 'user', allocatable: false },
+    ])
+    assert.deepEqual(listAllocatableDiskMountpoints(disks, false).sort(), ['/data', '/home'])
+  })
+
+  test('principal permanece allocatable mesmo se admin desmarcar', async ({ assert }) => {
+    const disks = enrichDiskPartitions([
+      { device: 'sdb1', mountpoint: '/home', role: 'user', mainDisk: true, allocatable: false },
+      { device: 'sdc1', mountpoint: '/data', role: 'user', allocatable: true },
+    ])
+    assert.isTrue(disks.find((d) => d.mountpoint === '/home')?.allocatable)
+    assert.deepEqual(listAllocatableDiskMountpoints(disks, false).sort(), ['/data', '/home'])
+  })
+
+  test('default de reserva usa principal se allocatable senão primeiro permitido', async ({
+    assert,
+  }) => {
+    const disks = enrichDiskPartitions([
+      { device: 'sdb1', mountpoint: '/home', role: 'user', mainDisk: true, allocatable: false },
+      { device: 'sdc1', mountpoint: '/data', role: 'user', allocatable: true },
+    ])
+    assert.equal(resolveDefaultAllocationHomeMount(disks, false), '/home')
+    const disks2 = enrichDiskPartitions([
+      { device: 'sdb1', mountpoint: '/home', role: 'user', mainDisk: false, allocatable: false },
+      { device: 'sdc1', mountpoint: '/data', role: 'user', mainDisk: true, allocatable: true },
+    ])
+    assert.equal(resolveDefaultAllocationHomeMount(disks2, false), '/data')
+  })
+
+  test('mergeDiskPartitionsFromAgent preserva allocatable admin', async ({ assert }) => {
+    const existing = enrichDiskPartitions([
+      { device: 'sdb1', mountpoint: '/home', role: 'user', mainDisk: true, allocatable: true },
+      { device: 'sdc1', mountpoint: '/data', role: 'user', allocatable: false },
+    ])
+    const merged = mergeDiskPartitionsFromAgent(
+      [
+        { device: 'sdb1', mountpoint: '/home', totalGb: 200 },
+        { device: 'sdc1', mountpoint: '/data', totalGb: 500 },
+        { device: 'sdd1', mountpoint: '/scratch', totalGb: 1000 },
+      ],
+      existing
+    )
+    assert.isFalse(merged.find((d) => d.mountpoint === '/data')?.allocatable)
+    assert.isTrue(merged.find((d) => d.mountpoint === '/scratch')?.allocatable)
+  })
+
+  test('normalizeAllocationHomeMount rejeita mount não allocatable', async ({ assert }) => {
+    const disks = enrichDiskPartitions([
+      { device: 'sdb1', mountpoint: '/home', role: 'user', mainDisk: true },
+      { device: 'sdc1', mountpoint: '/data', role: 'user', allocatable: false },
+    ])
+    const result = normalizeAllocationHomeMount(disks, false, '/data')
+    assert.isNotNull(result.error)
   })
 })
 

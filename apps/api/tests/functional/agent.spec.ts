@@ -577,7 +577,104 @@ test.group('Agent API', (group) => {
   })
 
   // =========================================================================
-  // 6. DESCOMISSIONAMENTO (exclusão admin)
+  // 6. MIGRAÇÃO DE HOME (multi-disco, no_key da reserva antiga)
+  // =========================================================================
+
+  test('allowHomeMigration quando reserva antiga em no_key e nova active em outro disco', async ({
+    client,
+    assert,
+  }) => {
+    const machine = await Machine.create({
+      name: 'PC-MIGRATE',
+      description: 'Lab',
+      token: 't-migrate',
+    })
+    const user = await User.create({
+      fullName: 'Disk User',
+      email: 'disk@teste.com',
+      password: '123',
+      role: 'user',
+      systemUsername: 'lab.disk_user',
+      sshPublicKey: 'ssh-ed25519 AAAA disk@test',
+    })
+
+    await Allocation.create({
+      userId: user.id,
+      machineId: machine.id,
+      startTime: DateTime.now().minus({ days: 4 }),
+      endTime: DateTime.now().minus({ days: 3 }),
+      status: 'approved',
+      homeMountpoint: '/data/lab',
+    })
+
+    await Allocation.create({
+      userId: user.id,
+      machineId: machine.id,
+      startTime: DateTime.now().minus({ hours: 1 }),
+      endTime: DateTime.now().plus({ hours: 2 }),
+      status: 'approved',
+      homeMountpoint: '/scratch',
+    })
+
+    const response = await client
+      .post('/api/v1/agent/heartbeat')
+      .header('Authorization', `Bearer ${machine.token}`)
+
+    response.assertStatus(200)
+    const prov = response.body().provisioning[0]
+    assert.equal(prov.systemUsername, 'lab.disk_user')
+    assert.isTrue(prov.allowHomeMigration)
+    assert.equal(prov.homeDirectory, '/scratch/lab.disk_user')
+    assert.equal(prov.accessState, 'full_shell')
+  })
+
+  test('allowHomeMigration false quando reserva antiga ainda em post_sftp', async ({
+    client,
+    assert,
+  }) => {
+    const machine = await Machine.create({
+      name: 'PC-NOMIG',
+      description: 'Lab',
+      token: 't-nomig',
+    })
+    const user = await User.create({
+      fullName: 'No Mig User',
+      email: 'nomig@teste.com',
+      password: '123',
+      role: 'user',
+      systemUsername: 'lab.nomig_user',
+      sshPublicKey: 'ssh-ed25519 AAAA nomig@test',
+    })
+
+    await Allocation.create({
+      userId: user.id,
+      machineId: machine.id,
+      startTime: DateTime.now().minus({ days: 1 }),
+      endTime: DateTime.now().minus({ hours: 3 }),
+      status: 'approved',
+      homeMountpoint: '/data/lab',
+    })
+
+    await Allocation.create({
+      userId: user.id,
+      machineId: machine.id,
+      startTime: DateTime.now().minus({ hours: 1 }),
+      endTime: DateTime.now().plus({ hours: 2 }),
+      status: 'approved',
+      homeMountpoint: '/scratch',
+    })
+
+    const response = await client
+      .post('/api/v1/agent/heartbeat')
+      .header('Authorization', `Bearer ${machine.token}`)
+
+    response.assertStatus(200)
+    const prov = response.body().provisioning[0]
+    assert.notProperty(prov, 'allowHomeMigration')
+  })
+
+  // =========================================================================
+  // 7. DESCOMISSIONAMENTO (exclusão admin)
   // =========================================================================
 
   test('heartbeat com pendingRemoval retorna decommission e provisioning vazio', async ({
@@ -603,7 +700,7 @@ test.group('Agent API', (group) => {
   })
 
   // =========================================================================
-  // 7. SEGURANÇA
+  // 8. SEGURANÇA
   // =========================================================================
 
   test('deve rejeitar requisição sem token', async ({ client }) => {

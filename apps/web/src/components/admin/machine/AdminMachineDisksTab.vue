@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, reactive, watch } from "vue";
+import { ref, watch } from "vue";
 import { useMachinesStore } from "@/stores/machines";
 import type { DiskPartition, Machine } from "@/types";
 import { applyMainDiskSelection, partitionRoleLabel } from "@/utils/machineDisks";
@@ -22,6 +22,7 @@ function loadFromMachine(m: Machine) {
     id: d.id ?? index,
     role: d.role ?? "user",
     mainDisk: Boolean(d.mainDisk),
+    allocatable: (d.role ?? "user") === "user" ? d.allocatable !== false : false,
   }));
 }
 
@@ -35,6 +36,14 @@ watch(
 
 function setMainDisk(mountpoint: string) {
   disks.value = applyMainDiskSelection(disks.value, mountpoint);
+}
+
+function setAllocatable(mountpoint: string, value: boolean) {
+  disks.value = disks.value.map((d) => {
+    if (d.mountpoint !== mountpoint || (d.role ?? "user") !== "user") return d;
+    if (d.mainDisk) return { ...d, allocatable: true };
+    return { ...d, allocatable: value };
+  });
 }
 
 async function handleSave() {
@@ -60,8 +69,8 @@ const userDisks = () => disks.value.filter((d) => (d.role ?? "user") === "user")
 <template>
   <div class="disks-tab">
     <p class="tab-hint text-secondary">
-      Partições sincronizadas pelo agente. Defina qual volume de user-space é o
-      <strong>disco principal</strong> e se alocações ficam restritas a ele.
+      Partições sincronizadas pelo agente. Defina o <strong>disco principal</strong>,
+      quais volumes aparecem na reserva e se alocações ficam restritas ao principal.
     </p>
 
     <label class="policy-row">
@@ -84,6 +93,7 @@ const userDisks = () => disks.value.filter((d) => (d.role ?? "user") === "user")
         <span>Tipo</span>
         <span>Capacidade</span>
         <span>Principal</span>
+        <span>Reserva</span>
       </div>
       <div v-for="(d, i) in disks" :key="`${d.device}-${d.mountpoint}-${i}`" class="disk-policy-row">
         <span>
@@ -113,8 +123,27 @@ const userDisks = () => disks.value.filter((d) => (d.role ?? "user") === "user")
           </label>
           <span v-else class="text-muted">—</span>
         </span>
+        <span>
+          <template v-if="(d.role ?? 'user') === 'user'">
+            <span v-if="onlyMainDisk && !d.mainDisk" class="text-muted">—</span>
+            <span v-else-if="d.mainDisk" class="text-muted">fixo</span>
+            <label v-else class="main-radio">
+              <input
+                type="checkbox"
+                :checked="d.allocatable !== false"
+                @change="setAllocatable(d.mountpoint, ($event.target as HTMLInputElement).checked)"
+              />
+              Oferecer
+            </label>
+          </template>
+          <span v-else class="text-muted">—</span>
+        </span>
       </div>
     </div>
+
+    <p v-if="onlyMainDisk" class="tab-hint text-muted policy-note">
+      Com “somente principal”, só o volume principal entra na reserva — demais checkboxes são ignorados.
+    </p>
 
     <p v-if="error" class="form-error">{{ error }}</p>
 
@@ -129,13 +158,17 @@ const userDisks = () => disks.value.filter((d) => (d.role ?? "user") === "user")
   display: flex;
   flex-direction: column;
   gap: 1rem;
-  max-width: 820px;
+  max-width: 920px;
 }
 
 .tab-hint {
   margin: 0;
   font-size: 0.88rem;
   line-height: 1.45;
+}
+
+.policy-note {
+  font-size: 0.8rem;
 }
 
 .policy-row {
@@ -161,7 +194,7 @@ const userDisks = () => disks.value.filter((d) => (d.role ?? "user") === "user")
 .disk-policy-header,
 .disk-policy-row {
   display: grid;
-  grid-template-columns: 1.4fr 0.7fr 1fr 0.9fr;
+  grid-template-columns: 1.3fr 0.65fr 0.95fr 0.75fr 0.75fr;
   gap: 0.5rem;
   padding: 0.55rem 0.75rem;
   align-items: center;

@@ -607,4 +607,41 @@ test.group('Machines', (group) => {
     // Verifica se ele assumiu o valor padrão (2.0) para os campos que não enviámos
     assert.equal(config.onDemandProcessConfig.thresholds.cpuPercent, 2)
   })
+
+  test('admin pode restringir volumes allocatable na política de discos', async ({
+    client,
+    assert,
+  }) => {
+    const admin = await User.create({
+      fullName: 'Admin Discos',
+      email: 'admin-discos@teste.com',
+      password: 'senha123',
+      role: 'admin',
+    })
+
+    const machine = await Machine.create({
+      name: 'PC-DISK-POLICY',
+      description: 'Multi disco',
+      status: 'available',
+      onlyMainDisk: false,
+      disks: [
+        { device: 'sdb1', mountpoint: '/home', role: 'user', mainDisk: true, totalGb: 200 },
+        { device: 'sdc1', mountpoint: '/data', role: 'user', totalGb: 500 },
+        { device: 'sdd1', mountpoint: '/scratch', role: 'user', totalGb: 1000 },
+      ],
+    })
+
+    const response = await client.put(`/api/v1/machines/${machine.id}`).loginAs(admin).json({
+      disks: [
+        { device: 'sdb1', mountpoint: '/home', role: 'user', mainDisk: true, allocatable: true },
+        { device: 'sdc1', mountpoint: '/data', role: 'user', allocatable: true },
+        { device: 'sdd1', mountpoint: '/scratch', role: 'user', allocatable: false },
+      ],
+    })
+
+    response.assertStatus(200)
+    const saved = response.body().disks as Array<{ mountpoint: string; allocatable: boolean }>
+    assert.isFalse(saved.find((d) => d.mountpoint === '/scratch')?.allocatable)
+    assert.isTrue(saved.find((d) => d.mountpoint === '/home')?.allocatable)
+  })
 })

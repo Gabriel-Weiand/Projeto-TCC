@@ -701,6 +701,24 @@ def _purge_all_lab_users() -> None:
     _scan_orphan_lab_dirs()
 
 
+def _maybe_migrate_user_home(uname: str, target_home: str, user_info) -> object:
+    """
+    Atualiza pw_dir para target_home quando allowHomeMigration (API).
+    Não remove dados na home antiga — só passwd + nova árvore + chave no fluxo seguinte.
+    """
+    current = (user_info.pw_dir or "").strip()
+    target = target_home.strip()
+    if not target or os.path.normpath(current) == os.path.normpath(target):
+        return user_info
+
+    print(f"[OS] Migrando home de {uname}: {current} → {target}")
+    subprocess.run(["pkill", "-u", uname], stderr=subprocess.DEVNULL)
+    os.makedirs(target, mode=0o700, exist_ok=True)
+    subprocess.run(["usermod", "-d", target, uname], check=True)
+    shutil.chown(target, user=uname, group=uname)
+    return pwd.getpwnam(uname)
+
+
 def apply_provisioning(provisioning_data: list) -> None:
     """
     Sincroniza o Linux com a verdade da API.
@@ -745,6 +763,10 @@ def apply_provisioning(provisioning_data: list) -> None:
             useradd_cmd.append(uname)
             subprocess.run(useradd_cmd, check=True)
             user_info = pwd.getpwnam(uname)
+
+        target_home = (item.get("homeDirectory") or "").strip()
+        if item.get("allowHomeMigration") and target_home:
+            user_info = _maybe_migrate_user_home(uname, target_home, user_info)
 
         try:
             home = user_info.pw_dir

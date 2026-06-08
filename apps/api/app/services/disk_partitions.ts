@@ -8,6 +8,8 @@ export type DiskPartitionRecord = {
   freeGb?: number | null
   role?: DiskPartitionRole
   mainDisk?: boolean
+  /** Admin: volume aparece no dropdown de reserva (default true em discos user). */
+  allocatable?: boolean
 }
 
 const SYSTEM_EXACT = new Set(['/', '/boot', '/boot/efi', '/efi', '/recovery'])
@@ -54,6 +56,21 @@ export function applyMainDiskDefaults(disks: DiskPartitionRecord[]): DiskPartiti
   }))
 }
 
+/** Normaliza `allocatable`: sistema=false; user default true; principal sempre true. */
+export function applyAllocatableDefaults(disks: DiskPartitionRecord[]): DiskPartitionRecord[] {
+  return disks.map((d) => {
+    if (d.role === 'system') {
+      return { ...d, allocatable: false }
+    }
+    const allocatable = d.mainDisk ? true : d.allocatable !== false
+    return { ...d, allocatable }
+  })
+}
+
+function finalizeDiskPartitions(disks: DiskPartitionRecord[]): DiskPartitionRecord[] {
+  return applyAllocatableDefaults(applyMainDiskDefaults(disks))
+}
+
 export function enrichDiskPartitions(disks: unknown): DiskPartitionRecord[] {
   if (!Array.isArray(disks)) return []
   const mapped = disks.map((raw, index) => {
@@ -68,12 +85,18 @@ export function enrichDiskPartitions(disks: unknown): DiskPartitionRecord[] {
       freeGb: d.freeGb != null ? Number(d.freeGb) : null,
       role,
       mainDisk: role === 'user' ? Boolean(d.mainDisk) : false,
+      allocatable:
+        role === 'user'
+          ? d.allocatable === undefined
+            ? true
+            : Boolean(d.allocatable)
+          : false,
     }
   })
-  return applyMainDiskDefaults(mapped)
+  return finalizeDiskPartitions(mapped)
 }
 
-/** Mescla flags admin (`mainDisk`) ao atualizar specs do agente. */
+/** Mescla flags admin (`mainDisk`, `allocatable`) ao atualizar specs do agente. */
 export function mergeDiskPartitionsFromAgent(
   incoming: unknown,
   existing: unknown
@@ -84,7 +107,7 @@ export function mergeDiskPartitionsFromAgent(
   }
 
   if (!Array.isArray(incoming)) {
-    return applyMainDiskDefaults(Array.from(prevByMount.values()))
+    return finalizeDiskPartitions(Array.from(prevByMount.values()))
   }
 
   const merged = incoming.map((raw, index) => {
@@ -100,10 +123,12 @@ export function mergeDiskPartitionsFromAgent(
       freeGb: d.freeGb != null ? Number(d.freeGb) : (prev?.freeGb ?? null),
       role,
       mainDisk: prev?.mainDisk ?? false,
+      allocatable:
+        role === 'user' ? (prev?.allocatable !== undefined ? prev.allocatable : true) : false,
     }
   })
 
-  return applyMainDiskDefaults(merged)
+  return finalizeDiskPartitions(merged)
 }
 
 /** Partições de user-space elegíveis para alocação. */
@@ -131,7 +156,20 @@ export function listAllocatableDiskMountpoints(
     const main = resolveMainDiskMountpoint(disks)
     return main ? [main] : []
   }
-  return listUserDiskMountpoints(disks)
+  return listUserDiskPartitions(disks)
+    .filter((d) => d.allocatable !== false)
+    .map((d) => d.mountpoint)
+}
+
+export function resolveDefaultAllocationHomeMount(
+  disks: unknown,
+  onlyMainDisk: boolean
+): string | null {
+  const allowed = listAllocatableDiskMountpoints(disks, onlyMainDisk)
+  if (allowed.length === 0) return null
+  const main = resolveMainDiskMountpoint(disks)
+  if (main && allowed.includes(main)) return main
+  return allowed[0] ?? null
 }
 
 export function resolveHomeDirectory(
@@ -143,7 +181,29 @@ export function resolveHomeDirectory(
   return `${base}/${systemUsername}`
 }
 
-/** Normaliza mount solicitado: vazio → main disk; valida user-space e política onlyMainDisk. */
+/** Valida política de discos antes de persistir config admin. */
+export function validateMachineDiskPolicy(
+  disks: unknown,
+  onlyMainDisk: boolean
+): string | null {
+  const enriched = enrichDiskPartitions(disks)
+  const userDisks = enriched.filter((d) => d.role === 'user')
+
+  if (userDisks.length === 0) {
+    return null
+  }
+
+  if (onlyMainDisk) {
+    if (!resolveMainDiskMountpoint(enriched)) {
+      return 'Defina um disco principal entre as partições de usuário.'
+    }
+    return null
+  }
+
+  return null
+}
+
+/** Normaliza mount solicitado: vazio → default allocatable; valida política onlyMainDisk. */
 export function normalizeAllocationHomeMount(
   disks: unknown,
   onlyMainDisk: boolean,
@@ -169,7 +229,7 @@ export function normalizeAllocationHomeMount(
   }
 
   if (!trimmed) {
-    return { mountpoint: resolveMainDiskMountpoint(disks), error: null }
+    return { mountpoint: resolveDefaultAllocationHomeMount(disks, onlyMainDisk), error: null }
   }
 
   if (!allowed.includes(trimmed)) {

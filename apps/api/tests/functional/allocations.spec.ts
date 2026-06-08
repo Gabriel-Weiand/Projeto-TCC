@@ -724,4 +724,36 @@ test.group('Allocations', (group) => {
     response.assertStatus(200)
     assert.exists(response.body().meta.total)
   })
+
+  test('rejeita homeMountpoint não allocatable na máquina', async ({ client }) => {
+    const user = await User.create({
+      fullName: 'Disk Pick',
+      email: 'diskpick@teste.com',
+      password: '123',
+      role: 'user',
+    })
+    const machine = await createTestMachine({
+      name: 'PC-DISK-PICK',
+      description: 'Lab',
+      status: 'available',
+      onlyMainDisk: false,
+      disks: [
+        { device: 'sdb1', mountpoint: '/home', role: 'user', mainDisk: true, totalGb: 200 },
+        { device: 'sdc1', mountpoint: '/data', role: 'user', totalGb: 500, allocatable: false },
+      ],
+    })
+
+    const response = await client
+      .post('/api/v1/allocations')
+      .loginAs(user)
+      .json({
+        machineId: machine.id,
+        startTime: DateTime.utc().plus({ hours: 2 }).toISO(),
+        endTime: DateTime.utc().plus({ hours: 4 }).toISO(),
+        homeMountpoint: '/data',
+      })
+
+    response.assertStatus(400)
+    response.assertBodyContains({ code: 'INVALID_HOME_MOUNT' })
+  })
 })

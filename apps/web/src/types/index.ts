@@ -42,6 +42,8 @@ export interface DiskPartition {
   role?: "system" | "user";
   /** Volume padrão para home de alocações (admin). */
   mainDisk?: boolean;
+  /** Volume disponível no dropdown de reserva (admin). */
+  allocatable?: boolean;
 }
 
 export interface MachineGroupSummary {
