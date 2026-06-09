@@ -8,7 +8,12 @@ import {
   isoDateToBr,
   brDateToIso,
   normalizeWallClockTime,
-  formatWallClockTimeTyping,
+  isWallClockHourValid,
+  isWallClockMinuteValid,
+  isWallClockTimeComplete,
+  normalizeWallClockParts,
+  splitWallClockTime,
+  formatWallClockPartTyping,
 } from "./datetime.ts";
 
 const tz = "America/Sao_Paulo";
@@ -34,9 +39,23 @@ assert(brDateToIso("02/06/2026") === "2026-06-02", "brDateToIso");
 assert(brDateToIso("31/02/2026") === null, "brDateToIso invalid");
 assert(normalizeWallClockTime("9:05") === "09:05", "normalizeWallClockTime");
 assert(normalizeWallClockTime("9:5") === "09:05", "normalizeWallClockTime single minute digit");
-assert(normalizeWallClockTime("25:00") === null, "normalizeWallClockTime invalid");
-assert(formatWallClockTimeTyping("905") === "09:05", "formatWallClockTimeTyping 905");
-assert(formatWallClockTimeTyping("1405") === "14:05", "formatWallClockTimeTyping 1405");
-assert(formatWallClockTimeTyping("9") === "9", "formatWallClockTimeTyping partial hour");
+assert(normalizeWallClockTime("25:00") === null, "normalizeWallClockTime invalid hour");
+assert(normalizeWallClockTime("12:60") === null, "normalizeWallClockTime invalid minute");
+
+assert(isWallClockHourValid("9"), "hour valid partial");
+assert(isWallClockHourValid("23"), "hour valid max");
+assert(!isWallClockHourValid("24"), "hour invalid 24");
+assert(isWallClockMinuteValid("5"), "minute valid partial");
+assert(isWallClockMinuteValid("59"), "minute valid max");
+assert(!isWallClockMinuteValid("60"), "minute invalid 60");
+
+assert(formatWallClockPartTyping("9a5") === "95", "formatWallClockPartTyping strips non-digits");
+assert(splitWallClockTime("09:30").hour === "09", "splitWallClockTime hour");
+assert(splitWallClockTime("09:30").minute === "30", "splitWallClockTime minute");
+assert(isWallClockTimeComplete("10", "20"), "isWallClockTimeComplete full");
+assert(isWallClockTimeComplete("10", "2"), "isWallClockTimeComplete padded minute");
+assert(!isWallClockTimeComplete("10", ""), "isWallClockTimeComplete missing minute");
+assert(normalizeWallClockParts("5", "5") === "05:05", "normalizeWallClockParts 05:05");
+assert(normalizeWallClockParts("0", "55") === "00:55", "normalizeWallClockParts 00:55");
 
 console.log("datetime.spec.mjs: OK");

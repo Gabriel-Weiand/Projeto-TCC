@@ -34,6 +34,58 @@ test.group('Allocations', (group) => {
     response.assertBodyContains({ status: 'approved' })
   })
 
+  test('NÃO deve criar alocação com início no passado', async ({ client }) => {
+    const user = await User.create({
+      fullName: 'Past User',
+      email: 'past@teste.com',
+      password: '123',
+      role: 'user',
+    })
+    const machine = await createTestMachine({
+      name: 'PC-PAST',
+      description: 'Lab',
+      status: 'available',
+    })
+
+    const response = await client
+      .post('/api/v1/allocations')
+      .loginAs(user)
+      .json({
+        machineId: machine.id,
+        startTime: DateTime.utc().minus({ hours: 1 }).toISO(),
+        endTime: DateTime.utc().plus({ hours: 1 }).toISO(),
+      })
+
+    response.assertStatus(400)
+    response.assertBodyContains({ code: 'ALLOCATION_IN_PAST' })
+  })
+
+  test('NÃO deve criar alocação com término no passado', async ({ client }) => {
+    const user = await User.create({
+      fullName: 'Past End User',
+      email: 'past.end@teste.com',
+      password: '123',
+      role: 'user',
+    })
+    const machine = await createTestMachine({
+      name: 'PC-PAST-END',
+      description: 'Lab',
+      status: 'available',
+    })
+
+    const response = await client
+      .post('/api/v1/allocations')
+      .loginAs(user)
+      .json({
+        machineId: machine.id,
+        startTime: DateTime.utc().minus({ hours: 3 }).toISO(),
+        endTime: DateTime.utc().minus({ hours: 1 }).toISO(),
+      })
+
+    response.assertStatus(400)
+    response.assertBodyContains({ code: 'ALLOCATION_IN_PAST' })
+  })
+
   test('com LAB_ALLOCATION_REQUIRE_ADMIN_APPROVAL=true usuário cria pending', async ({
     client,
   }) => {

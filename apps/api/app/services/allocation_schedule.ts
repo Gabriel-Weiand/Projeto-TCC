@@ -1,4 +1,4 @@
-import type { DateTime } from 'luxon'
+import { DateTime } from 'luxon'
 import {
   assertAllocationEndWithinLimit,
   assertAllocationMinDuration,
@@ -9,11 +9,36 @@ export type ScheduleValidationError = {
   message: string
 }
 
-/** Valida intervalo de reserva (início/fim, limite futuro, duração mínima). */
+export type ValidateAllocationScheduleOptions = {
+  /** Permite início no passado (extensão ou PATCH sem alterar o início). */
+  allowPastStart?: boolean
+  now?: DateTime
+}
+
+/** Valida intervalo de reserva (início/fim, passado, limite futuro, duração mínima). */
 export function validateAllocationSchedule(
   startTime: DateTime,
-  endTime: DateTime
+  endTime: DateTime,
+  options?: ValidateAllocationScheduleOptions
 ): ScheduleValidationError | null {
+  const now = options?.now ?? DateTime.utc()
+  /** Tolerância para submissão de formulário / relógios levemente dessincronizados. */
+  const startPastCutoff = now.minus({ seconds: 59 })
+
+  if (!options?.allowPastStart && startTime < startPastCutoff) {
+    return {
+      code: 'ALLOCATION_IN_PAST',
+      message: 'O horário de início não pode estar no passado.',
+    }
+  }
+
+  if (endTime.toMillis() <= now.toMillis()) {
+    return {
+      code: 'ALLOCATION_IN_PAST',
+      message: 'O horário de término não pode estar no passado.',
+    }
+  }
+
   if (endTime <= startTime) {
     return {
       code: 'INVALID_RANGE',

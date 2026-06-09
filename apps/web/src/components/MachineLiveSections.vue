@@ -485,6 +485,7 @@ function diskUsedPct(total: number | null, free: number | null): number {
   text-transform: uppercase;
   letter-spacing: 0.04em;
   color: var(--text-muted);
+  text-align: center;
 }
 
 .disk-row-detail {
@@ -493,6 +494,7 @@ function diskUsedPct(total: number | null, free: number | null): number {
   border-bottom: 1px solid var(--border-subtle);
   align-items: center;
   font-size: 0.82rem;
+  text-align: center;
 }
 
 .disk-row-detail:last-child {
@@ -501,6 +503,10 @@ function diskUsedPct(total: number | null, free: number | null): number {
 
 .disk-col {
   flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
 }
 
 .device-col {
@@ -513,6 +519,9 @@ function diskUsedPct(total: number | null, free: number | null): number {
 .device-col code {
   font-size: 0.72rem;
   color: var(--text-secondary);
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .mount-col {
@@ -535,26 +544,25 @@ function diskUsedPct(total: number | null, free: number | null): number {
 
 .size-col {
   width: 80px;
-  text-align: right;
   color: var(--text-secondary);
 }
 
 .free-col {
   width: 80px;
-  text-align: right;
 }
 
 .bar-col {
   flex: 1;
   display: flex;
   align-items: center;
-  gap: 0.5rem;
-  min-width: 100px;
-  padding-left: 0.75rem;
+  justify-content: center;
+  gap: 0.35rem;
+  min-width: 88px;
 }
 
 .disk-bar-track {
-  flex: 1;
+  width: 52px;
+  flex-shrink: 0;
   height: 6px;
   background: var(--bg-input);
   border-radius: 3px;
@@ -571,7 +579,7 @@ function diskUsedPct(total: number | null, free: number | null): number {
   font-size: 0.72rem;
   font-weight: 600;
   color: var(--text-muted);
-  min-width: 32px;
-  text-align: right;
+  min-width: 28px;
+  text-align: center;
 }
 </style>

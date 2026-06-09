@@ -5,7 +5,7 @@
   "type": "module",
   "license": "UNLICENSED",
   "engines": {
-    "node": ">=20 <23"
+    "node": "22.x"
   },
   "scripts": {
     "start": "node bin/server.js",

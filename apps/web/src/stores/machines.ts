@@ -1,5 +1,6 @@
 import { defineStore } from "pinia";
 import { ref } from "vue";
+import { isAxiosError } from "axios";
 import api from "@/services/api";
 import type {
   Machine,
@@ -47,8 +48,27 @@ export const useMachinesStore = defineStore("machines", () => {
     const maxAttempts = 10;
     const waitMs = 35_000;
 
+    const sleep = (ms: number) =>
+      new Promise<void>((resolve) => setTimeout(resolve, ms));
+
+    const isTransientDeleteError = (err: unknown) => {
+      if (!isAxiosError(err)) return false;
+      if (!err.response) return true;
+      const status = err.response.status;
+      return status >= 500 && status <= 599;
+    };
+
     for (let attempt = 0; attempt < maxAttempts; attempt++) {
-      const response = await api.delete(`/api/v1/machines/${id}`);
+      let response;
+      try {
+        response = await api.delete(`/api/v1/machines/${id}`);
+      } catch (err) {
+        if (attempt === maxAttempts - 1 || !isTransientDeleteError(err)) {
+          throw err;
+        }
+        await sleep(waitMs);
+        continue;
+      }
 
       if (response.status === 204) {
         machines.value = machines.value.filter((m) => m.id !== id);
@@ -61,7 +81,7 @@ export const useMachinesStore = defineStore("machines", () => {
             "Descomissionamento ainda em andamento. Aguarde o agente sincronizar e tente excluir novamente.",
           );
         }
-        await new Promise((resolve) => setTimeout(resolve, waitMs));
+        await sleep(waitMs);
         continue;
       }
 

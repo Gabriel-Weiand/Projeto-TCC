@@ -254,7 +254,9 @@ export default class AllocationsController {
     } else {
       newEnd = end.plus({ minutes: additionalMinutes! })
     }
-    const scheduleError = validateAllocationSchedule(allocation.startTime, newEnd)
+    const scheduleError = validateAllocationSchedule(allocation.startTime, newEnd, {
+      allowPastStart: true,
+    })
     if (scheduleError) {
       return response.badRequest(scheduleError)
     }
@@ -381,7 +383,9 @@ export default class AllocationsController {
       const newStart = (data.startTime ?? allocation.startTime).toUTC()
       const newEnd = (data.endTime ?? allocation.endTime).toUTC()
 
-      const scheduleError = validateAllocationSchedule(newStart, newEnd)
+      const scheduleError = validateAllocationSchedule(newStart, newEnd, {
+        allowPastStart: data.startTime === undefined,
+      })
       if (scheduleError) {
         return response.badRequest(scheduleError)
       }

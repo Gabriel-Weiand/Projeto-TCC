@@ -1,239 +1,159 @@
 # Módulo Web
 
-## Papel
+SPA Vue 3 para reservas, monitoramento de máquinas e administração do laboratório.
 
-Aplicação SPA para alunos e administradores. A interface centraliza reservas, consulta de máquinas, e exibição de métricas de uso.
-
-## Comunicação com a API
-
-- **Autenticação**: login em `/api/v1/login`, token salvo localmente e enviado em todas as requisições.
-- **Reservas**: CRUD de alocações, com validação de conflitos e estados (pending/approved/denied).
-- **Máquinas**: listagem, detalhe, telemetria recente e histórico consolidado.
-- **Notificações**: `GET/PATCH /api/v1/notifications` — sino no `AppLayout`, painel `NotificationsPanel.vue`, store `notifications.ts`. Atualiza após criar/cancelar reserva.
-- **SSH**: cadastro da chave pública do usuário e instruções de conexão quando há alocação ativa.
-
-## Notificações (inbox)
-
-A API gera eventos; o front apenas lista e marca como lidas.
-
-### Usuário vê
-
-| Título (API) | Quando |
-|--------------|--------|
-| Reserva aprovada | admin aprovou reserva que estava `pending` |
-| Reserva negada | admin negou |
-| Reserva cancelada | cancelamento manual ou soft-delete |
-| Reserva cancelada (manutenção) | máquina em manutenção |
-| Reserva em breve | ~10 min antes do início |
-| Chave SSH — reserva em 5 min / reserva iniciada | sem chave ed25519 no perfil (lembrete reavaliado no scheduler e no heartbeat) |
-| Sessão encerrada | fim automático da janela |
-| Resumo da sessão disponível | admin gerou métricas |
-| Cadastre sua chave SSH | conta criada pelo admin |
-
-### Admin vê
-
-| Título (API) | Quando |
-|--------------|--------|
-| Nova reserva pendente | nova solicitação aguardando aprovação |
-| Reserva negada / cancelada (pendente) | auditoria de pedidos pendentes |
-| Possível flood SSH | muitas falhas SSH na máquina (alerta com cooldown) |
-| Agente offline | scheduler: sem heartbeat &gt;10 min; no máximo 1×/24 h por máquina (manutenção/retirar do parque) |
-
-Componentes: `src/stores/notifications.ts`, `src/components/NotificationsPanel.vue`, tipo `Notification` em `src/types/index.ts`.
-
-**Conectar SSH:** `ProfileAllocationConnectModal.vue` (perfil → Minhas alocações e detalhe da máquina) exibe nome, grupo, descrição, IP, login SSH, janela da reserva e aviso de que o IP costuma exigir rede local do campus. Comando via `utils/ssh.ts`: `-p` só quando `machine.sshPort` ≠ 22 (null no banco = 22). Admin configura IP/porta em `AdminMachinesView.vue`; detalhe mostra porta em `AdminMachineDetailView.vue`.
-
-**Aprovação de reservas:** com `LAB_ALLOCATION_REQUIRE_ADMIN_APPROVAL=true` na API, reservas de alunos nascem `pending` e admins recebem notificação; com `false` (padrão MVP), nascem `approved` automaticamente.
-
-## Estado local
-
-- Stores (Pinia) para sessão do usuário, reservas e máquinas.
-- Sincronização de tempo com a API para evitar divergência de relógio no navegador.
-
-## Saídas
-
-- Interface para usuários finais (reserva, acompanhamento de sessão, conexão SSH).
-- Painel admin para gerenciar parque de máquinas e auditoria.
+**Stack:** Vue 3 · TypeScript · Vite · Pinia · Vue Router · Axios · Chart.js
 
 ---
 
-## Planejamento (migrado do README geral)
+## Papel
 
-> **Nota**: A implementação do front-end está em fase de planejamento. As informações abaixo representam a visão geral das funcionalidades planejadas.
+- Alunos: calendário Gantt, criar/cancelar/estender reservas, conectar SSH, ver resumos de sessão.
+- Admins: parque, usuários, alocações, telemetria, manutenção e políticas do lab.
 
-### Tecnologias Consideradas
+Comunicação REST com a API em `/api/v1` (Bearer token). Bootstrap público via `GET /api/config` (fuso, calendário, flags de alocação).
 
-| Opção       | Descrição                                         |
-| ----------- | ------------------------------------------------- |
-| **React**   | Biblioteca para construção de interfaces reativas |
-| **Vue.js**  | Framework progressivo para SPAs                   |
-| **Next.js** | Framework React com SSR/SSG                       |
-| **Nuxt.js** | Framework Vue com SSR/SSG                         |
+---
 
-### Bibliotecas de Apoio (Planejadas)
+## Como rodar
 
-- **UI Components**: Tailwind CSS, shadcn/ui ou Vuetify
-- **Gerenciamento de Estado**: Zustand, Pinia ou Redux
-- **Requisições HTTP**: Axios ou fetch nativo
-- **Validação de Formulários**: Zod, Yup ou VeeValidate
-- **Calendário**: FullCalendar ou similar
-
-### Funcionalidades Planejadas
-
-#### Para Usuários Comuns
-
-```
-┌─────────────────────────────────────────────────────────────────────────┐
-│                      FUNCIONALIDADES DO USUÁRIO                          │
-├─────────────────────────────────────────────────────────────────────────┤
-│                                                                          │
-│  📅 Visualização de Disponibilidade                                     │
-│     • Calendário interativo com slots disponíveis                       │
-│     • Filtro por laboratório, data e horário                            │
-│     • Indicadores visuais de ocupação                                   │
-│                                                                          │
-│  🖥️ Reserva de Máquinas                                                 │
-│     • Seleção de máquina específica ou automática                       │
-│     • Definição de período (início e fim)                               │
-│     • Confirmação e cancelamento de reservas                            │
-│                                                                          │
-│  📊 Histórico e Métricas Pessoais                                       │
-│     • Lista de reservas passadas e futuras                              │
-│     • Estatísticas de uso (horas, frequência)                           │
-│                                                                          │
-│  👤 Perfil do Usuário                                                   │
-│     • Atualização de dados pessoais                                     │
-│     • Alteração de senha                                                │
-│                                                                          │
-└─────────────────────────────────────────────────────────────────────────┘
+```bash
+cd apps/web
+npm install
+echo "VITE_API_URL=http://localhost:3333" > .env
+npm run dev
 ```
 
-#### Para Administradores
+Requisito: **Node.js 22.x** (mesma versão da API). API rodando antes do front.
 
-```
-┌─────────────────────────────────────────────────────────────────────────┐
-│                   FUNCIONALIDADES DO ADMINISTRADOR                       │
-├─────────────────────────────────────────────────────────────────────────┤
-│                                                                          │
-│  🖥️ Gerenciamento de Máquinas                                           │
-│     • Cadastro e edição de máquinas                                     │
-│     • Visualização de status em tempo real                              │
-│     • Histórico de manutenções                                          │
-│                                                                          │
-│  👥 Gerenciamento de Usuários                                           │
-│     • Listagem e busca de usuários                                      │
-│     • Criação e edição de contas                                        │
-│     • Definição de permissões (admin/user)                              │
-│                                                                          │
-│  📊 Dashboard de Monitoramento                                          │
-│     • Visão geral de todos os laboratórios                              │
-│     • Métricas de utilização (CPU, RAM, Disco)                          │
-│     • Gráficos de tendência de uso                                      │
-│                                                                          │
-│  📈 Relatórios                                                          │
-│     • Relatório de ocupação por período                                 │
-│     • Relatório de usuários mais ativos                                 │
-│     • Exportação em PDF/CSV                                             │
-│                                                                          │
-└─────────────────────────────────────────────────────────────────────────┘
-```
+Guia rápido de uso e seed: [`README.md`](README.md).
 
-### Interfaces Principais (Wireframes)
+---
 
-#### Wireframe - Tela de Login
+## Rotas (`src/router/index.ts`)
 
-```
-┌─────────────────────────────────────────────────────────────────────────┐
-│                                                                          │
-│                        SISTEMA DE LABORATÓRIOS                           │
-│                                                                          │
-│                    ┌───────────────────────────┐                        │
-│                    │                           │                        │
-│                    │         🔐 LOGIN          │                        │
-│                    │                           │                        │
-│                    │  ┌─────────────────────┐  │                        │
-│                    │  │ Email               │  │                        │
-│                    │  └─────────────────────┘  │                        │
-│                    │                           │                        │
-│                    │  ┌─────────────────────┐  │                        │
-│                    │  │ Senha          👁️   │  │                        │
-│                    │  └─────────────────────┘  │                        │
-│                    │                           │                        │
-│                    │  ┌─────────────────────┐  │                        │
-│                    │  │      ENTRAR         │  │                        │
-│                    │  └─────────────────────┘  │                        │
-│                    │                           │                        │
-│                    │  Não tem conta? Registre  │                        │
-│                    │                           │                        │
-│                    └───────────────────────────┘                        │
-│                                                                          │
-└─────────────────────────────────────────────────────────────────────────┘
-```
+| Rota | View | Auth |
+|------|------|------|
+| `/login` | `LoginView` | Pública |
+| `/` | `HomeView` | User — calendário Gantt + nova reserva |
+| `/my-allocations` | `MyAllocationsView` | User |
+| `/machines` | `MachinesView` | User |
+| `/machines/:id` | `MachineDetailView` | User |
+| `/profile` | `ProfileView` | User |
+| `/admin` | `AdminDashboardView` | Admin |
+| `/admin/users` | `AdminUsersView` | Admin |
+| `/admin/machines` | `AdminMachinesView` | Admin |
+| `/admin/machines/:id` | → redirect `MachineDetailView?from=admin` | Admin |
+| `/admin/machines/:id/edit` | `AdminMachineEditView` | Admin |
+| `/admin/allocations` | `AdminAllocationsView` | Admin |
+| `/admin/maintenance` | `AdminMaintenanceView` | Admin |
+| `/admin/lab-telemetry` | → redirect maintenance `?tab=telemetria` | Admin |
 
-#### Wireframe - Calendário de Reservas
+Layout: `AppLayout.vue` (navbar, sino de notificações, abas admin).
 
-```
-┌─────────────────────────────────────────────────────────────────────────┐
-│  🏠 Home   📅 Reservas   🖥️ Máquinas   👤 Perfil         [Sair]        │
-├─────────────────────────────────────────────────────────────────────────┤
-│                                                                          │
-│  ◀ Fevereiro 2026 ▶                           [Filtrar Laboratório ▼]  │
-│                                                                          │
-│  ┌─────┬─────┬─────┬─────┬─────┬─────┬─────┐                           │
-│  │ DOM │ SEG │ TER │ QUA │ QUI │ SEX │ SAB │                           │
-│  ├─────┼─────┼─────┼─────┼─────┼─────┼─────┤                           │
-│  │  1  │  2  │  3  │  4  │  5  │  6  │  7  │                           │
-│  │     │ ●●  │ ●   │ ●●● │     │ ●   │     │                           │
-│  ├─────┼─────┼─────┼─────┼─────┼─────┼─────┤                           │
-│  │  8  │  9  │ 10  │ 11  │ 12  │ 13  │ 14  │                           │
-│  │     │ ●   │ ●●  │     │ ●●  │ ●●● │     │                           │
-│  └─────┴─────┴─────┴─────┴─────┴─────┴─────┘                           │
-│                                                                          │
-│  ● = Suas reservas                                                      │
-│                                                                          │
-│  ┌───────────────────────────────────────────────────────────────────┐  │
-│  │ Dia selecionado: 02/02/2026                                       │  │
-│  │                                                                    │  │
-│  │  08:00 │ Lab 1 - PC-05 │ Reservado (Você)     │ [Cancelar]        │  │
-│  │  10:00 │ Lab 2 - PC-12 │ Reservado (Você)     │ [Cancelar]        │  │
-│  │                                                                    │  │
-│  │                    [+ Nova Reserva]                                │  │
-│  └───────────────────────────────────────────────────────────────────┘  │
-│                                                                          │
-└─────────────────────────────────────────────────────────────────────────┘
-```
+---
 
-#### Wireframe - Dashboard Administrativo
+## Stores (Pinia)
 
-```
-┌─────────────────────────────────────────────────────────────────────────┐
-│  🏠 Dashboard   👥 Usuários   🖥️ Máquinas   📊 Relatórios     [Admin]  │
-├─────────────────────────────────────────────────────────────────────────┤
-│                                                                          │
-│  ┌─────────────────┐  ┌─────────────────┐  ┌─────────────────┐         │
-│  │   MÁQUINAS      │  │   USUÁRIOS      │  │   RESERVAS      │         │
-│  │                 │  │                 │  │                 │         │
-│  │   🖥️ 24        │  │   👥 156        │  │   📅 45         │         │
-│  │   Online: 18    │  │   Ativos: 89    │  │   Hoje: 12      │         │
-│  └─────────────────┘  └─────────────────┘  └─────────────────┘         │
-│                                                                          │
-│  ┌─────────────────────────────────────────────────────────────────┐   │
-│  │                    USO MÉDIO DE RECURSOS                         │   │
-│  │                                                                   │
-│  │  CPU    ████████████████░░░░░░░░░░░░  45%                        │   │
-│  │  RAM    ██████████████████████░░░░░░  62%                        │   │
-│  │  DISCO  ████████████░░░░░░░░░░░░░░░░  35%                        │   │
-│  │                                                                   │   │
-│  └─────────────────────────────────────────────────────────────────┘   │
-│                                                                          │
-│  ┌─────────────────────────────────────────────────────────────────┐   │
-│  │  MÁQUINAS EM TEMPO REAL                               [Ver Todos]│   │
-│  │                                                                   │   │
-│  │  PC-01 🟢  CPU: 23%  RAM: 45%  │  PC-02 🟢  CPU: 67%  RAM: 78%  │   │
-│  │  PC-03 🔴  Offline             │  PC-04 🟡  CPU: 89%  RAM: 92%  │   │
-│  │  PC-05 🟢  CPU: 12%  RAM: 34%  │  PC-06 🟢  CPU: 45%  RAM: 56%  │   │
-│  │                                                                   │   │
-│  └─────────────────────────────────────────────────────────────────┘   │
-│                                                                          │
-└─────────────────────────────────────────────────────────────────────────┘
-```
+| Store | Responsabilidade |
+|-------|------------------|
+| `auth` | Login, token, `/me` |
+| `allocations` | CRUD reservas, minhas alocações |
+| `machines` | Listagem, detalhe, telemetria |
+| `users` | Lista de usuários (admin) |
+| `notifications` | Inbox, marcar lida |
+| `labConfig` | Cache de `GET /api/config` |
+| `machineGroups` | Grupos de máquinas (admin) |
+| `systemMaintenance` | Prune, manutenção em lote |
+
+---
+
+## Horários e fuso
+
+| Camada | Formato |
+|--------|---------|
+| API / banco | **UTC** (`…Z`) |
+| Inputs de data/hora | Relógio de parede no fuso do lab (`labConfig.timezone`, ex. `America/Sao_Paulo`) |
+| Gantt, tabelas, modais | `formatLabDateTime` / `parseApiUtc` |
+
+Utilitário central: `src/utils/datetime.ts`
+
+| Função | Uso |
+|--------|-----|
+| `wallClockToUtcIso` | Enviar início/fim de reserva |
+| `formatLabDateTime` | Exibir instantes da API |
+| `LabWallClockDateInput` / `LabWallClockTimeInput` | Campos dd/mm/aaaa e hh:mm |
+
+**Regra:** nunca enviar datetime sem `Z`; nunca exibir ISO UTC cru sem converter para o fuso do lab.
+
+Teste: `node apps/web/src/utils/datetime.spec.mjs`
+
+Sincronização de relógio: `src/utils/timeSync.ts` + `GET /api/time` (offset ms; não substitui conversão de fuso).
+
+---
+
+## Componentes principais
+
+| Área | Componentes |
+|------|-------------|
+| Reservas | `CalendarGanttScroll`, `ReservationFormFields`, `ReservationMachinePicker`, `ExtendAllocationOverlay` |
+| Máquinas | `MachineLiveSections`, `MachineTelemetryPanel`, `AdminMachine*Tab` |
+| SSH | `ProfileAllocationConnectModal`, chave no perfil |
+| Notificações | `NotificationsPanel` |
+| Admin manutenção | `AdminMaintenance*Tab`, `AdminTabBar` |
+| Datetime | `LabWallClockDateInput`, `LabWallClockTimeInput` |
+
+---
+
+## Notificações (inbox)
+
+A API gera eventos; o front lista e marca como lidas (`stores/notifications.ts`).
+
+### Usuário
+
+| Título (API) | Quando |
+|--------------|--------|
+| Reserva aprovada / negada / cancelada | Mudança de status |
+| Reserva cancelada (manutenção) | Máquina em manutenção |
+| Reserva em breve | ~10 min antes do início |
+| Chave SSH — reserva em 5 min / iniciada | Sem chave ed25519 no perfil |
+| Sessão encerrada | Auto-finalize |
+| Resumo da sessão disponível | Admin gerou métricas |
+| Cadastre sua chave SSH | Conta criada pelo admin |
+
+### Admin
+
+| Título (API) | Quando |
+|--------------|--------|
+| Nova reserva pendente | `LAB_ALLOCATION_REQUIRE_ADMIN_APPROVAL=true` |
+| Possível flood SSH | Muitas falhas na janela |
+| Agente offline | Sem heartbeat >10 min (cooldown 24 h) |
+
+---
+
+## SSH e conexão
+
+- Usuário cadastra chave **ed25519** no perfil.
+- Com alocação ativa: `ProfileAllocationConnectModal` mostra IP, porta, login (`systemUsername`), comando (`utils/ssh.ts`).
+- Admin configura IP/porta SSH da máquina; auditoria em `/admin` → tentativas SSH.
+
+---
+
+## API e interceptors
+
+- `src/services/api.ts` — Axios, base URL `VITE_API_URL`, header `Authorization`.
+- Resposta de login: `{ value, user }` (token em `value`).
+- Roles: `user` | `admin`.
+
+---
+
+## Estilos
+
+Tema escuro em `src/assets/main.css` (variáveis CSS `--bg-*`, `--text-*`, `--border`).
+
+---
+
+## Referências
+
+- Contratos e endpoints: [`apps/api/MODULE.md`](../api/MODULE.md)
+- Agente e fases de acesso: [`apps/agent/MODULE.md`](../agent/MODULE.md)

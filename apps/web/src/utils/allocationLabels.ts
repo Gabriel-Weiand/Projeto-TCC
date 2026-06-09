@@ -12,6 +12,10 @@ export const ALLOCATION_REASON_MAX_LENGTH = 200;
 export const PERIOD_INVALID_RANGE_MESSAGE =
   "Horário inadequado para o período selecionado.";
 
+/** Início ou fim no passado (relógio do servidor). */
+export const PERIOD_IN_PAST_MESSAGE =
+  "Não é possível reservar um horário que já passou.";
+
 /** Data/hora de término além do limite futuro do laboratório. */
 export const PERIOD_END_TOO_FAR_MESSAGE =
   "Datas inválidas para o período selecionado.";
@@ -46,6 +50,7 @@ export function allocationApiErrorMessage(
   if (status === 409) return "Conflito de horário com outra reserva.";
   if (status === 400 || status === 422) {
     if (code === "ALLOCATION_TOO_FAR") return PERIOD_END_TOO_FAR_MESSAGE;
+    if (code === "ALLOCATION_IN_PAST") return PERIOD_IN_PAST_MESSAGE;
     if (code === "ALLOCATION_TOO_SHORT" && msg) return msg;
     if (code === "INVALID_RANGE") return PERIOD_INVALID_RANGE_MESSAGE;
     if (msg) return msg;

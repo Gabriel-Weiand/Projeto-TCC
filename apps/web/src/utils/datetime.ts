@@ -160,15 +160,53 @@ export function normalizeWallClockTime(raw: string): string | null {
   return `${String(hour).padStart(2, "0")}:${String(minute).padStart(2, "0")}`;
 }
 
-/** Formata digitação parcial como HH:mm (24h). */
-export function formatWallClockTimeTyping(raw: string): string {
-  const digits = raw.replace(/\D/g, "").slice(0, 4);
-  if (digits.length <= 2) return digits;
-  if (digits.length === 3) {
-    // HMM → 0H:MM (ex.: 905 → 09:05)
-    return `0${digits[0]}:${digits.slice(1).padStart(2, "0")}`;
+/** Separa HH:mm em partes de hora e minuto (sem zero-fill). */
+export function splitWallClockTime(raw: string): { hour: string; minute: string } {
+  const trimmed = raw.trim();
+  if (!trimmed.includes(":")) {
+    return { hour: trimmed.replace(/\D/g, ""), minute: "" };
   }
-  return `${digits.slice(0, 2)}:${digits.slice(2).padStart(2, "0")}`;
+  const [hour = "", minute = ""] = trimmed.split(":");
+  return {
+    hour: hour.replace(/\D/g, "").slice(0, 2),
+    minute: minute.replace(/\D/g, "").slice(0, 2),
+  };
+}
+
+/** Mantém só dígitos (máx. 2) para campo de hora ou minuto. */
+export function formatWallClockPartTyping(raw: string): string {
+  return raw.replace(/\D/g, "").slice(0, 2);
+}
+
+/** Hora parcial/completa válida no relógio 24h (00–23). Vazio = ok durante digitação. */
+export function isWallClockHourValid(hour: string): boolean {
+  if (!hour) return true;
+  if (!/^\d{1,2}$/.test(hour)) return false;
+  const h = Number(hour);
+  return h >= 0 && h <= 23;
+}
+
+/** Minuto parcial/completo válido (00–59). Vazio = ok durante digitação. */
+export function isWallClockMinuteValid(minute: string): boolean {
+  if (!minute) return true;
+  if (!/^\d{1,2}$/.test(minute)) return false;
+  const m = Number(minute);
+  return m >= 0 && m <= 59;
+}
+
+/** true quando hora e minuto formam HH:mm completo e válido. */
+export function isWallClockTimeComplete(hour: string, minute: string): boolean {
+  if (!hour || !minute) return false;
+  return normalizeWallClockTime(`${hour}:${minute}`) !== null;
+}
+
+/** Normaliza partes soltas para HH:mm ou null. */
+export function normalizeWallClockParts(
+  hour: string,
+  minute: string,
+): string | null {
+  if (!hour || !minute) return null;
+  return normalizeWallClockTime(`${hour}:${minute}`);
 }
 
 /** ISO UTC → campos de parede no fuso do lab (YYYY-MM-DD + HH:mm). */

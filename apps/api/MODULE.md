@@ -8,8 +8,8 @@ A API centraliza regras de negócio, autenticação e persistência. Ela orquest
 
 ### Pre-requisitos
 
-- Node.js 20+
-- npm ou pnpm
+- Node.js **22.x** (`engines` em `package.json`)
+- npm
 
 ### Instalacao
 
@@ -149,7 +149,8 @@ Flood SSH **não** roda no endpoint de telemetria — só quando o agente envia 
 │  │ UsersController │  │ IsAdmin         │  └─────────────────────────────┘  │
 │  │ MachinesCtrl    │  │ ForceJSON       │                                   │
 │  │ AllocationsCtrl │  └─────────────────┘  ┌─────────────────────────────┐  │
-│  │ TelemetriesCtrl │                       │        Models               │  │
+│  │ SystemCtrl      │                       │        Models               │  │
+│  │ LabSettingsCtrl │                       │                             │  │
 │  └─────────────────┘  ┌─────────────────┐  ├─────────────────────────────┤  │
 │                       │   Validators    │  │ User, Machine, Allocation   │  │
 │                       ├─────────────────┤  │ Telemetry, AllocationMetric │  │
@@ -167,7 +168,7 @@ Flood SSH **não** roda no endpoint de telemetria — só quando o agente envia 
 ├──────────────────┤       ├──────────────────┤       ├──────────────────┤
 │ id (PK)          │──────<│ tokenable_id(FK) │       │ id (PK)          │
 │ full_name        │       │ type             │       │ name             │
-│ email (UNIQUE)   │       │ name             │       │ api_key (UNIQUE) │
+│ email (UNIQUE)   │       │ name             │       │ agent_token      │
 │ password (HASH)  │       │ hash             │       │ cpu_model        │
 │ role (enum)      │       │ abilities        │       │ ram_gb           │
 │ created_at       │       │ created_at       │       │ disk_gb          │
@@ -216,7 +217,7 @@ Flood SSH **não** roda no endpoint de telemetria — só quando o agente envia 
 
 | Tecnologia     | Versão | Propósito                            |
 | -------------- | ------ | ------------------------------------ |
-| **Node.js**    | 20+    | Runtime JavaScript                   |
+| **Node.js**    | 22.x   | Runtime JavaScript                   |
 | **AdonisJS**   | 6.x    | Framework web full-stack             |
 | **TypeScript** | 5.x    | Tipagem estática                     |
 | **Lucid ORM**  | -      | Mapeamento objeto-relacional         |
@@ -381,6 +382,15 @@ Reservas futuras não podem terminar além do horizonte configurado no `.env` (p
 ## Manutenibilidade do sistema
 
 O laboratório combina **configuração central** (`.env` + overrides em runtime) com **rotas admin** para o front operar retenção, correções e políticas sem migrations.
+
+### Banco SQLite
+
+| Ambiente | Arquivo | Notas |
+|----------|---------|-------|
+| Dev/prod | `apps/api/tmp/db.sqlite3` | Definido em `config/database.ts` (não alterado por `DB_CONNECTION` no `.env`) |
+| Testes | `apps/api/tmp/test.sqlite3` | `NODE_ENV=test` — isolado do dev server |
+
+Trocar `.env` **não** apaga dados. `migration:fresh` recria o schema e **apaga** o conteúdo.
 
 ### Camadas de configuração
 

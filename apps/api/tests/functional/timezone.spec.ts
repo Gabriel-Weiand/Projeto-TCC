@@ -197,8 +197,8 @@ test.group('Timezone — Alocações em UTC', (group) => {
       status: 'available',
     })
 
-    const startTime = '2026-06-02T07:00:00.000Z'
-    const endTime = '2026-06-02T10:00:00.000Z'
+    const startTime = DateTime.utc().plus({ hours: 1 }).startOf('second').toISO()!
+    const endTime = DateTime.utc().plus({ hours: 4 }).startOf('second').toISO()!
 
     const created = await client.post('/api/v1/allocations').loginAs(user).json({
       machineId: machine.id,

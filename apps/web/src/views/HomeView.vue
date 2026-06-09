@@ -15,13 +15,16 @@ import {
   ALLOCATION_REASON_MAX_LENGTH,
   allocationApiErrorMessage,
   PERIOD_END_TOO_FAR_MESSAGE,
+  PERIOD_IN_PAST_MESSAGE,
   PERIOD_INVALID_RANGE_MESSAGE,
   periodTooShortMessage,
 } from "@/utils/allocationLabels";
+import { serverNowMs } from "@/services/timeSync";
 import { isMachineAvailableForPeriod } from "@/utils/allocationAvailability";
 import {
   isAllocationEndBeyondLabLimit,
   isPeriodDurationTooShort,
+  isPeriodInPast,
   isPeriodRangeOrderInvalid,
 } from "@/utils/allocationPeriodValidation";
 
@@ -82,8 +85,15 @@ const periodRangeInvalid = computed(
     isPeriodRangeOrderInvalid(periodFields.value, lab.timezone),
 );
 
+const periodInPast = computed(
+  () =>
+    periodFilled.value &&
+    isPeriodInPast(periodFields.value, lab.timezone, serverNowMs()),
+);
+
 const periodEndTooFar = computed(() => {
-  if (!periodFilled.value || periodRangeInvalid.value) return false;
+  if (!periodFilled.value || periodRangeInvalid.value || periodInPast.value)
+    return false;
   try {
     return isAllocationEndBeyondLabLimit(
       form.value.endDate,
@@ -98,7 +108,12 @@ const periodEndTooFar = computed(() => {
 });
 
 const periodTooShort = computed(() => {
-  if (!periodFilled.value || periodRangeInvalid.value) return false;
+  if (
+    !periodFilled.value ||
+    periodRangeInvalid.value ||
+    periodInPast.value
+  )
+    return false;
   return isPeriodDurationTooShort(
     periodFields.value,
     lab.timezone,
@@ -107,6 +122,7 @@ const periodTooShort = computed(() => {
 });
 
 const periodErrorMessage = computed((): string | null => {
+  if (periodInPast.value) return PERIOD_IN_PAST_MESSAGE;
   if (periodRangeInvalid.value) return PERIOD_INVALID_RANGE_MESSAGE;
   if (periodTooShort.value) {
     return periodTooShortMessage(lab.config.allocation.minDurationMinutes);

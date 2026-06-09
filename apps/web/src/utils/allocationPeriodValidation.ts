@@ -61,6 +61,57 @@ export function isPeriodRangeOrderInvalid(
   }
 }
 
+/** Início mais de ~1 min no passado (alinhado à tolerância da API). */
+export function isPeriodStartInPast(
+  startDate: string,
+  startTime: string,
+  timezone: string,
+  nowMs: number,
+): boolean {
+  try {
+    const startMs = parseApiUtcMs(
+      wallClockToUtcIso(startDate, startTime, timezone),
+    );
+    return startMs < nowMs - 59_000;
+  } catch {
+    return false;
+  }
+}
+
+/** Fim no passado ou igual a agora (UTC ms do servidor). */
+export function isPeriodEndInPast(
+  endDate: string,
+  endTime: string,
+  timezone: string,
+  nowMs: number,
+): boolean {
+  try {
+    const endMs = parseApiUtcMs(
+      wallClockToUtcIso(endDate, endTime, timezone),
+    );
+    return endMs <= nowMs;
+  } catch {
+    return false;
+  }
+}
+
+/** Início ou fim no passado. */
+export function isPeriodInPast(
+  fields: ReservationPeriodFields,
+  timezone: string,
+  nowMs: number,
+): boolean {
+  return (
+    isPeriodStartInPast(
+      fields.startDate,
+      fields.startTime,
+      timezone,
+      nowMs,
+    ) ||
+    isPeriodEndInPast(fields.endDate, fields.endTime, timezone, nowMs)
+  );
+}
+
 /** Duração em minutos menor que o mínimo do laboratório (API: ALLOCATION_TOO_SHORT). */
 function extendEndCompareMs(
   endDate: string,

@@ -1,610 +1,268 @@
 # Sistema Distribuído de Gestão de Laboratórios
 
-Este projeto é parte fundamental do Trabalho de Conclusão de Curso (TCC) na Universidade Federal de Pelotas (UFPel). Ele tem como objetivo abranger uma solução completa para o gerenciamento de alocação, monitoramento e controle de acesso em máquinas de laboratórios universitários de pesquisa. O sistema opera em uma arquitetura distribuída composta por uma API central, um dashboard/site web para alocações e agentes locais instalados nas máquinas.
+Monorepo do TCC (UFPel): API central AdonisJS, dashboard Vue 3 e agente Python (`agentd.py`) nas máquinas do laboratório. O sistema alinha **estado desejado** (reservas na API) com **estado real** (usuários POSIX, chaves SSH e telemetria no Linux).
 
 ---
 
-## 📑 Sumário
+## Sumário
 
-1. [Contexto e Solução](#-contexto-e-solução)
-2. [Arquitetura do Sistema](#-arquitetura-do-sistema)
-
-- [Visão Geral](#visão-geral)
-
-3. [Funcionalidades (MVP)](#-funcionalidades-mvp)
-4. [Status do Projeto](#-status-do-projeto)
-5. [Documentação por Módulo](#-documentação-por-módulo)
-6. [Estrutura do Projeto](#-estrutura-do-projeto)
-7. [Como Rodar (visão geral)](#-como-rodar-visão-geral)
-8. [Trabalhos Futuros](#-trabalhos-futuros)
-9. [Licença](#-licença)
+1. [Contexto](#contexto)
+2. [Arquitetura](#arquitetura)
+3. [Funcionalidades](#funcionalidades)
+4. [Métricas e qualidade](#métricas-e-qualidade)
+5. [Status e documentação](#status-e-documentação)
+6. [Tecnologias](#tecnologias)
+7. [Como rodar](#como-rodar)
+8. [Estrutura do repositório](#estrutura-do-repositório)
+9. [Trabalhos futuros](#trabalhos-futuros)
 
 ---
 
-## 🎯 Contexto e Solução
+## Contexto
 
-Atualmente, a gestão de recursos computacionais em alguns laboratórios de pesquisa depende de planilhas e comunicação informal, o que compromete a eficiência e a segurança dos computadores/servidores.
+Laboratórios de pesquisa costumam gerir máquinas com planilhas e acordos informais. Este sistema centraliza reservas, provisionamento SSH por alocação, telemetria de uso e painel administrativo.
 
-A solução foi projetada sob a ótica de **Sistemas Distribuídos**, visando garantir a convergência entre:
-
-1. **Estado Desejado:** O agendamento definido no sistema web.
-2. **Estado Real:** O comportamento efetivo da máquina física no laboratório.
-
-### Objetivos do Sistema
-
-- **Gerenciamento de Reservas**: Permitir que usuários reservem máquinas para períodos específicos
-- **Controle de Acesso**: Validar credenciais e bloquear a conexão máquinas não reservadas
-- **Monitoramento**: Coletar telemetria de uso (CPU, memória, disco)
-- **Otimização de Recursos**: Fornecer dados para análise de utilização dos laboratórios
+**Papéis:** `user` (aluno/pesquisador) e `admin` — não há cadastro público; contas são criadas pelo admin.
 
 ---
 
-## 🏛 Arquitetura do Sistema
-
-O projeto adota uma estrutura de **Monorepo** organizada, onde a API Central orquestra as regras de negócio para dois clientes distintos. A arquitetura foca na separação de responsabilidades de autenticação:
-
-1. **Backend (API Central):** Desenvolvido em **AdonisJS 6**, atua como a fonte da verdade. Gerencia duas frentes de autenticação:
-   - _Usuários:_ Autenticação via tokens (JWT-like) com hash SHA-256
-   - _Agentes:_ Autenticação via Agent Keys (Bearer Token) de 512 bits
-2. **Frontend (Web):** Interface para alunos solicitarem uso e administradores gerenciarem o parque.
-3. **Agent (Máquinas Gerenciadas):** Software local (Daemon) que consulta a API para saber se deve permitir o uso ao hardware e reporta telemetria. Roda na rede local em que a API central está localizada.
-
-### Visão Geral
+## Arquitetura
 
 ```
-┌─────────────────────────────────────────────────────────────────────────┐
-│                         SISTEMA DE LABORATÓRIOS                         │
-├─────────────────────────────────────────────────────────────────────────┤
-│                                                                         │
-│   ┌──────────────┐     ┌──────────────┐     ┌──────────────────────┐    │
-│   │              │     │              │     │                      │    │
-│   │   FRONT-END  │────▶│     API      │◀────│   AGENTES DE         │    │
-│   │   (Web App)  │     │   (AdonisJS) │     │   MÁQUINA            │    │
-│   │              │     │              │     │                      │    │
-│   └──────────────┘     └──────┬───────┘     └──────────────────────┘    │
-│                               │                                         │
-│                               ▼                                         │
-│                        ┌──────────────┐                                 │
-│                        │   DATABASE   │                                 │
-│                        │   (SQLite)   │                                 │
-│                        └──────────────┘                                 │
-│                                                                         │
-└─────────────────────────────────────────────────────────────────────────┘
+┌──────────────┐     ┌──────────────┐     ┌──────────────────────┐
+│  Web (Vue 3) │────▶│ API AdonisJS │◀────│  Agente (agentd.py)  │
+│  :5173       │     │  :3333       │     │  heartbeat ~30s      │
+└──────────────┘     └──────┬───────┘     └──────────────────────┘
+                            │
+                            ▼
+                     ┌──────────────┐
+                     │ SQLite       │
+                     │ tmp/db.sqlite3│
+                     └──────────────┘
 ```
+
+| Componente | Autenticação | Responsabilidade |
+|------------|--------------|------------------|
+| **Web** | Bearer token de usuário | Reservas, calendário Gantt, perfil, SSH, admin |
+| **API** | Tokens de usuário + agent keys (512 bits) | Regras de negócio, notificações, telemetria, manutenção |
+| **Agente** | `MACHINE_TOKEN` | `useradd`/chaves SSH, fases `full_shell`/`sftp_only`, métricas |
+
+O agente **não** bloqueia tela de login gráfico — o controle de acesso é via **SSH** (shell completo na sessão, SFTP pós-sessão, revogação de chave).
+
+Documentação detalhada: [`apps/api/MODULE.md`](apps/api/MODULE.md), [`apps/web/MODULE.md`](apps/web/MODULE.md), [`apps/agent/MODULE.md`](apps/agent/MODULE.md).
 
 ---
 
-## 🚀 Funcionalidades (MVP)
+## Funcionalidades
 
-### 👤 Usuários & Acesso
+### Autenticação e perfil
 
-- **Autenticação Híbrida:** Login tradicional para usuários e "Handshake" seguro para os agentes instalados.
-- **Role-Based Access Control (RBAC):** Diferenciação estrita entre `Student` e `Admin`.
-- **Senhas Criptografadas:** Senhas armazenadas com hash seguro (scrypt), nunca em texto plano.
+- Login/logout (`POST /api/v1/login`, `DELETE /api/v1/logout`); tokens Adonis (hash SHA-256 no banco)
+- Login invalida sessões anteriores do mesmo usuário
+- Perfil: nome, e-mail, senha; chave SSH **ed25519** obrigatória para reservas
+- Sincronização de relógio web ↔ API (`GET /api/time`) para validação de horários no fuso do lab
 
-### 📅 Alocação de Recursos (Modelo Otimista)
+### Reservas (usuário)
 
-- **Aprovação de reservas:** Por padrão (`LAB_ALLOCATION_REQUIRE_ADMIN_APPROVAL=false`), alunos autenticados criam reservas já `approved`. Com a variável `true`, toda reserva de usuário nasce `pending` até o admin aprovar.
-- **Controle Reativo:** O Administrador monitora alocações ativas e pode alterá-las para `DENIED` ou `APPROVED` dependendo da alocação. Isso aciona o bloqueio imediato na máquina física via Agente.
-- **Privacidade:** Alunos veem a ocupação do laboratório (mapa de máquinas), mas os dados de _quem_ está usando podem ou não ser anonimizados para não-admins (configurável).
+- Calendário **Gantt** multi-máquina com janela configurável (dias passados/futuros via `GET /api/config`)
+- Nova reserva: data/hora início e fim no fuso do laboratório, motivo opcional, escolha de volume/disco quando a máquina permite
+- Validações: ordem início/fim, duração mínima, limite futuro, **horário no passado**, conflito com gap de grace (`LAB_ALLOCATION_GRACE_MINUTES`, padrão **10 min**)
+- Aprovação automática ou pendente (`LAB_ALLOCATION_REQUIRE_ADMIN_APPROVAL`)
+- **Minhas alocações:** cancelar (antes do início), finalizar antecipadamente, estender fim, conectar SSH, estatísticas TWA da sessão, ocultar do histórico
+- Fases operacionais: preparação → sessão (`full_shell`) → grace → SFTP (`sftp_only`) → teardown
 
-### 🖥️ Gestão de Ativos & Telemetria
+### Parque de máquinas (usuário)
 
-- **Sincronização de Estado:** O Agente consulta periodicamente ("Heartbeat") a API para alinhar o estado local (Bloqueado/Liberado).
-- **Auditoria de Hardware:** Coleta de métricas (CPU/RAM) para identificar uso indevido ou máquinas ociosas.
-- **Soft Deletes:** Preservação de histórico para auditoria.
+- Listagem agrupada por laboratório/grupo, busca e modal de specs
+- Detalhe: hardware, fingerprint SSH, atalho para reservar, botão conectar quando a sessão está ativa
 
----
+### Notificações
 
-## 🛠 Tecnologias Utilizadas
+- Inbox in-app: lembrete de reserva, chave SSH ausente, aprovação/negativa, agente offline, flood SSH (admin)
+- Marcar lida / marcar todas; scheduler na API dispara lembretes
 
-| Tecnologia     | Versão | Propósito                            |
-| -------------- | ------ | ------------------------------------ |
-| **Node.js**    | 20+    | Runtime JavaScript                   |
-| **AdonisJS**   | 6.x    | Framework web full-stack             |
-| **TypeScript** | 5.x    | Tipagem estática                     |
-| **Lucid ORM**  | -      | Mapeamento objeto-relacional         |
-| **VineJS**     | -      | Validação de dados                   |
-| **SQLite**     | 3.x    | Banco de dados (WAL Mode habilitado) |
+### Administradores — usuários
 
----
+- CRUD de contas (`user` / `admin`); `system_username` imutável após criação
+- Visualizar alocações por usuário
 
-## 🔐 Segurança
+### Administradores — máquinas
 
-### Criptografia de Senhas
+- CRUD, status efetivo (online/offline por heartbeat, manutenção, ocupada)
+- Specs sincronizadas pelo agente (`PUT /api/v1/agent/sync-specs`): CPU, RAM, VRAM, GPU, discos JSON
+- Política de discos: `only_main_disk`, mountpoints alocáveis, `home_mountpoint` por reserva
+- Grupos de máquinas (laboratórios)
+- Preset de telemetria por máquina (fast/eco) + overrides globais em `/admin/maintenance`
+- Token do agente (512 bits), rotação, descomissionamento em duas fases (202 → agente limpa `lab.*` → 204)
+- **Usuários provisionados:** override manual de acesso (`shell` / `sftp` / `auto`) por máquina
+- Telemetria ao vivo (buffer SSE/polling), histórico ocioso 24 h, solicitar snapshot de processos pesados
+- Auditoria SSH por máquina (`/var/log/auth.log` via agente)
 
-As senhas dos usuários **nunca são armazenadas em texto plano** no banco de dados. O sistema utiliza o algoritmo **scrypt** para hash de senhas, um dos mais seguros disponíveis atualmente.
+### Administradores — alocações
 
-```
-┌─────────────────────────────────────────────────────────────────────────┐
-│                    ARMAZENAMENTO SEGURO DE SENHAS                       │
-├─────────────────────────────────────────────────────────────────────────┤
-│                                                                         │
-│  📥 CADASTRO/ATUALIZAÇÃO DE SENHA                                       │
-│  ┌────────────────────────────────────────────────────────────────────┐ │
-│  │                                                                    │ │
-│  │  Senha: "minhasenha123"                                            │ │
-│  │           │                                                        │ │
-│  │           ▼                                                        │ │
-│  │  ┌─────────────────┐                                               │ │
-│  │  │  Algoritmo      │  • scrypt (padrão AdonisJS)                   │ │
-│  │  │  de Hashing     │  • Resistente a ataques de GPU                │ │
-│  │  │  (scrypt)       │  • Salt aleatório por senha                   │ │
-│  │  └────────┬────────┘                                               │ │
-│  │           │                                                        │ │
-│  │           ▼                                                        │ │
-│  │  Hash: "$scrypt$n=16384,r=8,p=1$salt$hash..."                      │ │
-│  │  (armazenado no banco de dados)                                    │ │
-│  │                                                                    │ │
-│  └────────────────────────────────────────────────────────────────────┘ │
-│                                                                         │
-│  📤 VERIFICAÇÃO DE LOGIN                                                │
-│  ┌────────────────────────────────────────────────────────────────────┐ │
-│  │                                                                    │ │
-│  │  1. Usuário envia: email + senha em texto plano (via HTTPS)        │ │
-│  │  2. API busca o hash armazenado pelo email                         │ │
-│  │  3. Aplica o mesmo algoritmo na senha enviada                      │ │
-│  │  4. Compara os hashes (timing-safe comparison)                     │ │
-│  │  5. Se igual → Login autorizado                                    │ │
-│  │     Se diferente → Credenciais inválidas                           │ │
-│  │                                                                    │ │
-│  └────────────────────────────────────────────────────────────────────┘ │
-│                                                                         │
-│  ⚠️  IMPORTANTE:                                                        │
-│  • Mesmo administradores não conseguem ver a senha original             │
-│  • Não existe "recuperar senha", apenas "redefinir"                     │
-│  • Cada senha tem seu próprio salt único                                │
-│  • O hash inclui os parâmetros do algoritmo para futuras migrações      │
-│                                                                         │
-└─────────────────────────────────────────────────────────────────────────┘
-```
+- Listagem global com filtros por status/sub-estado (ativa, grace, SFTP, pendente, etc.)
+- Aprovar/negar/cancelar; editar início/fim (overlay com Gantt); gerar resumo TWA; exclusão definitiva
+- Reservar em nome de outro usuário (Home + picker)
 
-**Características do scrypt:**
+### Administradores — manutenção (`/admin/maintenance`)
 
-- **Resistente a ataques de força bruta**: Requer muita memória para computar
-- **Salt único por senha**: Mesmo senhas iguais geram hashes diferentes
-- **Timing-safe comparison**: Previne ataques de timing
-- **Parâmetros ajustáveis**: Pode aumentar a dificuldade conforme hardware evolui
+- Presets de telemetria (intervalo, batch, métricas on/off)
+- Políticas do lab: aprovação obrigatória, nomes públicos no Gantt, grace/SFTP/prepare
+- Retenção: resumir telemetria, podar alocações/notificações/tentativas SSH
+- Execução manual de jobs de manutenção e prune
 
-### Autenticação de Usuários
+### Agente (`agentd.py`)
 
-```
-┌─────────────────────────────────────────────────────────────┐
-│                    FLUXO DE AUTENTICAÇÃO                    │
-├─────────────────────────────────────────────────────────────┤
-│                                                             │
-│  1. Login: POST /api/auth/login                             │
-│     Body: { email, password }                               │
-│     → Senha verificada contra hash no banco                 │
-│     Response: { token, user }                               │
-│                                                             │
-│  2. Requisições autenticadas:                               │
-│     Header: Authorization: Bearer <token>                   │
-│     → Token validado (hash SHA-256 comparado)               │
-│                                                             │
-│  3. Logout: DELETE /api/auth/logout                         │
-│     → Token invalidado (removido do banco)                  │
-│                                                             │
-└─────────────────────────────────────────────────────────────┘
-```
+- **3 threads:** heartbeat (30 s), telemetria (preset da API), auditoria SSH
+- Bootstrap: `GET /api/config` → `PUT sync-specs` → loop
+- **Provisioning declarativo:** `useradd`/`usermod`, chaves ed25519, shell vs SFTP, migração de `$HOME` opcional
+- Reconciliação de drift (usuários/dirs `lab.*` órfãos), descomissionamento multi-partição
+- Telemetria em lote: CPU, RAM, swap, GPU (NVML/AMD/Intel), discos, rede, temperatura, processos on-demand
+- Resiliência: só aplica OS changes em heartbeat **200**; token inválido não apaga usuários
 
-### Autenticação de Máquinas
+### Telemetria e métricas (API)
 
-```
-┌─────────────────────────────────────────────────────────────┐
-│                   AUTENTICAÇÃO DE MÁQUINAS                  │
-├─────────────────────────────────────────────────────────────┤
-│                                                             │
-│  • Objetivo é nesta fase é garantir que uma máquina não     │
-│  possa se passar por outra.                                 │
-│  • Cada máquina possui um Agent Key único de 512 bits       │
-│  • Headers: Authorization: Bearer <token>                   │
-│  • Cache de 5 minutos para reduzir consultas ao banco       │
-│  • Usado apenas nas rotas /api/v1/agent/*                   │
-│                                                             │
-│  Geração do Agent Key:                                      │
-│  ┌────────────────────────────────────────────────────────┐ │
-│  │ const apiKey = string.generateRandom(64) // 512 bits   │ │
-│  │ // Exemplo: "d08248929bf8bcae92a2e204219c7941..."      │ │
-│  └────────────────────────────────────────────────────────┘ │
-│                                                             │
-│  Rotação de Token:                                          │
-│  • Admin pode regenerar token se comprometido               │
-│  • POST /api/v1/machines/:id/regenerate-token               │
-│  • Agente deve ser reconfigurado com novo token             │
-│                                                             │
-└─────────────────────────────────────────────────────────────┘
-```
+- Amostras brutas ligadas à **alocação ativa**; buffer em memória para tempo real
+- Buffer ocioso 24 h quando não há alocação
+- Resumo **TWA** por sessão → `allocation_metrics` + série para gráficos; purge de raw após resumo
+- Downsample e normalização para front/admin
+
+### Configuração
+
+- Políticas via `.env` (`LAB_*`) + overrides runtime (`PUT /api/v1/lab/settings`, JSON em `storage/lab/`)
+- Calendário, limites, fuso e políticas de alocação expostos em `GET /api/config`
 
 ---
 
-## 📋 Regras de Negócio
+## Métricas e qualidade
 
-### Regra de Gap entre Alocações
+_Medições em junho/2026 (excl. `node_modules` / venv)._
 
-````
-┌─────────────────────────────────────────────────────────────────────────┐
-│                      REGRA DE 5 MINUTOS DE GAP                          │
-├─────────────────────────────────────────────────────────────────────────┤
-│                                                                         │
-│  Objetivo: Garantir tempo para troca de usuários entre sessões          │
-│                                                                         │
-│  Implementação:                                                         │
-│  • Ao criar alocação, verificar conflito com gap de 5 minutos           │
-│  • Alocação A (10:00-11:00) bloqueia criação de B antes de 11:05        │
-│                                                                         │
-│  Linha do tempo:                                                        │
-│  ┌──────────────────────────────────────────────────────────────────┐   │
-│  │ 10:00      11:00  11:05      12:00                               │   │
-│  │   │──────────│      │──────────│                                 │   │
-│  │   │ Alocação │ GAP  │ Alocação │                                 │   │
-│  │   │    A     │ 5min │    B     │                                 │   │
-│  └──────────────────────────────────────────────────────────────────┘   │
-│                                                                         │
-└─────────────────────────────────────────────────────────────────────────┘
+| Métrica | Agente | API | Web |
+|---------|--------|-----|-----|
+| Linhas de código (approx.) | ~1 230 (`agentd.py`) | ~16 000 TS | ~18 000 Vue/TS |
+| Arquivos fonte principais | 1 daemon + docs | 12 controllers, 25 services, 10 migrations, 9 models | 13 views, 31 components, 8 stores |
+| Testes automatizados | — (contrato via API) | **205** specs Japa | 3 scripts Node (`datetime`, `ssh`, `notificationMessage`) |
+| Documentação | `MODULE.md` (~875 linhas) | `MODULE.md` | `MODULE.md` |
 
-### 3. Configuração do Agente
+**Histórico git:** ~59 commits; ~326 k linhas adicionadas / ~284 k removidas (inclui refactors de documentação).
 
-#### Processo de Setup
+### Revisão de código — pontos de atenção
 
-1. **Admin cria máquina** via `POST /api/v1/machines` ou interface web
-2. **Admin copia o token** retornado na criação (ou via `GET /api/v1/machines/:id`)
-3. **Admin instala o agente** na máquina física
-4. **Admin configura o token** no arquivo de config do agente
-5. **Agente inicia** e faz `PUT /sync-specs` + `POST /heartbeat`
-6. **Máquina fica online** e pronta para uso
+**Agente**
+- Possível crash na thread de telemetria com preset eco (`gpuUsage` nulo no log) — `agentd.py` ~1120
+- Lotes de telemetria descartados se o POST falhar (sem retry)
+- Sem testes unitários do daemon; log SSH fixo em `/var/log/auth.log` (Debian/Ubuntu)
 
-#### Rotação de Token (Segurança)
+**API**
+- Filtro `lifecycleStatus` carrega todas as alocações em memória antes de paginar
+- `GET /users` sem paginação (documentado no MODULE, não implementado)
+- CORS permissivo (`origin: true`); sem rate limit no login
+- Token de agente em texto plano no SQLite; buffers de telemetria só em memória (não multi-instância)
 
-Se o token for comprometido:
-
-```http
-POST /api/v1/machines/1/regenerate-token
-Authorization: Bearer <ADMIN_USER_TOKEN>
-````
-
-Resposta:
-
-```json
-{
-  "message": "Token regenerado com sucesso. Configure o agente com o novo token.",
-  "machineId": 1,
-  "token": "novo_token_aqui...",
-  "tokenRotatedAt": "2026-01-28T12:00:00.000Z"
-}
-```
-
-O admin deve então atualizar o config do agente na máquina física.
+**Web**
+- Default `VITE_API_URL` no código é `:7372`; documentação usa `:3333` — exige `.env`
+- Falhas de fetch frequentemente viram “lista vazia” sem mensagem de erro
+- Código órfão: `AdminLabTelemetryView.vue`, `AdminTabBar.vue`
+- UI usa `alert()`/`confirm()` em vários fluxos admin
 
 ---
 
-## 🤖 Agente de Máquina
+## Status e documentação
 
-### Responsabilidades
+| Módulo | Estado | Documento |
+|--------|--------|-----------|
+| API | Implementado | [`apps/api/MODULE.md`](apps/api/MODULE.md) |
+| Web | Implementado | [`apps/web/MODULE.md`](apps/web/MODULE.md) |
+| Agente | Implementado | [`apps/agent/MODULE.md`](apps/agent/MODULE.md) |
 
-O agente de máquina é um software instalado em cada computador do laboratório, responsável por:
-
-- **Comunicação**: Manter conexão com a API central via heartbeats periódicos
-- **Autenticação Local**: Interceptar tentativas de login e validar permissões
-- **Bloqueio de Tela**: Bloquear acesso quando não há alocação ativa
-- **Coleta de Métricas**: Monitorar uso de CPU, memória e disco
-- **Sincronização**: Reportar especificações de hardware
-
-### Diagrama de Estados
-
-```
-                              ┌─────────────────┐
-                              │                 │
-                              │   INICIALIZADO  │
-                              │                 │
-                              └────────┬────────┘
-                                       │
-                                       │ Conectar à API
-                                       ▼
-                              ┌─────────────────┐
-                              │                 │
-              ┌───────────────│    OCIOSO       │───────────────┐
-              │               │  (Tela Bloqueada)               │
-              │               └────────┬────────┘               │
-              │                        │                        │
-              │ Heartbeat              │ Usuário tenta          │ Heartbeat
-              │ (a cada 30s)           │ fazer login            │ (shouldBlock=false)
-              │                        ▼                        │
-              │               ┌─────────────────┐               │
-              │               │                 │               │
-              │               │   VALIDANDO     │               │
-              │               │   CREDENCIAIS   │               │
-              │               │                 │               │
-              │               └────────┬────────┘               │
-              │                        │                        │
-              │            ┌───────────┴───────────┐            │
-              │            │                       │            │
-              │     Válido + Alocação        Inválido ou        │
-              │            │                 Sem Alocação       │
-              │            ▼                       │            │
-              │   ┌─────────────────┐              │            │
-              │   │                 │              │            │
-              └──>│     ATIVO       │<─────────────┘            │
-                  │ (Sessão do User)│                           │
-                  │                 │                           │
-                  └────────┬────────┘                           │
-                           │                                    │
-                           │ Logout ou                          │
-                           │ Fim da alocação                    │
-                           │                                    │
-                           └────────────────────────────────────┘
-```
-
-## 💻 Front-end (Web)
-
-> **Nota**: A implementação do front-end está em fase de execução.
-
-### Tecnologias Consideradas
-
-"dependencies": {
-"axios": "^1.13.5",
-"pinia": "^3.0.4",
-"vue": "^3.5.25",
-"vue-router": "^4.6.4"
-},
-"devDependencies": {
-"@types/node": "^24.10.1",
-"@vitejs/plugin-vue": "^6.0.2",
-"@vue/tsconfig": "^0.9.1",
-"typescript": "^6.0.3",
-"vite": "^7.3.1",
-"vue-tsc": "^3.2.8"
-
-### Funcionalidades Planejadas
-
-#### Para Usuários Comuns
-
-```
-┌─────────────────────────────────────────────────────────────────────────┐
-│                      FUNCIONALIDADES DO USUÁRIO                          │
-├─────────────────────────────────────────────────────────────────────────┤
-│                                                                          │
-│  📅 Visualização de Disponibilidade                                     │
-│     • Calendário interativo com slots disponíveis                       │
-│     • Filtro por laboratório, data e horário                            │
-│     • Indicadores visuais de ocupação                                   │
-│                                                                          │
-│  🖥️ Reserva de Máquinas                                                 │
-│     • Seleção de máquina específica ou automática                       │
-│     • Definição de período (início e fim)                               │
-│     • Confirmação e cancelamento de reservas                            │
-│                                                                          │
-│  📊 Histórico e Métricas Pessoais                                       │
-│     • Lista de reservas passadas e futuras                              │
-│     • Estatísticas de uso (horas, frequência)                           │
-│                                                                          │
-│  👤 Perfil do Usuário                                                   │
-│     • Atualização de dados pessoais                                     │
-│     • Alteração de senha                                                │
-│                                                                          │
-└─────────────────────────────────────────────────────────────────────────┘
-```
-
-#### Para Administradores
-
-```
-┌─────────────────────────────────────────────────────────────────────────┐
-│                   FUNCIONALIDADES DO ADMINISTRADOR                       │
-├─────────────────────────────────────────────────────────────────────────┤
-│                                                                          │
-│  🖥️ Gerenciamento de Máquinas                                           │
-│     • Cadastro e edição de máquinas                                     │
-│     • Visualização de status em tempo real                              │
-│     • Histórico de manutenções                                          │
-│                                                                          │
-│  👥 Gerenciamento de Usuários                                           │
-│     • Listagem e busca de usuários                                      │
-│     • Criação e edição de contas                                        │
-│     • Definição de permissões (admin/user)                              │
-│                                                                          │
-│  📊 Dashboard de Monitoramento                                          │
-│     • Visão geral de todos os laboratórios                              │
-│     • Métricas de utilização (CPU, RAM, Disco)                          │
-│     • Gráficos de tendência de uso                                      │
-│                                                                          │
-│  📈 Relatórios                                                          │
-│     • Relatório de ocupação por período                                 │
-│     • Relatório de usuários mais ativos                                 │
-│     • Exportação em PDF/CSV                                             │
-│                                                                          │
-└─────────────────────────────────────────────────────────────────────────┘
-```
-
-### Interfaces Principais (Wireframes)
-
-#### Wireframe - Tela de Login
-
-```
-┌─────────────────────────────────────────────────────────────────────────┐
-│                                                                          │
-│                        SISTEMA DE LABORATÓRIOS                           │
-│                                                                          │
-│                    ┌───────────────────────────┐                        │
-│                    │                           │                        │
-│                    │         🔐 LOGIN          │                        │
-│                    │                           │                        │
-│                    │  ┌─────────────────────┐  │                        │
-│                    │  │ Email               │  │                        │
-│                    │  └─────────────────────┘  │                        │
-│                    │                           │                        │
-│                    │  ┌─────────────────────┐  │                        │
-│                    │  │ Senha          👁️   │  │                        │
-│                    │  └─────────────────────┘  │                        │
-│                    │                           │                        │
-│                    │  ┌─────────────────────┐  │                        │
-│                    │  │      ENTRAR         │  │                        │
-│                    │  └─────────────────────┘  │                        │
-│                    │                           │                        │
-│                    │  Não tem conta? Registre  │                        │
-│                    │                           │                        │
-│                    └───────────────────────────┘                        │
-│                                                                          │
-└─────────────────────────────────────────────────────────────────────────┘
-```
-
-#### Wireframe - Calendário de Reservas
-
-```
-┌─────────────────────────────────────────────────────────────────────────┐
-│  🏠 Home   📅 Reservas   🖥️ Máquinas   👤 Perfil         [Sair]        │
-├─────────────────────────────────────────────────────────────────────────┤
-│                                                                          │
-│  ◀ Fevereiro 2026 ▶                           [Filtrar Laboratório ▼]  │
-│                                                                          │
-│  ┌─────┬─────┬─────┬─────┬─────┬─────┬─────┐                           │
-│  │ DOM │ SEG │ TER │ QUA │ QUI │ SEX │ SAB │                           │
-│  ├─────┼─────┼─────┼─────┼─────┼─────┼─────┤                           │
-│  │  1  │  2  │  3  │  4  │  5  │  6  │  7  │                           │
-│  │     │ ●●  │ ●   │ ●●● │     │ ●   │     │                           │
-│  ├─────┼─────┼─────┼─────┼─────┼─────┼─────┤                           │
-│  │  8  │  9  │ 10  │ 11  │ 12  │ 13  │ 14  │                           │
-│  │     │ ●   │ ●●  │     │ ●●  │ ●●● │     │                           │
-│  └─────┴─────┴─────┴─────┴─────┴─────┴─────┘                           │
-│                                                                          │
-│  ● = Suas reservas                                                      │
-│                                                                          │
-│  ┌───────────────────────────────────────────────────────────────────┐  │
-│  │ Dia selecionado: 02/02/2026                                       │  │
-│  │                                                                    │  │
-│  │  08:00 │ Lab 1 - PC-05 │ Reservado (Você)     │ [Cancelar]        │  │
-│  │  10:00 │ Lab 2 - PC-12 │ Reservado (Você)     │ [Cancelar]        │  │
-│  │                                                                    │  │
-│  │                    [+ Nova Reserva]                                │  │
-│  └───────────────────────────────────────────────────────────────────┘  │
-│                                                                          │
-└─────────────────────────────────────────────────────────────────────────┘
-```
-
-#### Wireframe - Dashboard Administrativo
-
-```
-┌─────────────────────────────────────────────────────────────────────────┐
-│  🏠 Dashboard   👥 Usuários   🖥️ Máquinas   📊 Relatórios     [Admin]  │
-├─────────────────────────────────────────────────────────────────────────┤
-│                                                                          │
-│  ┌─────────────────┐  ┌─────────────────┐  ┌─────────────────┐         │
-│  │   MÁQUINAS      │  │   USUÁRIOS      │  │   RESERVAS      │         │
-│  │                 │  │                 │  │                 │         │
-│  │   🖥️ 24        │  │   👥 156        │  │   📅 45         │         │
-│  │   Online: 18    │  │   Ativos: 89    │  │   Hoje: 12      │         │
-│  └─────────────────┘  └─────────────────┘  └─────────────────┘         │
-│                                                                          │
-│  ┌─────────────────────────────────────────────────────────────────┐   │
-│  │                    USO MÉDIO DE RECURSOS                         │   │
-│  │                                                                   │   │
-│  │  CPU    ████████████████░░░░░░░░░░░░  45%                        │   │
-│  │  RAM    ██████████████████████░░░░░░  62%                        │   │
-│  │  DISCO  ████████████░░░░░░░░░░░░░░░░  35%                        │   │
-│  │                                                                   │   │
-│  └─────────────────────────────────────────────────────────────────┘   │
-│                                                                          │
-│  ┌─────────────────────────────────────────────────────────────────┐   │
-│  │  MÁQUINAS EM TEMPO REAL                               [Ver Todos]│   │
-│  │                                                                   │   │
-│  │  PC-01 🟢  CPU: 23%  RAM: 45%  │  PC-02 🟢  CPU: 67%  RAM: 78%  │   │
-│  │  PC-03 🔴  Offline             │  PC-04 🟡  CPU: 89%  RAM: 92%  │   │
-│  │  PC-05 🟢  CPU: 12%  RAM: 34%  │  PC-06 🟢  CPU: 45%  RAM: 56%  │   │
-│  │                                                                   │   │
-│  └─────────────────────────────────────────────────────────────────┘   │
-│                                                                          │
-└─────────────────────────────────────────────────────────────────────────┘
-```
+A pasta `docs/` mantém apenas a proposta em PDF. Conteúdo técnico anterior foi consolidado nos `MODULE.md`.
 
 ---
 
-## 📁 Estrutura base do Projeto
+## Tecnologias
+
+| Camada | Stack |
+|--------|--------|
+| API | Node.js **22.x**, AdonisJS 6, TypeScript, Lucid, VineJS, SQLite (`better-sqlite3`) |
+| Web | Vue 3, Vite, Pinia, Vue Router, Axios, Chart.js |
+| Agente | Python 3, `psutil`, `requests`, `nvidia-ml-py` (opcional) |
+
+---
+
+## Como rodar
+
+### Pré-requisitos
+
+- **Node.js 22.x** (`node -v`) — ex.: [NodeSource setup_22.x](https://github.com/nodesource/distributions)
+- npm
+- Python 3 (somente para o agente nas máquinas)
+
+O `better-sqlite3` é nativo: o `postinstall` em `apps/api` roda `npm rebuild better-sqlite3` após `npm install`.
+
+### API
+
+```bash
+cd apps/api
+npm install
+cp .env.example .env
+# Ajuste TZ (ex.: America/Sao_Paulo) e LAB_* — ver .env.example
+
+node ace migration:run
+# ou, em dev com schema novo: node ace migration:fresh --seed
+
+node ace serve --watch
+# ou: npm run dev
+```
+
+Testes: `node ace test` (205 specs; banco de teste em `tmp/test.sqlite3`).
+
+Testes web (utilitários): `node apps/web/src/utils/datetime.spec.mjs` (e `ssh.spec.mjs`, `notificationMessage.spec.mjs`).
+
+### Web
+
+```bash
+cd apps/web
+npm install
+echo "VITE_API_URL=http://localhost:3333" > .env
+npm run dev
+```
+
+Abre em `http://localhost:5173`. Credenciais de seed: ver [`apps/web/README.md`](apps/web/README.md).
+
+### Agente
+
+Ver [`apps/agent/MODULE.md`](apps/agent/MODULE.md) — variáveis `MACHINE_TOKEN`, `SERVER_URL`, instalação como serviço (root, systemd).
+
+---
+
+## Estrutura do repositório
 
 ```
 Projeto-TCC/
 ├── apps/
-│   ├── api/         # Backend AdonisJS
-│   ├── agent/       # Agente de máquina python (rodando como serviço)
-│   └── web/         # Frontend Vue.js
-├── packages/
-│   └── shared/                   # Código compartilhado
-├── docs/                         # Documentação
+│   ├── api/          # Backend AdonisJS (~133 arquivos)
+│   ├── web/          # Frontend Vue 3 (~147 arquivos)
+│   └── agent/        # Daemon Python (agentd.py)
+├── docs/             # Proposta TCC (PDF)
 └── README.md
 ```
 
 ---
 
-## 📦 Como Rodar
+## Trabalhos futuros
 
-### Pré-requisitos
-
-- Node.js 22 (recomendado; veja `.nvmrc` na raiz — `nvm use`)
-- npm
-
-Use **o mesmo Node** no terminal, no IDE e nos testes. O `better-sqlite3` é módulo nativo: se você trocar de versão do Node (ex.: Node do sistema vs Node do Cursor), a API pode falhar até recompilar. O `postinstall` em `apps/api` faz `npm rebuild better-sqlite3` automaticamente após cada `npm install` nessa pasta.
-
-### Instalação
-
-```bash
-# Clone o repositório
-git clone https://github.com/seu-usuario/Projeto-TCC.git
-cd Projeto-TCC
-nvm use   # opcional, se usar nvm
-
-# API — dependências e rebuild do SQLite (postinstall)
-cd apps/api
-npm install
-
-# Configure o ambiente
-cp .env.example .env
-# Ajuste TZ para o fuso do laboratório (ex.: America/Sao_Paulo).
-# Opcional: limites do calendário, validade do token, nomes públicos no Gantt
-# (LAB_ALLOCATION_PUBLIC_NAMES=true — ver LAB_* em .env.example).
-
-# Execute as migrations (dev: se o schema mudou, use fresh + seed)
-node ace migration:run
-# node ace migration:fresh --seed
-
-# (Opcional) Execute os seeders para dados de teste
-node ace db:seed
-
-# Inicie o servidor de desenvolvimento
-node ace serve --watch
-```
-
-### Front (Vue)
-
-```bash
-cd apps/web
-npm install
-npm run dev
-```
-
-### Testes
-
-```bash
-cd apps/api
-node ace test
-```
-
-Se aparecer erro de ABI do `better-sqlite3`, confira `node -v` (deve ser 20–22) e rode de novo `npm install` em `apps/api`.
+- Integração LDAP/AD
+- Notificações push / e-mail
+- WebSocket para status em tempo real (hoje: polling + stream de telemetria)
+- Testes E2E web; testes de integração do agente
+- Rate limiting, paginação em `/users`, enforcement de horário comercial (`LAB_SCHEDULE_*`)
+- Correções da revisão: retry de telemetria no agente, tratamento de erro no Gantt, remoção de código morto no front
 
 ---
 
-## 🔮 Trabalhos Futuros
+## Licença
 
-- **Notificações Push**: Alertas para início/fim de reservas
-- **Integração LDAP/AD**: Autenticação com diretório da instituição
-- **App Mobile**: Versão mobile para consulta e reservas
-- **Machine Learning**: Previsão de demanda e sugestões de horários
-- **Auditoria Avançada**: Log detalhado de eventos para compliance
-- **WebSocket**: Atualização em tempo real do status das máquinas
+Projeto acadêmico — TCC UFPel.
 
----
-
-## 📄 Licença
-
-Este projeto foi desenvolvido como parte do Trabalho de Conclusão de Curso (TCC) na Universidade Federal de Pelotas (UFPel).
-
----
-
-_Documento atualizado em: Fevereiro de 2026_
+_Documento atualizado em junho de 2026._

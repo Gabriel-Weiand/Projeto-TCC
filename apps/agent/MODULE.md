@@ -56,6 +56,8 @@ O agente opera num modelo **State Enforcement (Pull Model)**:
 
 **Agente servidor Linux** — headless, usuários POSIX prefixo `lab.`, SSH/SFTP.
 
+> **Nota:** O controle de acesso é exclusivamente via chaves SSH e fase da alocação (`full_shell` → grace → `sftp_only` → remoção), conforme `LAB_ALLOCATION_*` na API.
+
 ---
 
 ## 2. Configuração (.env)

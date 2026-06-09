@@ -20,14 +20,18 @@ import {
   EXTEND_END_NOT_AFTER_CURRENT_MESSAGE,
   PERIOD_ALLOCATION_CONFLICT_MESSAGE,
   PERIOD_END_TOO_FAR_MESSAGE,
+  PERIOD_IN_PAST_MESSAGE,
   PERIOD_INVALID_RANGE_MESSAGE,
   periodTooShortMessage,
 } from "@/utils/allocationLabels";
+import { serverNowMs } from "@/services/timeSync";
 import {
   isAllocationEndBeyondLabLimit,
   isExtendEndBeforeCurrent,
   isExtendEndNotAfterCurrent,
   isPeriodDurationTooShort,
+  isPeriodEndInPast,
+  isPeriodInPast,
   isPeriodRangeOrderInvalid,
 } from "@/utils/allocationPeriodValidation";
 
@@ -163,8 +167,23 @@ const periodRangeInvalid = computed(
     isPeriodRangeOrderInvalid(periodFields.value, lab.timezone),
 );
 
+const periodInPast = computed(() => {
+  if (!periodFilled.value) return false;
+  const nowMs = serverNowMs();
+  if (props.adminMode && canEditStart.value) {
+    return isPeriodInPast(periodFields.value, lab.timezone, nowMs);
+  }
+  return isPeriodEndInPast(
+    form.value.endDate,
+    form.value.endTime,
+    lab.timezone,
+    nowMs,
+  );
+});
+
 const periodTooShort = computed(() => {
-  if (!periodFilled.value || periodRangeInvalid.value) return false;
+  if (!periodFilled.value || periodRangeInvalid.value || periodInPast.value)
+    return false;
   return isPeriodDurationTooShort(
     periodFields.value,
     lab.timezone,
@@ -173,7 +192,8 @@ const periodTooShort = computed(() => {
 });
 
 const periodEndTooFar = computed(() => {
-  if (!periodFilled.value || periodRangeInvalid.value) return false;
+  if (!periodFilled.value || periodRangeInvalid.value || periodInPast.value)
+    return false;
   try {
     return isAllocationEndBeyondLabLimit(
       form.value.endDate,
@@ -247,18 +267,24 @@ const periodHasError = computed(() => {
   if (!periodFilled.value) return false;
   if (props.adminMode) {
     return (
+      periodInPast.value ||
       periodRangeInvalid.value ||
       periodTooShort.value ||
       periodEndTooFar.value ||
       periodHasConflict.value
     );
   }
-  return extendEndBeforeCurrent.value || periodEndTooFar.value;
+  return (
+    periodInPast.value ||
+    extendEndBeforeCurrent.value ||
+    periodEndTooFar.value
+  );
 });
 
 /** Mensagens só no envio do formulário. */
 const periodErrorMessage = computed((): string | null => {
   if (!periodFilled.value) return null;
+  if (periodInPast.value) return PERIOD_IN_PAST_MESSAGE;
   if (props.adminMode) {
     if (periodRangeInvalid.value) return PERIOD_INVALID_RANGE_MESSAGE;
     if (periodTooShort.value) {

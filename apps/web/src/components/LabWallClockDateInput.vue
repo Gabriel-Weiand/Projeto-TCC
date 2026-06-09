@@ -43,16 +43,26 @@ function onBlur() {
   display.value = isoDateToBr(model.value);
 }
 
-function openNativePicker() {
-  if (props.disabled) return;
-  nativeDateRef.value?.showPicker?.();
-}
-
 function onNativeChange(event: Event) {
   const iso = (event.target as HTMLInputElement).value;
   if (!iso) return;
   model.value = iso;
   display.value = isoDateToBr(iso);
+}
+
+function openNativePicker() {
+  if (props.disabled) return;
+  const el = nativeDateRef.value;
+  if (!el) return;
+  if (typeof el.showPicker === "function") {
+    try {
+      el.showPicker();
+      return;
+    } catch {
+      /* gesto inválido */
+    }
+  }
+  el.click();
 }
 </script>
 
@@ -75,35 +85,37 @@ function onNativeChange(event: Event) {
       @input="onInput"
       @blur="onBlur"
     />
-    <button
-      type="button"
-      class="lab-wall-date-picker-btn"
-      :disabled="disabled"
-      aria-label="Abrir calendário"
-      tabindex="-1"
-      @click="openNativePicker"
-    >
-      <svg
-        class="lab-wall-date-picker-icon"
-        viewBox="0 0 24 24"
-        aria-hidden="true"
-        focusable="false"
+    <div class="lab-wall-date-picker-slot">
+      <button
+        type="button"
+        class="lab-wall-date-picker-trigger"
+        :disabled="disabled"
+        aria-label="Abrir calendário"
+        tabindex="-1"
+        @click="openNativePicker"
       >
-        <path
-          fill="currentColor"
-          d="M19 4h-1V2h-2v2H8V2H6v2H5a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V6a2 2 0 0 0-2-2Zm0 16H5V10h14v10Zm0-12H5V6h14v2Z"
-        />
-      </svg>
-    </button>
-    <input
-      ref="nativeDateRef"
-      type="date"
-      class="lab-wall-date-native"
-      :value="model"
-      :disabled="disabled"
-      tabindex="-1"
-      aria-hidden="true"
-      @change="onNativeChange"
-    />
+        <svg
+          class="lab-wall-date-picker-icon"
+          viewBox="0 0 24 24"
+          aria-hidden="true"
+          focusable="false"
+        >
+          <path
+            fill="currentColor"
+            d="M19 4h-1V2h-2v2H8V2H6v2H5a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V6a2 2 0 0 0-2-2Zm0 16H5V10h14v10Zm0-12H5V6h14v2Z"
+          />
+        </svg>
+      </button>
+      <input
+        ref="nativeDateRef"
+        type="date"
+        class="lab-wall-date-native"
+        :value="model"
+        :disabled="disabled"
+        tabindex="-1"
+        aria-hidden="true"
+        @change="onNativeChange"
+      />
+    </div>
   </div>
 </template>
