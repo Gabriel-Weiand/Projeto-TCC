@@ -12,6 +12,7 @@ tmp
 
 # Overrides locais dos presets fast/eco (admin persiste via API)
 storage/lab/telemetry_presets.json
+storage/lab/live_telemetry_seed.json
 
 # Database files (SQLite)
 *.sqlite3

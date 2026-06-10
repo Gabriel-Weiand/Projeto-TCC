@@ -39,6 +39,9 @@ new Ignitor(APP_ROOT, { importer: IMPORTER })
     app.ready(async () => {
       const { initScheduler } = await import('#start/scheduler')
       initScheduler()
+
+      const { applyLiveTelemetrySeedIfPresent } = await import('#services/dev_live_telemetry_seed')
+      applyLiveTelemetrySeedIfPresent()
     })
     
     app.listen('SIGTERM', () => app.terminate())

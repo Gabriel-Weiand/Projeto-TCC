@@ -36,3 +36,6 @@ tmp/
 # Teste raiz
 teste.http
 *.http
+
+# Documentação local na raiz (proposta PDF, override opcional de inventário)
+/docs
