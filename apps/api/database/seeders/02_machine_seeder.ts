@@ -32,8 +32,8 @@ function buildDisks(machine: MockLabMachine): DiskPartitionRecord[] {
       fstype: isFirst ? 'ext4' : 'xfs',
       totalGb,
       freeGb: Math.round(totalGb * (0.35 + index * 0.08)),
-      role: isFirst ? 'system' : 'user',
-      mainDisk: !isFirst && index === 1,
+      role: 'user',
+      mainDisk: isFirst,
     }
   })
 
@@ -115,7 +115,7 @@ export default class extends BaseSeeder {
       GaciG9: 'eco',
     }
 
-    const withoutHeartbeat = new Set(['GaciG8', 'Chomsky'])
+    const withoutHeartbeat = new Set(['GaciG8', 'Chomsky', 'Notebook-server'])
 
     console.log('\n--- Tokens das máquinas (MACHINE_TOKEN no agente) ---')
 
@@ -136,7 +136,9 @@ export default class extends BaseSeeder {
 
       const created = await Machine.create({
         name: machine.name,
-        description: machine.anyDeskOnly ? ANYDESK_DESCRIPTION : '',
+        description:
+          machine.description ?? (machine.anyDeskOnly ? ANYDESK_DESCRIPTION : ''),
+        token: machine.token,
         machineGroupId: hasGpu ? groupGpu.id : groupCpu.id,
         cpuModel: machine.cpuModel,
         gpuModel: machine.gpuModel,

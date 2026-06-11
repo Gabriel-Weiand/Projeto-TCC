@@ -251,7 +251,7 @@ function statusLabel(s: string) {
 
     <template v-else-if="machine">
       <div class="detail-header">
-        <div class="detail-header-main">
+        <div class="detail-header-top">
           <div class="detail-title-row">
             <h1 class="page-title">{{ machine.name }}</h1>
             <span
@@ -260,41 +260,41 @@ function statusLabel(s: string) {
               {{ statusLabel(machine.status) }}
             </span>
           </div>
-          <p class="text-secondary machine-description">
-            {{ machine.description || "Sem descrição" }}
-          </p>
+          <div class="header-actions">
+            <MachineTelemetryPanel
+              v-if="isAdmin"
+              trigger="button"
+              :machine="machine"
+              @saved="onTelemetrySaved"
+            />
+            <button
+              v-if="connectAllocation"
+              type="button"
+              class="btn btn-primary btn-sm"
+              @click="openConnect"
+            >
+              Conectar SSH
+            </button>
+            <button
+              v-if="machine.status !== 'maintenance'"
+              class="btn btn-primary btn-sm"
+              @click="goToReserve"
+            >
+              + Reservar
+            </button>
+            <button
+              v-if="isAdmin"
+              type="button"
+              class="btn btn-ghost btn-sm"
+              @click="goToEdit"
+            >
+              Editar
+            </button>
+          </div>
         </div>
-        <div class="header-actions">
-          <MachineTelemetryPanel
-            v-if="isAdmin"
-            trigger="button"
-            :machine="machine"
-            @saved="onTelemetrySaved"
-          />
-          <button
-            v-if="connectAllocation"
-            type="button"
-            class="btn btn-primary btn-sm"
-            @click="openConnect"
-          >
-            Conectar SSH
-          </button>
-          <button
-            v-if="machine.status !== 'maintenance'"
-            class="btn btn-primary btn-sm"
-            @click="goToReserve"
-          >
-            + Reservar
-          </button>
-          <button
-            v-if="isAdmin"
-            type="button"
-            class="btn btn-ghost btn-sm"
-            @click="goToEdit"
-          >
-            Editar
-          </button>
-        </div>
+        <p class="text-secondary machine-description">
+          {{ machine.description || "Sem descrição" }}
+        </p>
       </div>
 
       <div
@@ -406,16 +406,17 @@ function statusLabel(s: string) {
 <style scoped>
 .detail-header {
   display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
+  flex-direction: column;
+  gap: 0.35rem;
   margin-bottom: 1.5rem;
-  flex-wrap: wrap;
-  gap: 1rem;
 }
 
-.detail-header-main {
-  flex: 1;
-  min-width: 0;
+.detail-header-top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 0.75rem 1rem;
 }
 
 .detail-title-row {
@@ -423,11 +424,16 @@ function statusLabel(s: string) {
   align-items: center;
   flex-wrap: wrap;
   gap: 0.65rem;
-  margin-bottom: 0.25rem;
+  min-width: 0;
 }
 
 .detail-title-row .page-title {
-  margin-bottom: 0;
+  margin: 0;
+  line-height: 1.2;
+}
+
+.detail-title-row .machine-status-badge {
+  align-self: center;
 }
 
 .machine-status-badge {

@@ -536,7 +536,7 @@ def _disk_metrics(collect_space: bool, collect_io: bool) -> tuple[int, int, list
 
 def _partition_role(mountpoint: str) -> str:
     mp = (mountpoint or "").strip()
-    if mp in {"/", "/boot", "/boot/efi", "/efi", "/recovery"}:
+    if mp in {"/boot", "/boot/efi", "/efi", "/recovery"}:
         return "system"
     for prefix in ("/boot/", "/efi/", "/var/", "/usr/", "/snap/", "/run/", "/dev/", "/proc/", "/sys/"):
         if mp.startswith(prefix):
@@ -1117,9 +1117,11 @@ def telemetry_worker():
         data = collect_telemetry()
         buffer.append(data)
 
+        gpu_wire = data.get("gpuUsage")
+        gpu_log = f"{gpu_wire / 10}%" if gpu_wire is not None else "off"
         print(
             f"[{time.strftime('%H:%M:%S')}] Amostra {len(buffer)}/{batch_size} | "
-            f"CPU {data['cpuUsage']/10}% | GPU({_GPU.name}) {data['gpuUsage']/10}%"
+            f"CPU {data['cpuUsage'] / 10}% | GPU({_GPU.name}) {gpu_log}"
         )
 
         if len(buffer) >= batch_size:

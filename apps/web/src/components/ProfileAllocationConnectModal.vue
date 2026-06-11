@@ -40,14 +40,22 @@ const isSftpPhase = computed(
     ) === "sftp",
 );
 
-const connectCommand = computed(() => {
+const commandBlocks = computed(() => {
   const ip = machine.value?.ipAddress;
+  const publicIp = machine.value?.publicIpAddress?.trim();
   const user = systemUser.value;
   if (!ip || !user) return null;
   const port = machine.value?.sshPort;
-  return isSftpPhase.value
-    ? buildSftpCommand(ip, user, port)
-    : buildSshCommand(ip, user, port);
+  const build = isSftpPhase.value ? buildSftpCommand : buildSshCommand;
+  const blocks = [{ id: "local", title: "IP local", command: build(ip, user, port) }];
+  if (publicIp) {
+    blocks.push({
+      id: "public",
+      title: "IP público",
+      command: build(publicIp, user, port),
+    });
+  }
+  return blocks;
 });
 
 const modalTitle = computed(() =>
@@ -63,10 +71,9 @@ const sftpPhaseNotice =
 
 const fingerprint = computed(() => machine.value?.hostFingerprint ?? null);
 
-async function copyCommand() {
-  if (!connectCommand.value) return;
+async function copyCommand(text: string) {
   try {
-    await navigator.clipboard.writeText(connectCommand.value);
+    await navigator.clipboard.writeText(text);
   } catch {
     /* ignore */
   }
@@ -123,13 +130,27 @@ async function copyCommand() {
             laboratório.
           </p>
 
-          <div v-if="connectCommand" class="command-block">
+          <div v-if="commandBlocks" class="command-section">
             <label class="field-label">Comando</label>
-            <div class="command-row">
-              <code class="command-text">{{ connectCommand }}</code>
-              <button type="button" class="btn btn-ghost btn-sm" @click="copyCommand">
-                Copiar
-              </button>
+            <div class="command-blocks">
+              <div v-for="block in commandBlocks" :key="block.id" class="command-block">
+                <span
+                  v-if="commandBlocks.length > 1"
+                  class="command-sub-label"
+                >
+                  {{ block.title }}
+                </span>
+                <div class="command-row">
+                  <code class="command-text">{{ block.command }}</code>
+                  <button
+                    type="button"
+                    class="btn btn-ghost btn-sm"
+                    @click="copyCommand(block.command)"
+                  >
+                    Copiar
+                  </button>
+                </div>
+              </div>
             </div>
           </div>
           <p v-else class="connect-warn">
@@ -266,6 +287,32 @@ async function copyCommand() {
   background: rgba(59, 130, 246, 0.08);
   border: 1px solid rgba(59, 130, 246, 0.2);
   border-radius: var(--radius);
+}
+
+.command-section {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.command-blocks {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+
+.command-block {
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+}
+
+.command-sub-label {
+  font-size: 0.72rem;
+  font-weight: 500;
+  color: var(--text-muted);
+  letter-spacing: 0.02em;
 }
 
 .command-row {

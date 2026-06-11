@@ -11,6 +11,10 @@ export type MockLabMachine = {
   /** Sem SSH exposto no seed (AnyDesk ou acesso interno). */
   anyDeskOnly: boolean
   disksGb: number[]
+  /** Descrição fixa (padrão: vazio ou AnyDesk). */
+  description?: string
+  /** Token do agente pré-definido (dev / máquina real no laboratório). */
+  token?: string
 }
 
 export const ANYDESK_DESCRIPTION = 'Máquinas acessível apenas por AnyDesk'
@@ -204,6 +208,19 @@ export const MOCK_LAB_MACHINES: MockLabMachine[] = [
     totalRamGb: 480,
     totalVramGb: 100,
     anyDeskOnly: true,
+    disksGb: [480],
+  },
+  {
+    name: 'Notebook-server',
+    description: 'server',
+    token:
+      'd9363d229ca5936412f867a92f71690766adbf8bc3b3b0510340980a01ab1f71971028bb520dbd3780730de6b5a79ea235fe647fda8063f7269d6020a80c0723',
+    hasGpu: true,
+    cpuModel: 'Intel Core i7-7700HQ 2.80 GHz',
+    gpuModel: 'NVIDIA GeForce GTX 1050 Ti',
+    totalRamGb: 160,
+    totalVramGb: 40,
+    anyDeskOnly: false,
     disksGb: [480],
   },
 ]

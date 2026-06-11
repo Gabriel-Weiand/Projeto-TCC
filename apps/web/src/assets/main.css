@@ -169,6 +169,9 @@ button {
 /* ---- Badge ---- */
 .badge {
   display: inline-flex; align-items: center; gap: 0.3rem;
+  align-self: flex-start;
+  width: fit-content;
+  max-width: 100%;
   font-size: 0.72rem; font-weight: 600;
   padding: 0.2rem 0.6rem; border-radius: 20px;
   letter-spacing: 0.02em; text-transform: uppercase;

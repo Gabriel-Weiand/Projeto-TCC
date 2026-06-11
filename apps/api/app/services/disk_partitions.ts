@@ -12,7 +12,7 @@ export type DiskPartitionRecord = {
   allocatable?: boolean
 }
 
-const SYSTEM_EXACT = new Set(['/', '/boot', '/boot/efi', '/efi', '/recovery'])
+const SYSTEM_EXACT = new Set(['/boot', '/boot/efi', '/efi', '/recovery'])
 const SYSTEM_PREFIXES = ['/boot/', '/efi/', '/var/', '/usr/', '/snap/', '/run/', '/dev/', '/proc/', '/sys/']
 
 /** Classifica partição como sistema ou espaço destinado a dados de usuário. */
@@ -27,6 +27,8 @@ export function classifyDiskPartitionRole(mountpoint: string): DiskPartitionRole
 function pickDefaultMainUserDisk(disks: DiskPartitionRecord[]): DiskPartitionRecord | null {
   const userDisks = disks.filter((d) => d.role === 'user' && d.mountpoint)
   if (userDisks.length === 0) return null
+  const root = userDisks.find((d) => d.mountpoint === '/')
+  if (root) return root
   return userDisks.reduce((best, d) =>
     (d.totalGb ?? 0) > (best.totalGb ?? 0) ? d : best
   )

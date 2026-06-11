@@ -1,7 +1,7 @@
 {
   "fast": {
-    "intervalSeconds": 25,
-    "batchSize": 6,
+    "intervalSeconds": 30,
+    "batchSize": 5,
     "telemetrySet": {
       "cpu": true,
       "gpu": true,
@@ -18,12 +18,12 @@
     "batchSize": 15,
     "telemetrySet": {
       "cpu": true,
-      "gpu": false,
+      "gpu": true,
       "ramAndSwap": true,
-      "diskSpace": true,
+      "diskSpace": false,
       "diskIO": false,
       "networkIO": false,
-      "temperatures": false,
+      "temperatures": true,
       "activeUsers": true
     }
   }

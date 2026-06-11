@@ -471,13 +471,28 @@ function diskUsedPct(total: number | null, free: number | null): number {
 .disk-table {
   border: 1px solid var(--border-subtle);
   border-radius: var(--radius);
-  overflow: hidden;
+  overflow-x: auto;
   background: var(--bg-card);
 }
 
+.disk-header,
+.disk-row-detail {
+  display: grid;
+  grid-template-columns:
+    minmax(9rem, 1.45fr)
+    minmax(4.75rem, 0.9fr)
+    minmax(3.5rem, 0.6fr)
+    minmax(4.5rem, 0.72fr)
+    minmax(4.25rem, 0.68fr)
+    minmax(5rem, 0.85fr)
+    minmax(5rem, 0.85fr)
+    minmax(12.75rem, 1.05fr);
+  gap: 0.55rem;
+  padding: 0.55rem 0.85rem;
+  align-items: center;
+}
+
 .disk-header {
-  display: flex;
-  padding: 0.5rem 0.75rem;
   background: var(--bg-card-solid);
   border-bottom: 1px solid var(--border-subtle);
   font-size: 0.72rem;
@@ -489,10 +504,7 @@ function diskUsedPct(total: number | null, free: number | null): number {
 }
 
 .disk-row-detail {
-  display: flex;
-  padding: 0.55rem 0.75rem;
   border-bottom: 1px solid var(--border-subtle);
-  align-items: center;
   font-size: 0.82rem;
   text-align: center;
 }
@@ -502,7 +514,7 @@ function diskUsedPct(total: number | null, free: number | null): number {
 }
 
 .disk-col {
-  flex-shrink: 0;
+  min-width: 0;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -510,7 +522,6 @@ function diskUsedPct(total: number | null, free: number | null): number {
 }
 
 .device-col {
-  width: 140px;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -525,44 +536,27 @@ function diskUsedPct(total: number | null, free: number | null): number {
 }
 
 .mount-col {
-  width: 120px;
   font-weight: 500;
   color: var(--text-primary);
 }
 
-.fs-col {
-  width: 70px;
-}
-
-.role-col {
-  width: 72px;
-}
-
-.main-col {
-  width: 64px;
-}
-
 .size-col {
-  width: 80px;
   color: var(--text-secondary);
 }
 
-.free-col {
-  width: 80px;
-}
-
 .bar-col {
-  flex: 1;
   display: flex;
   align-items: center;
   justify-content: center;
-  gap: 0.35rem;
-  min-width: 88px;
+  gap: 0.5rem;
+  min-width: 0;
+  width: 100%;
 }
 
 .disk-bar-track {
-  width: 52px;
-  flex-shrink: 0;
+  flex: 1 1 156px;
+  max-width: 156px;
+  min-width: 0;
   height: 6px;
   background: var(--bg-input);
   border-radius: 3px;
@@ -579,7 +573,7 @@ function diskUsedPct(total: number | null, free: number | null): number {
   font-size: 0.72rem;
   font-weight: 600;
   color: var(--text-muted);
-  min-width: 28px;
+  min-width: 2.25rem;
   text-align: center;
 }
 </style>

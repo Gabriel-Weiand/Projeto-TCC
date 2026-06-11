@@ -243,6 +243,15 @@ function fmtGb(val: number | null | undefined): string {
   padding: 0.55rem 0.65rem;
 }
 
+.park-disk-header span,
+.park-disk-row > span {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  min-width: 0;
+}
+
 .park-disk-header {
   background: var(--bg-hover);
   font-size: 0.68rem;
@@ -263,7 +272,9 @@ function fmtGb(val: number | null | undefined): string {
 .park-disk-usage {
   display: flex;
   align-items: center;
+  justify-content: center;
   gap: 0.4rem;
+  width: 100%;
 }
 
 .park-bar-track {

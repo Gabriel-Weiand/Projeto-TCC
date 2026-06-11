@@ -63,19 +63,41 @@ test.group('Telemetry intervals and normalization', () => {
 
 test.group('Disk partitions', () => {
   test('classifies system vs user mountpoints', async ({ assert }) => {
-    assert.equal(classifyDiskPartitionRole('/'), 'system')
+    assert.equal(classifyDiskPartitionRole('/'), 'user')
     assert.equal(classifyDiskPartitionRole('/boot'), 'system')
     assert.equal(classifyDiskPartitionRole('/home'), 'user')
     assert.equal(classifyDiskPartitionRole('/data'), 'user')
   })
 
-  test('applyMainDiskDefaults picks largest user disk when none marked', async ({ assert }) => {
+  test('root partition is user and allocatable by default', async ({ assert }) => {
+    const disks = enrichDiskPartitions([
+      { device: 'nvme0n1p2', mountpoint: '/', totalGb: 480, freeGb: 200 },
+      { device: 'nvme0n1p1', mountpoint: '/boot/efi', totalGb: 1, freeGb: 0.5 },
+    ])
+    const root = disks.find((d) => d.mountpoint === '/')
+    assert.equal(root?.role, 'user')
+    assert.isTrue(root?.mainDisk)
+    assert.isTrue(root?.allocatable)
+    assert.deepEqual(listAllocatableDiskMountpoints(disks, false), ['/'])
+    assert.equal(normalizeAllocationHomeMount(disks, false, null).mountpoint, '/')
+  })
+
+  test('applyMainDiskDefaults prefers / as main when present', async ({ assert }) => {
     const disks = applyMainDiskDefaults([
-      { device: 'sda1', mountpoint: '/', role: 'system', totalGb: 100 },
+      { device: 'sda1', mountpoint: '/', role: 'user', totalGb: 100 },
       { device: 'sdb1', mountpoint: '/home', role: 'user', totalGb: 200 },
       { device: 'sdc1', mountpoint: '/data', role: 'user', totalGb: 500 },
     ])
-    assert.isFalse(disks.find((d) => d.mountpoint === '/')?.mainDisk)
+    assert.isTrue(disks.find((d) => d.mountpoint === '/')?.mainDisk)
+    assert.isFalse(disks.find((d) => d.mountpoint === '/home')?.mainDisk)
+    assert.isFalse(disks.find((d) => d.mountpoint === '/data')?.mainDisk)
+  })
+
+  test('applyMainDiskDefaults picks largest user disk when / absent', async ({ assert }) => {
+    const disks = applyMainDiskDefaults([
+      { device: 'sdb1', mountpoint: '/home', role: 'user', totalGb: 200 },
+      { device: 'sdc1', mountpoint: '/data', role: 'user', totalGb: 500 },
+    ])
     assert.isFalse(disks.find((d) => d.mountpoint === '/home')?.mainDisk)
     assert.isTrue(disks.find((d) => d.mountpoint === '/data')?.mainDisk)
   })
