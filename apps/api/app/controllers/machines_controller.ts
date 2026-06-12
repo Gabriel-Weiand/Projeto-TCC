@@ -436,21 +436,16 @@ export default class MachinesController {
     // Salva o timestamp do pedido e os filtros que o admin escolheu na hora
     config.onDemandProcessConfig = {
       requestTimestamp: DateTime.now().toISO(),
-      thresholds: {
-        cpuPercent: options.cpuPercent ?? 2.0,
-        ramMb: options.ramMb ?? 200,
-        vramMb: options.vramMb ?? 50,
-        diskReadKbps: options.diskReadKbps ?? 1000,
-        diskWriteKbps: options.diskWriteKbps ?? 1000,
-        topX: options.topX ?? 10,
-      },
+      compareMetric: options.compareMetric ?? 'cpuPercent',
+      topX: options.topX ?? 10,
+      userScope: options.userScope ?? 'session',
     }
 
     machine.customAgentConfig = config
     await machine.save()
 
     return response.ok({
-      message: `Gatilho enviado. Agente coletará o Top ${config.onDemandProcessConfig.thresholds.topX} nos próximos envios.`,
+      message: `Gatilho enviado. Agente coletará o Top ${config.onDemandProcessConfig.topX} nos próximos envios.`,
       machineId: machine.id,
     })
   }

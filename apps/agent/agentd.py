@@ -85,8 +85,14 @@ _ECO_TELEMETRY_OFFLINE = {
     "telemetryPreset": "eco",
     "telemetrySet": {
         "cpu": True, "gpu": False, "ramAndSwap": True,
-        "diskSpace": True, "diskIO": False, "networkIO": False,
+        "disk": True, "networkIO": False,
         "temperatures": False, "activeUsers": True,
+        "processCapture": False,
+    },
+    "processCaptureConfig": {
+        "compareMetric": "cpuPercent",
+        "topX": 10,
+        "userScope": "session",
     },
 }
 
@@ -116,6 +122,8 @@ def bootstrap_telemetry_from_lab_config() -> None:
             "batchSize": profile.get("batchSize", 15),
             "telemetryPreset": preset_name,
             "telemetrySet": t_set,
+            "processCaptureConfig": profile.get("processCaptureConfig")
+            or _ECO_TELEMETRY_OFFLINE["processCaptureConfig"],
         }
         with CONFIG_LOCK:
             AGENT_CONFIG["telemetry"] = {**AGENT_CONFIG.get("telemetry", {}), **patch}
@@ -144,36 +152,91 @@ class _GpuBackend:
 
 
 class _NvidiaBackend(_GpuBackend):
-    """pynvml — binding oficial da NVML. Funciona em Linux, Windows e WSL2."""
+    """
+    NVIDIA via nvitop (uso GPU, VRAM e processos).
+    pynvml permanece apenas para nome da placa em sync-specs.
+    Modelos NVIDIA muito antigos podem não ser compatíveis com nvitop/NVML moderno.
+    """
     name = "nvidia"
 
     def __init__(self):
         import pynvml
         pynvml.nvmlInit()
-        # Pega o handle da primeira GPU (índice 0).
-        # Para multi-GPU, itere nvmlDeviceGetCount() e some/faça média.
         self._handle = pynvml.nvmlDeviceGetHandleByIndex(0)
         self._pynvml = pynvml
+        self._nvitop_device = None
+        try:
+            from nvitop import Device
+            self._nvitop_device = Device(0)
+        except Exception:
+            pass
+
+    def _nvitop_ready(self) -> bool:
+        return self._nvitop_device is not None
 
     def usage(self) -> float:
-        rates = self._pynvml.nvmlDeviceGetUtilizationRates(self._handle)
-        return float(rates.gpu)
+        if not self._nvitop_ready():
+            return 0.0
+        try:
+            return float(self._nvitop_device.gpu_utilization())
+        except Exception:
+            return 0.0
 
     def temp(self) -> float:
-        NVML_TEMPERATURE_GPU = 0
-        return float(self._pynvml.nvmlDeviceGetTemperature(self._handle, NVML_TEMPERATURE_GPU))
+        if self._nvitop_ready():
+            try:
+                return float(self._nvitop_device.temperature())
+            except Exception:
+                pass
+        try:
+            NVML_TEMPERATURE_GPU = 0
+            return float(self._pynvml.nvmlDeviceGetTemperature(self._handle, NVML_TEMPERATURE_GPU))
+        except Exception:
+            return 0.0
 
     def vram(self) -> tuple[int, int]:
-        info = self._pynvml.nvmlDeviceGetMemoryInfo(self._handle)
-        return _gb_wire(info.used), _gb_wire(info.total)
+        if self._nvitop_ready():
+            try:
+                used = self._nvitop_device.memory_used()
+                total = self._nvitop_device.memory_total()
+                return _gb_wire(used), _gb_wire(total)
+            except Exception:
+                pass
+        try:
+            info = self._pynvml.nvmlDeviceGetMemoryInfo(self._handle)
+            return _gb_wire(info.used), _gb_wire(info.total)
+        except Exception:
+            return 0, 0
     
     def power(self) -> int:
+        if self._nvitop_ready():
+            try:
+                watts = self._nvitop_device.power_usage()
+                if watts is not None:
+                    return int(watts / 1000) if watts > 1000 else int(watts)
+            except Exception:
+                pass
         try:
-            # A NVML retorna miliWatts. Dividimos por 1000 para Watts.
             mw = self._pynvml.nvmlDeviceGetPowerUsage(self._handle)
             return int(mw / 1000)
         except Exception:
             return 0
+
+    def gpu_process_metrics(self) -> dict[int, dict]:
+        """PID -> {vramMb, gpuUse} via nvitop (somente NVIDIA compatível)."""
+        metrics: dict[int, dict] = {}
+        if not self._nvitop_ready():
+            return metrics
+        try:
+            for pid, gpu_proc in self._nvitop_device.processes().items():
+                sm = gpu_proc.gpu_sm_utilization()
+                mem = gpu_proc.gpu_memory()
+                vram_mb = int(mem / 1_048_576) if mem else 0
+                gpu_use = round(float(sm) * 10) if sm is not None else 0
+                metrics[int(pid)] = {"vramMb": vram_mb, "gpuUse": gpu_use}
+        except Exception:
+            pass
+        return metrics
 
 
 def _pick_amd_drm_device_dir() -> str | None:
@@ -310,10 +373,11 @@ def _detect_gpu_backend() -> _GpuBackend:
     Retorna o primeiro que inicializar sem exceção.
     """
 
-    # 1. NVIDIA via pynvml (mais rico: uso, temp, VRAM, power, clocks)
+    # 1. NVIDIA via nvitop + pynvml (telemetria e sync-specs)
     try:
         backend = _NvidiaBackend()
-        print(f"[GPU] Backend: NVIDIA/pynvml (nvml ok)")
+        nvitop_status = "nvitop ok" if backend._nvitop_ready() else "nvitop indisponível (uso GPU/processos off)"
+        print(f"[GPU] Backend: NVIDIA ({nvitop_status})")
         return backend
     except Exception as e:
         print(f"[GPU] NVIDIA indisponível: {e}")
@@ -941,48 +1005,154 @@ def heartbeat_worker():
             
         time.sleep(HEARTBEAT_INTERVAL)
 
-def _get_heavy_processes(thresholds: dict) -> list[dict]:
-    """Captura processos e ordena por VRAM > CPU > RAM > Leitura Disco > Escrita Disco."""
-    global _process_io_prev
-    
-    min_cpu   = thresholds.get("cpuPercent", 2.0)
-    min_ram   = thresholds.get("ramMb", 200)
-    min_vram  = thresholds.get("vramMb", 50)
-    min_read  = thresholds.get("diskReadKbps", 1000)
-    min_write = thresholds.get("diskWriteKbps", 1000)
-    top_x     = thresholds.get("topX", 10)
-    
-    # 1. Pega processos na GPU (Somente NVIDIA via pynvml)
-    gpu_procs = {}
-    if _GPU.name == "nvidia":
+def _telemetry_disk_enabled(t_set: dict) -> bool:
+    if "disk" in t_set:
+        return bool(t_set.get("disk"))
+    return bool(t_set.get("diskSpace") or t_set.get("diskIO"))
+
+
+_PROCESS_COMPARE_KEYS = {
+    "cpuPercent": "cpuPercent",
+    "cpu": "cpuPercent",
+    "ramMb": "ramMb",
+    "ram": "ramMb",
+    "vramMb": "vramMb",
+    "vram": "vramMb",
+    "gpuUse": "gpuUse",
+    "diskReadKbps": "diskReadKbps",
+    "diskRead": "diskReadKbps",
+    "diskWriteKbps": "diskWriteKbps",
+    "diskWrite": "diskWriteKbps",
+}
+
+
+def _gpu_process_metrics() -> dict[int, dict]:
+    if _GPU.name == "nvidia" and hasattr(_GPU, "gpu_process_metrics"):
+        return _GPU.gpu_process_metrics()
+    return {}
+
+
+def _nvidia_process_gpu_ready() -> bool:
+    return _GPU.name == "nvidia" and getattr(_GPU, "_nvitop_ready", lambda: False)()
+
+
+def _resolve_process_compare_metric(compare_metric: str) -> str:
+    """
+    Métricas GPU por processo (gpuUse, vramMb) exigem NVIDIA + nvitop.
+    Sem isso, faz fallback para cpuPercent.
+    """
+    key = _PROCESS_COMPARE_KEYS.get(compare_metric, "cpuPercent")
+    if key in ("gpuUse", "vramMb") and not _nvidia_process_gpu_ready():
+        return "cpuPercent"
+    return compare_metric
+
+
+def _session_lab_usernames() -> set[str]:
+    """Contas lab.* com sessão TTY/SSH ativa no instante da coleta."""
+    return {u["username"] for u in _active_users()}
+
+
+_LEGACY_ON_DEMAND_DEFAULTS = {
+    "cpuPercent": 2.0,
+    "ramMb": 200,
+    "vramMb": 50,
+    "diskReadKbps": 1000,
+    "diskWriteKbps": 1000,
+}
+
+# Prioridade de ordenação do on-demand antigo (_get_heavy_processes).
+_LEGACY_COMPARE_PRIORITY = (
+    "vramMb",
+    "cpuPercent",
+    "ramMb",
+    "diskReadKbps",
+    "diskWriteKbps",
+)
+
+
+def _infer_legacy_on_demand_compare_metric(thresholds: dict) -> str:
+    """
+    Formato legado guardava limiares mínimos (OR) e ordenava VRAM > CPU > RAM > I/O.
+    Infere compareMetric pelo primeiro limiar não-default nessa ordem; senão vramMb.
+    """
+    for key in _LEGACY_COMPARE_PRIORITY:
+        if key not in thresholds:
+            continue
         try:
-            import pynvml
-            nv_procs = pynvml.nvmlDeviceGetComputeRunningProcesses(_GPU._handle)
-            for p in nv_procs:
-                gpu_procs[p.pid] = int(p.usedGpuMemory / 1_048_576) if p.usedGpuMemory else 0
-        except Exception:
-            pass
+            val = float(thresholds[key])
+            default = float(_LEGACY_ON_DEMAND_DEFAULTS[key])
+        except (TypeError, ValueError):
+            continue
+        if val != default:
+            return key
+    return "vramMb"
+
+
+def _resolve_on_demand_process_params(on_demand: dict) -> tuple[str, int, str]:
+    """
+    Normaliza onDemandProcessConfig para o formato Top-X atual.
+    Aceita compareMetric/topX/userScope no topo, aninhados em thresholds ou legado (limiares mínimos).
+    """
+    compare_metric = on_demand.get("compareMetric", "cpuPercent")
+    top_x = on_demand.get("topX", 10)
+    user_scope = on_demand.get("userScope", "session")
+
+    if on_demand.get("compareMetric") is not None:
+        return compare_metric, top_x, user_scope
+
+    thresholds = on_demand.get("thresholds")
+    if not isinstance(thresholds, dict):
+        return compare_metric, top_x, user_scope
+
+    if thresholds.get("compareMetric") is not None:
+        return (
+            thresholds.get("compareMetric", compare_metric),
+            thresholds.get("topX", top_x),
+            thresholds.get("userScope", user_scope),
+        )
+
+    top_x = thresholds.get("topX", top_x)
+    compare_metric = _infer_legacy_on_demand_compare_metric(thresholds)
+    return compare_metric, top_x, "all"
+
+
+def _get_top_processes(compare_metric: str, top_x: int, user_scope: str = "all") -> list[dict]:
+    """
+    Captura processos e retorna o Top X pela métrica escolhida.
+    compare_metric só define a ordenação; cada item inclui CPU, RAM, VRAM, gpuUse e I/O.
+    user_scope: 'session' limita a processos de lab.* conectados; 'all' inclui todo o host.
+    """
+    global _process_io_prev
+
+    compare_metric = _resolve_process_compare_metric(compare_metric)
+    sort_key = _PROCESS_COMPARE_KEYS.get(compare_metric, "cpuPercent")
+    top_x = max(1, min(int(top_x or 10), 100))
+    gpu_procs = _gpu_process_metrics()
+
+    allowed_users = None
+    if user_scope == "session":
+        allowed_users = _session_lab_usernames()
+        if not allowed_users:
+            return []
 
     procs = []
     current_io = {}
     now = time.monotonic()
-    
+
     try:
         for p in psutil.process_iter(['pid', 'name', 'username', 'cpu_percent', 'memory_info', 'io_counters']):
-            if p.info['username'] in ('root', 'systemd', 'messagebus'):
-                continue
-                
             pid = p.info['pid']
             cpu = p.info.get('cpu_percent') or 0.0
             ram_mb = (p.info.get('memory_info').rss / 1_048_576) if p.info.get('memory_info') else 0.0
-            vram_mb = gpu_procs.get(pid, 0)
-            
-            # I/O de Disco Separado (Leitura e Escrita em Kbps)
+            gpu_data = gpu_procs.get(pid, {})
+            vram_mb = gpu_data.get("vramMb", 0)
+            gpu_use = gpu_data.get("gpuUse", 0)
+
             r_kbps = w_kbps = 0.0
             if p.info.get('io_counters'):
                 io = p.info['io_counters']
                 current_io[pid] = (io.read_bytes, io.write_bytes, now)
-                
+
                 if pid in _process_io_prev:
                     p_read, p_write, p_time = _process_io_prev[pid]
                     dt = now - p_time
@@ -990,48 +1160,55 @@ def _get_heavy_processes(thresholds: dict) -> list[dict]:
                         r_kbps = ((io.read_bytes - p_read) / 1024) / dt
                         w_kbps = ((io.write_bytes - p_write) / 1024) / dt
 
-            # Avalia se atinge ALGUM dos limites mínimos solicitados
-            if (cpu >= min_cpu or ram_mb >= min_ram or vram_mb >= min_vram or 
-                r_kbps >= min_read or w_kbps >= min_write):
-                procs.append({
-                    "pid": pid,
-                    "name": p.info['name'][:50],
-                    "username": p.info['username'],
-                    "cpuPercent": round(cpu * 10),
-                    "ramMb": round(ram_mb),
-                    "vramMb": vram_mb,
-                    "diskReadKbps": round(r_kbps),
-                    "diskWriteKbps": round(w_kbps)
-                })
+            username = p.info.get('username') or '?'
+            if allowed_users is not None and username not in allowed_users:
+                continue
+            procs.append({
+                "pid": pid,
+                "name": (p.info.get('name') or '?')[:50],
+                "username": username,
+                "cpuPercent": round(cpu * 10),
+                "ramMb": round(ram_mb),
+                "vramMb": vram_mb,
+                "gpuUse": gpu_use,
+                "diskReadKbps": round(r_kbps),
+                "diskWriteKbps": round(w_kbps),
+            })
     except Exception:
         pass
-        
+
     _process_io_prev = current_io
-    
-    # 2. Ordenação mágica em tupla (Prioridade exata que você definiu)
-    procs.sort(key=lambda x: (x['vramMb'], x['cpuPercent'], x['ramMb'], x['diskReadKbps'], x['diskWriteKbps']), reverse=True)
+    procs.sort(key=lambda x: x.get(sort_key, 0), reverse=True)
     return procs[:top_x]
 
 def collect_telemetry() -> dict:
     global PROCESS_BATCHES_REMAINING
     
     with CONFIG_LOCK:
-        # Extrai de forma segura para não dar erro de NoneType se o Admin nunca clicou no botão
         on_demand = AGENT_CONFIG["telemetry"].get("onDemandProcessConfig") or {}
-        p_thresholds = on_demand.get("thresholds", {
-            "cpuPercent": 2.0, "ramMb": 200, "vramMb": 50, 
-            "diskReadKbps": 1000, "diskWriteKbps": 1000, "topX": 10
-        })
+        p_cfg = AGENT_CONFIG["telemetry"].get("processCaptureConfig") or {
+            "compareMetric": "cpuPercent",
+            "topX": 10,
+            "userScope": "session",
+        }
         t_set = AGENT_CONFIG["telemetry"].get("telemetrySet", {
             "cpu": True, "gpu": True, "ramAndSwap": True,
-            "diskSpace": True, "diskIO": True, "networkIO": True,
-            "temperatures": True, "activeUsers": True
+            "disk": True, "networkIO": True,
+            "temperatures": True, "activeUsers": True,
+            "processCapture": False,
         })
 
     processes = None
-    if PROCESS_BATCHES_REMAINING > 0:
-        processes = _get_heavy_processes(p_thresholds)
-        PROCESS_BATCHES_REMAINING -= 1 # Desconta um da lista dos processos restantes para envio
+    if t_set.get("processCapture"):
+        processes = _get_top_processes(
+            p_cfg.get("compareMetric", "cpuPercent"),
+            p_cfg.get("topX", 10),
+            p_cfg.get("userScope", "session"),
+        )
+    elif PROCESS_BATCHES_REMAINING > 0:
+        compare_metric, top_x, user_scope = _resolve_on_demand_process_params(on_demand)
+        processes = _get_top_processes(compare_metric, top_x, user_scope)
+        PROCESS_BATCHES_REMAINING -= 1
 
     cpu_total = psutil.cpu_percent(interval=None)
     temps = _read_temperatures() if t_set.get("temperatures") else {"cpuTemp": None, "moboTemp": None}
@@ -1045,7 +1222,10 @@ def collect_telemetry() -> dict:
     gpu_usage = gpu_temp = gpu_power = None
     vram_used_wire = vram_total_wire = None
     if t_set.get("gpu"):
-        gpu_usage = round(_GPU.usage() * 10)
+        if _GPU.name == "nvidia":
+            gpu_usage = round(_GPU.usage() * 10) if getattr(_GPU, "_nvitop_ready", lambda: False)() else None
+        else:
+            gpu_usage = round(_GPU.usage() * 10)
         gpu_temp = round(_GPU.temp() * 10)
         gpu_power = _GPU.power()
         vram_used_wire, vram_total_wire = _GPU.vram()
@@ -1061,12 +1241,8 @@ def collect_telemetry() -> dict:
         down, up = _net_delta()
 
     disk_r = disk_w = disks_info = None
-    opt_d_space = t_set.get("diskSpace", False)
-    opt_d_io = t_set.get("diskIO", False)
-    if opt_d_space or opt_d_io:
-        disk_r, disk_w, disks_info = _disk_metrics(opt_d_space, opt_d_io)
-        if not opt_d_io:
-            disk_r = disk_w = None
+    if _telemetry_disk_enabled(t_set):
+        disk_r, disk_w, disks_info = _disk_metrics(True, True)
 
     active_users = _active_users() if t_set.get("activeUsers") else None
     mobo_temp = round(temps["moboTemp"] * 10) if temps.get("moboTemp") is not None else None

@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, watch } from "vue";
+import { computed, ref, watch } from "vue";
 import { useAllocationsStore } from "@/stores/allocations";
 import { useLabConfigStore } from "@/stores/labConfig";
 import type { Allocation, AllocationMetric } from "@/types";
@@ -17,6 +17,13 @@ import {
   metricUsagePct,
 } from "@/utils/allocationMetricFormat";
 import AllocationSummaryChart from "@/components/allocation/AllocationSummaryChart.vue";
+import ProcessTelemetryTable from "@/components/process/ProcessTelemetryTable.vue";
+import {
+  PROCESS_SUMMARY_SORT_OPTIONS,
+  sortProcessSummaries,
+  type ProcessSortDir,
+  type ProcessSortKey,
+} from "@/utils/processTelemetry";
 
 const props = defineProps<{
   allocation: Allocation;
@@ -31,6 +38,14 @@ const lab = useLabConfigStore();
 const loading = ref(true);
 const data = ref<AllocationMetric | null>(null);
 const error = ref("");
+const processSortKey = ref<ProcessSortKey>("maxCpuPercent");
+const processSortDir = ref<ProcessSortDir>("desc");
+
+const sortedProcessSummary = computed(() => {
+  const rows = data.value?.processSummary ?? [];
+  if (!rows.length) return [];
+  return sortProcessSummaries(rows, processSortKey.value, processSortDir.value);
+});
 
 async function loadSummary() {
   loading.value = true;
@@ -205,6 +220,37 @@ watch(
                 :timezone="lab.timezone"
               />
             </section>
+
+            <section v-if="data.processSummary?.length" class="process-section">
+              <div class="chart-section-head">
+                <h3 class="section-label">Processos da sessão</h3>
+                <span class="chart-resolution text-secondary">
+                  {{ data.processSummary.length }} processo(s) · agrupados por PID e nome
+                </span>
+              </div>
+              <div class="process-controls">
+                <label class="process-field">
+                  <span class="process-label">Ordenar por</span>
+                  <select v-model="processSortKey" class="process-select">
+                    <option
+                      v-for="option in PROCESS_SUMMARY_SORT_OPTIONS"
+                      :key="option.value"
+                      :value="option.value"
+                    >
+                      {{ option.label }}
+                    </option>
+                  </select>
+                </label>
+                <label class="process-field process-field--dir">
+                  <span class="process-label">Direção</span>
+                  <select v-model="processSortDir" class="process-select">
+                    <option value="desc">Decrescente</option>
+                    <option value="asc">Crescente</option>
+                  </select>
+                </label>
+              </div>
+              <ProcessTelemetryTable mode="summary" :summaries="sortedProcessSummary" />
+            </section>
           </template>
         </div>
       </div>
@@ -347,6 +393,46 @@ watch(
 
 .chart-resolution {
   font-size: 0.78rem;
+}
+
+.process-section {
+  border-top: 1px solid var(--border-subtle);
+  padding-top: 1.1rem;
+  margin-top: 1.1rem;
+}
+
+.process-controls {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.65rem;
+  margin-bottom: 0.75rem;
+}
+
+.process-field {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+  min-width: 10rem;
+}
+
+.process-field--dir {
+  min-width: 8rem;
+}
+
+.process-label {
+  font-size: 0.78rem;
+  color: var(--text-secondary);
+}
+
+.process-select {
+  width: 100%;
+  box-sizing: border-box;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius);
+  background: var(--bg-input);
+  color: var(--text-primary);
+  padding: 0.45rem 0.55rem;
+  font-size: 0.85rem;
 }
 
 @media (max-width: 720px) {

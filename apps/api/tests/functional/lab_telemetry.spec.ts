@@ -161,4 +161,27 @@ test.group('Lab telemetry presets', (group) => {
     assert.isTrue(putRes.body().fast.telemetrySet.cpu)
     assert.isTrue(putRes.body().fast.telemetrySet.ramAndSwap)
   })
+
+  test('rejeita processCaptureConfig.topX acima de 100', async ({ client }) => {
+    const admin = await User.create({
+      fullName: 'Admin Tel Top',
+      email: 'admin-tel-top@teste.com',
+      password: 'senha123',
+      role: 'admin',
+    })
+    const presets = getLabTelemetryPresets()
+
+    const response = await client
+      .put('/api/v1/lab/telemetry-presets')
+      .loginAs(admin)
+      .json({
+        fast: {
+          ...presets.fast,
+          processCaptureConfig: { compareMetric: 'cpuPercent', topX: 101 },
+        },
+        eco: presets.eco,
+      })
+
+    response.assertStatus(422)
+  })
 })

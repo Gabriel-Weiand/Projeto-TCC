@@ -1,16 +1,21 @@
 {
   "fast": {
-    "intervalSeconds": 30,
-    "batchSize": 5,
+    "intervalSeconds": 25,
+    "batchSize": 6,
     "telemetrySet": {
       "cpu": true,
       "gpu": true,
       "ramAndSwap": true,
-      "diskSpace": true,
-      "diskIO": true,
+      "disk": true,
       "networkIO": true,
       "temperatures": true,
-      "activeUsers": true
+      "activeUsers": true,
+      "processCapture": true
+    },
+    "processCaptureConfig": {
+      "compareMetric": "cpuPercent",
+      "topX": 10,
+      "userScope": "session"
     }
   },
   "eco": {
@@ -20,11 +25,16 @@
       "cpu": true,
       "gpu": true,
       "ramAndSwap": true,
-      "diskSpace": false,
-      "diskIO": false,
+      "disk": false,
       "networkIO": false,
       "temperatures": true,
-      "activeUsers": true
+      "activeUsers": true,
+      "processCapture": false
+    },
+    "processCaptureConfig": {
+      "compareMetric": "cpuPercent",
+      "topX": 10,
+      "userScope": "session"
     }
   }
 }

@@ -13,6 +13,7 @@ import {
   type ChartSeriesPoint,
   type TelemetrySample,
 } from '#services/telemetry_downsample'
+import { buildProcessSummary } from '#services/process_summary'
 
 function telemetryToSample(row: Telemetry): TelemetrySample {
   return {
@@ -202,12 +203,14 @@ export async function summarizeAllocation(
 
   const metrics = calculateMetrics(telemetries, allocation)
   const { points: chartSeries, bucketMs } = buildAllocationChartSeries(telemetries, allocation)
+  const processSummary = buildProcessSummary(telemetries, allocation)
 
   const metric = await AllocationMetric.create({
     allocationId: allocation.id,
     ...metrics,
     chartSeries: chartSeries as unknown as Record<string, unknown>[],
     chartBucketMinutes: chartBucketMinutes(bucketMs),
+    processSummary: processSummary.length > 0 ? (processSummary as unknown as Record<string, unknown>[]) : null,
   })
 
   await Telemetry.query().where('allocationId', allocation.id).delete()

@@ -4,14 +4,18 @@ import { useMachinesStore } from "@/stores/machines";
 import { useLabConfigStore } from "@/stores/labConfig";
 import NumberStepper from "@/components/NumberStepper.vue";
 import TelemetryMetricGrid from "@/components/TelemetryMetricGrid.vue";
+import ProcessCaptureOptions from "@/components/ProcessCaptureOptions.vue";
 import {
   TELEMETRY_BATCH_MAX,
   TELEMETRY_CUSTOM_INTERVAL_MIN,
   TELEMETRY_INTERVAL_MAX,
+  DEFAULT_PROCESS_CAPTURE_CONFIG,
   clampCustomTelemetryInterval,
   enforceMandatoryTelemetrySet,
+  normalizeProcessCaptureConfig,
   validateBatchSize,
   validateCustomInterval,
+  validateProcessCaptureTopX,
 } from "@/utils/telemetryPresets";
 import type { Machine } from "@/types";
 
@@ -59,11 +63,11 @@ function defaultTelemetrySet() {
     cpu: true,
     gpu: true,
     ramAndSwap: true,
-    diskSpace: true,
-    diskIO: true,
+    disk: true,
     networkIO: true,
     temperatures: true,
     activeUsers: true,
+    processCapture: false,
   };
 }
 
@@ -71,6 +75,7 @@ const custom = reactive({
   intervalSeconds: 5,
   batchSize: 5,
   telemetrySet: defaultTelemetrySet(),
+  processCaptureConfig: { ...DEFAULT_PROCESS_CAPTURE_CONFIG },
 });
 
 const customIntervalError = computed(() =>
@@ -79,8 +84,16 @@ const customIntervalError = computed(() =>
 const customBatchError = computed(() =>
   mode.value === "custom" ? validateBatchSize(custom.batchSize) : null,
 );
+const customProcessCaptureError = computed(() =>
+  mode.value === "custom" && custom.telemetrySet.processCapture
+    ? validateProcessCaptureTopX(custom.processCaptureConfig.topX)
+    : null,
+);
 const hasCustomValidationErrors = computed(
-  () => customIntervalError.value !== null || customBatchError.value !== null,
+  () =>
+    customIntervalError.value !== null ||
+    customBatchError.value !== null ||
+    customProcessCaptureError.value !== null,
 );
 
 function loadFromMachine(m: Machine) {
@@ -92,6 +105,10 @@ function loadFromMachine(m: Machine) {
     ...defaultTelemetrySet(),
     ...(c.telemetrySet || {}),
   });
+  custom.processCaptureConfig = normalizeProcessCaptureConfig(
+    (c.processCaptureConfig as typeof custom.processCaptureConfig | undefined) ??
+      DEFAULT_PROCESS_CAPTURE_CONFIG,
+  );
 }
 
 watch(() => props.machine, loadFromMachine, { immediate: true });
@@ -126,6 +143,7 @@ async function handleSave() {
         intervalSeconds: clampCustomTelemetryInterval(custom.intervalSeconds),
         batchSize: custom.batchSize,
         telemetrySet: enforceMandatoryTelemetrySet(custom.telemetrySet),
+        processCaptureConfig: normalizeProcessCaptureConfig(custom.processCaptureConfig),
       };
     } else {
       payload.telemetryPreset = "eco";
@@ -206,6 +224,13 @@ async function handleSave() {
           </div>
         </div>
         <TelemetryMetricGrid v-model="custom.telemetrySet" class="custom-metrics" />
+        <ProcessCaptureOptions
+          v-if="custom.telemetrySet.processCapture"
+          v-model="custom.processCaptureConfig"
+        />
+        <p v-if="customProcessCaptureError" class="field-error">
+          {{ customProcessCaptureError }}
+        </p>
       </div>
 
       <div class="panel-actions">
@@ -281,6 +306,13 @@ async function handleSave() {
               </div>
             </div>
             <TelemetryMetricGrid v-model="custom.telemetrySet" class="custom-metrics" />
+        <ProcessCaptureOptions
+          v-if="custom.telemetrySet.processCapture"
+          v-model="custom.processCaptureConfig"
+        />
+        <p v-if="customProcessCaptureError" class="field-error">
+          {{ customProcessCaptureError }}
+        </p>
           </div>
 
           <div class="panel-actions">

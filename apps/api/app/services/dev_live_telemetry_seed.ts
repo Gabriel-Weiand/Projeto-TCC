@@ -19,6 +19,8 @@ export type LiveTelemetrySeedEntry = {
   intervalSeconds: number
   sampleCount: number
   mode: 'active' | 'idle'
+  includeProcessCapture?: boolean
+  processTopX?: number
 }
 
 const SEED_FILE = 'storage/lab/live_telemetry_seed.json'
@@ -59,6 +61,8 @@ export function applyLiveTelemetrySeedIfPresent(): void {
           hasGpu: entry.hasGpu,
           ramTotalGbWire: entry.ramTotalGbWire,
           vramTotalGbWire: entry.vramTotalGbWire,
+          includeProcessCapture: entry.includeProcessCapture !== false,
+          processTopX: entry.processTopX ?? 10,
         }
       )
 
@@ -83,6 +87,7 @@ export function applyLiveTelemetrySeedIfPresent(): void {
         moboTemperature: row.moboTemperature ?? null,
         activeUsers: null,
         disks: null,
+        processes: row.processes ?? null,
       }))
 
       for (const sample of batch) {

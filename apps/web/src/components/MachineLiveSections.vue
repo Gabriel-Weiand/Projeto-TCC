@@ -9,6 +9,8 @@ import {
 } from "@/utils/machineDisks";
 import CollapsibleSection from "@/components/CollapsibleSection.vue";
 import MachineIdleHistoryChart from "@/components/MachineIdleHistoryChart.vue";
+import MachineLiveProcessSection from "@/components/MachineLiveProcessSection.vue";
+import type { TelemetryProcessSnapshot } from "@/types";
 
 withDefaults(
   defineProps<{
@@ -19,8 +21,12 @@ withDefaults(
     showTelemetry?: boolean;
     /** Gráfico 24 h (somente admin). */
     showCharts?: boolean;
+    /** Lista de processos do último lote (somente admin). */
+    showProcesses?: boolean;
+    latestProcesses?: TelemetryProcessSnapshot[] | null;
+    latestProcessBatchTimestamp?: string | null;
   }>(),
-  { showTelemetry: true, showCharts: false },
+  { showTelemetry: true, showCharts: false, showProcesses: false },
 );
 
 const telemetryCollapsed = ref(false);
@@ -272,6 +278,12 @@ function diskUsedPct(total: number | null, free: number | null): number {
         :active="!chartsCollapsed"
       />
     </CollapsibleSection>
+
+    <MachineLiveProcessSection
+      v-if="showProcesses"
+      :processes="latestProcesses ?? null"
+      :batch-timestamp="latestProcessBatchTimestamp ?? null"
+    />
 
     <CollapsibleSection
       v-if="machine.disks && machine.disks.length > 0"

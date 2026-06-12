@@ -1,4 +1,6 @@
 psutil>=5.9
 requests>=2.31
-# Opcional — telemetria NVIDIA (NVML):
+# Telemetria NVIDIA (uso GPU, VRAM e processos via nvitop; modelos antigos podem falhar):
+nvitop>=1.3
+# Fallback de inventário NVIDIA (nome da placa em sync-specs):
 nvidia-ml-py>=12.0

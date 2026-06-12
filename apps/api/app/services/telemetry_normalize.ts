@@ -17,6 +17,33 @@ function agentGbToApi(wire: unknown): number | null {
   return wire / 10
 }
 
+function normalizeProcessSnapshot(raw: unknown) {
+  if (!raw || typeof raw !== 'object') return null
+  const p = raw as Record<string, unknown>
+  const pid = asNumber(p.pid)
+  const name = typeof p.name === 'string' ? p.name : null
+  const username = typeof p.username === 'string' ? p.username : null
+  if (pid == null || !name || !username) return null
+
+  return {
+    pid,
+    name,
+    username,
+    cpuPercent: scaledWire(p.cpuPercent),
+    ramMb: asNumber(p.ramMb),
+    vramMb: asNumber(p.vramMb),
+    gpuUse: scaledWire(p.gpuUse),
+    diskReadKbps: asNumber(p.diskReadKbps),
+    diskWriteKbps: asNumber(p.diskWriteKbps),
+  }
+}
+
+function normalizeProcesses(raw: unknown) {
+  if (!Array.isArray(raw)) return null
+  const out = raw.map(normalizeProcessSnapshot).filter((p): p is NonNullable<typeof p> => p != null)
+  return out.length > 0 ? out : null
+}
+
 /**
  * Normaliza telemetria bruta do agente/buffer para resposta HTTP.
  * null = métrica não coletada; 0 = valor real zero.
@@ -50,6 +77,7 @@ export function normalizeRealtimeTelemetry(raw: unknown) {
 
     moboTemperature: scaledWire(r.moboTemperature),
     activeUsers: r.activeUsers ?? null,
+    processes: normalizeProcesses(r.processes),
 
     timestamp: r.timestamp ? String(r.timestamp) : new Date().toISOString(),
   }

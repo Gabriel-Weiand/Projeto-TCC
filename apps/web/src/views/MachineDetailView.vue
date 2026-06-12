@@ -33,6 +33,8 @@ const isAdmin = computed(() => auth.user?.role === "admin");
 
 const {
   current: telemetry,
+  latestProcesses,
+  latestProcessBatchTimestamp,
   start: startPlayback,
   stop: stopPlayback,
 } = useTelemetryPlayback(machineId);
@@ -75,6 +77,13 @@ onUnmounted(() => {
 
 const liveData = computed(() =>
   pickNewerTelemetry(telemetry.value, machine.value?.latestTelemetry ?? null),
+);
+
+const displayProcesses = computed(
+  () => latestProcesses.value ?? liveData.value?.processes ?? null,
+);
+const displayProcessTimestamp = computed(
+  () => latestProcessBatchTimestamp.value ?? liveData.value?.timestamp ?? null,
 );
 
 const showLiveSections = computed(
@@ -338,6 +347,9 @@ function statusLabel(s: string) {
         :live-data="liveData"
         :show-telemetry="isAdmin"
         :show-charts="isAdmin"
+        :show-processes="isAdmin"
+        :latest-processes="displayProcesses"
+        :latest-process-batch-timestamp="displayProcessTimestamp"
       />
 
       <template v-if="isAdmin">

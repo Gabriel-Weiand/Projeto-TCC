@@ -39,6 +39,9 @@ export interface TelemetryPayload {
 
   // Lista de utilizadores ativos (substitui o antigo loggedUserName)
   activeUsers?: any[] | null
+
+  /** Top processos capturados nesta amostra (wire format). */
+  processes?: any[] | null
 }
 
 // Alias para compatibilidade interna

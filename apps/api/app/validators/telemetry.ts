@@ -7,6 +7,7 @@ const processSchema = vine.object({
   cpuPercent: vine.number().min(0).max(1000), // * 10
   ramMb: vine.number().min(0),
   vramMb: vine.number().min(0).optional(),
+  gpuUse: vine.number().min(0).max(1000).optional(), // * 10, NVIDIA via nvitop
   diskReadKbps: vine.number().min(0).optional(),
   diskWriteKbps: vine.number().min(0).optional(),
 })

@@ -14,10 +14,22 @@ import {
   type UsageProfile,
 } from '#services/seed_chart_series'
 import { resolveChartBucketMs, chartBucketMinutes } from '#services/telemetry_downsample'
+import { buildProcessSummary } from '#services/process_summary'
 import {
   writeLiveTelemetrySeedFile,
   type LiveTelemetrySeedEntry,
 } from '#services/dev_live_telemetry_seed'
+import {
+  logTelemetryStorageReport,
+  build24hTwoSecondScenarios,
+  HOUR_MS,
+  generateStorageScenarioSamples,
+} from '#services/telemetry_storage_estimate'
+import {
+  DEFAULT_LAB_TELEMETRY_PRESETS,
+  FULL_TELEMETRY_SET,
+  TELEMETRY_PROCESS_CAPTURE_TOP_X_MAX,
+} from '#services/telemetry_presets'
 
 export default class extends BaseSeeder {
   async run() {
@@ -42,6 +54,32 @@ export default class extends BaseSeeder {
         ramTotalGbWire: machine.totalRamGb ?? 320,
         vramTotalGbWire: machine.totalVramGb,
       }
+    }
+
+    function processSummaryForAllocation(
+      allocation: Allocation,
+      machine: Machine,
+      profile: UsageProfile,
+      processTopX = 10
+    ) {
+      const startMs = allocation.startTime.toMillis()
+      const endMs = allocation.endTime.toMillis()
+      const durationMs = endMs - startMs
+      const hw = hwFor(machine)
+      const intervalMs = Math.max(
+        60_000,
+        Math.min(300_000, Math.floor(durationMs / Math.max(120, Math.ceil(durationMs / 300_000))))
+      )
+      const raw = generateRawTelemetriesWire(allocation.id, startMs, endMs, intervalMs, {
+        profile,
+        ...hw,
+        includeDiskIo: profile === 'io_bursts',
+        includeProcessCapture: true,
+        processTopX,
+      })
+      if (raw.length === 0) return null
+      const summary = buildProcessSummary(raw as unknown as Telemetry[], allocation)
+      return summary.length > 0 ? summary : null
     }
 
     function chartSeedForAllocation(
@@ -238,9 +276,36 @@ export default class extends BaseSeeder {
         machineName: 'Confúcio',
         startTime: at(today.minus({ days: 1 }), 16, 0),
         endTime: at(today.minus({ days: 1 }), 16, 20),
-        reason: '[TEST-E] Curta 20min GPU · fast ~10s · ~120 amostras · Gerar resumo',
+        reason: `[TEST-E] Curta 20min GPU · fast ~10s · top ${TELEMETRY_PROCESS_CAPTURE_TOP_X_MAX} proc · Gerar resumo`,
         status: 'finished',
         profile: 'inference_gaps',
+      },
+      {
+        userId: 3,
+        machineName: 'Dijkstra',
+        startTime: at(today.minus({ days: 5 }), 8),
+        endTime: at(today.minus({ days: 5 }), 9),
+        reason: '[TEST-F] 1h GPU · eco @2s (projeção 24h no seed) · Gerar resumo',
+        status: 'finished',
+        profile: 'training_burst',
+      },
+      {
+        userId: 3,
+        machineName: 'Moore',
+        startTime: at(today.minus({ days: 5 }), 10),
+        endTime: at(today.minus({ days: 5 }), 11),
+        reason: '[TEST-G] 1h GPU · fast @2s (projeção 24h no seed) · Gerar resumo',
+        status: 'finished',
+        profile: 'training_burst',
+      },
+      {
+        userId: 3,
+        machineName: 'Euler',
+        startTime: at(today.minus({ days: 5 }), 12),
+        endTime: at(today.minus({ days: 5 }), 13),
+        reason: `[TEST-H] 1h GPU · custom todas métricas @2s · top ${TELEMETRY_PROCESS_CAPTURE_TOP_X_MAX} proc · Gerar resumo`,
+        status: 'finished',
+        profile: 'training_burst',
       },
 
       // —— Cancelada ——
@@ -289,6 +354,12 @@ export default class extends BaseSeeder {
       const durationMin = Math.round(
         (allocation.endTime.toMillis() - allocation.startTime.toMillis()) / 60_000
       )
+      const processSummary = processSummaryForAllocation(
+        allocation,
+        machine,
+        seed.profile ?? 'training_burst',
+        seed.machineName === 'Euler' ? TELEMETRY_PROCESS_CAPTURE_TOP_X_MAX : 10
+      )
 
       metricsRows.push({
         allocationId: allocation.id,
@@ -296,6 +367,7 @@ export default class extends BaseSeeder {
         sessionDurationMinutes: durationMin,
         chartBucketMinutes: chart.chartBucketMinutes,
         chartSeries: chart.chartSeries,
+        processSummary: processSummary as unknown as Record<string, unknown>[] | null,
       })
     }
 
@@ -309,6 +381,8 @@ export default class extends BaseSeeder {
       intervalMs: number
       label: string
       profile: UsageProfile
+      processTopX?: number
+      telemetrySet?: import('#services/telemetry_presets').TelemetrySetConfig
     }[] = [
       {
         allocation: allocations[12],
@@ -344,6 +418,32 @@ export default class extends BaseSeeder {
         intervalMs: 10_000,
         label: 'TEST-E',
         profile: 'inference_gaps',
+        processTopX: TELEMETRY_PROCESS_CAPTURE_TOP_X_MAX,
+      },
+      {
+        allocation: allocations[17],
+        machine: mid('Dijkstra'),
+        intervalMs: 2_000,
+        label: 'TEST-F',
+        profile: 'training_burst',
+        telemetrySet: DEFAULT_LAB_TELEMETRY_PRESETS.eco.telemetrySet,
+      },
+      {
+        allocation: allocations[18],
+        machine: mid('Moore'),
+        intervalMs: 2_000,
+        label: 'TEST-G',
+        profile: 'training_burst',
+        telemetrySet: DEFAULT_LAB_TELEMETRY_PRESETS.fast.telemetrySet,
+      },
+      {
+        allocation: allocations[19],
+        machine: mid('Euler'),
+        intervalMs: 2_000,
+        label: 'TEST-H',
+        profile: 'training_burst',
+        telemetrySet: { ...FULL_TELEMETRY_SET, processCapture: true },
+        processTopX: TELEMETRY_PROCESS_CAPTURE_TOP_X_MAX,
       },
     ]
 
@@ -357,12 +457,25 @@ export default class extends BaseSeeder {
         startMs,
         endMs,
         test.intervalMs,
-        { profile: test.profile, ...hw, includeDiskIo: test.profile === 'io_bursts' }
+        {
+          profile: test.profile,
+          ...hw,
+          includeDiskIo: test.profile === 'io_bursts' || test.telemetrySet?.disk === true,
+          includeProcessCapture: test.telemetrySet?.processCapture ?? true,
+          processTopX: test.processTopX ?? 12,
+          telemetrySet: test.telemetrySet,
+        }
       )
       await createTelemetriesInChunks((chunk) => Telemetry.createMany(chunk), rows)
       const durationMin = Math.round((endMs - startMs) / 60_000)
+      const procLabel =
+        test.processTopX != null
+          ? `top ${test.processTopX}`
+          : test.telemetrySet?.processCapture
+            ? 'proc ✓'
+            : 'proc —'
       console.log(
-        `   ${test.label} · alocação #${test.allocation.id} · ${rows.length} brutas · ${durationMin} min · intervalo ${test.intervalMs / 1000}s`
+        `   ${test.label} · alocação #${test.allocation.id} · ${rows.length} brutas · ${durationMin} min · intervalo ${test.intervalMs / 1000}s · ${procLabel}`
       )
       console.log(`      → ${test.allocation.reason}`)
     }
@@ -370,7 +483,7 @@ export default class extends BaseSeeder {
     const preSummarized = allocationsData
       .map((s, i) => (s.withMetrics ? allocations[i].id : null))
       .filter(Boolean)
-    console.log(`   Pré-resumidas (~100 pts): alocações #${preSummarized.join(', #')}\n`)
+    console.log(`   Pré-resumidas (~100 pts + processSummary): alocações #${preSummarized.join(', #')}\n`)
 
     const euler = mid('Euler')
     const arendt = mid('Arendt')
@@ -488,6 +601,8 @@ export default class extends BaseSeeder {
         intervalSeconds: 5,
         sampleCount: 15,
         mode: 'active',
+        includeProcessCapture: true,
+        processTopX: TELEMETRY_PROCESS_CAPTURE_TOP_X_MAX,
       },
       {
         machineId: arendt.id,
@@ -499,6 +614,8 @@ export default class extends BaseSeeder {
         intervalSeconds: 5,
         sampleCount: 15,
         mode: 'active',
+        includeProcessCapture: true,
+        processTopX: 10,
       },
       {
         machineId: dijkstra.id,
@@ -510,6 +627,8 @@ export default class extends BaseSeeder {
         intervalSeconds: 10,
         sampleCount: 12,
         mode: 'active',
+        includeProcessCapture: true,
+        processTopX: TELEMETRY_PROCESS_CAPTURE_TOP_X_MAX,
       },
       {
         machineId: gaciG3.id,
@@ -520,10 +639,30 @@ export default class extends BaseSeeder {
         intervalSeconds: 60,
         sampleCount: 24,
         mode: 'idle',
+        includeProcessCapture: true,
+        processTopX: TELEMETRY_PROCESS_CAPTURE_TOP_X_MAX,
       },
     ]
 
     writeLiveTelemetrySeedFile(liveEntries)
+
+    logTelemetryStorageReport()
+
+    const scenario24h = build24hTwoSecondScenarios()
+    console.log('   Amostras reais 1h @ 2s (×24 ≈ projeção 24h):')
+    for (const [idx, scenario] of scenario24h.entries()) {
+      const testAlloc = summaryTestCases.find((t) => t.label === `TEST-${String.fromCharCode(70 + idx)}`)
+      if (!testAlloc) continue
+      const oneHourRows = generateStorageScenarioSamples(
+        scenario,
+        testAlloc.allocation.id,
+        testAlloc.allocation.startTime.toMillis(),
+        HOUR_MS
+      )
+      console.log(
+        `   ${scenario.id}: ${oneHourRows.length} linhas/1h · linha ~${Math.round(oneHourRows[0] ? JSON.stringify(oneHourRows[0]).length : 0)} B JSON`
+      )
+    }
 
     console.log('✅ Seed de alocações concluído (live telemetry → storage/lab/live_telemetry_seed.json).\n')
   }

@@ -17,17 +17,36 @@ export interface TelemetrySetConfig {
   cpu?: boolean;
   gpu?: boolean;
   ramAndSwap?: boolean;
+  disk?: boolean;
   diskSpace?: boolean;
   diskIO?: boolean;
   networkIO?: boolean;
   temperatures?: boolean;
   activeUsers?: boolean;
+  processCapture?: boolean;
+}
+
+export type ProcessCaptureCompareMetric =
+  | "cpuPercent"
+  | "ramMb"
+  | "vramMb"
+  | "gpuUse"
+  | "diskReadKbps"
+  | "diskWriteKbps";
+
+export type ProcessCaptureUserScope = "session" | "all";
+
+export interface ProcessCaptureConfig {
+  compareMetric: ProcessCaptureCompareMetric;
+  topX: number;
+  userScope: ProcessCaptureUserScope;
 }
 
 export interface CustomAgentConfig {
   intervalSeconds?: number;
   batchSize?: number;
   telemetrySet?: TelemetrySetConfig;
+  processCaptureConfig?: ProcessCaptureConfig;
   processThresholds?: Record<string, number>;
   onDemandProcessConfig?: unknown;
 }
@@ -159,6 +178,38 @@ export interface RealtimeTelemetry {
   uploadMbps: number | null;
   moboTemperature?: number | null;
   activeUsers: unknown[] | null;
+  processes?: TelemetryProcessSnapshot[] | null;
+}
+
+export interface TelemetryProcessSnapshot {
+  pid: number;
+  name: string;
+  username: string;
+  cpuPercent: number | null;
+  ramMb: number | null;
+  vramMb?: number | null;
+  gpuUse?: number | null;
+  diskReadKbps?: number | null;
+  diskWriteKbps?: number | null;
+}
+
+export interface ProcessSessionSummary {
+  pid: number;
+  name: string;
+  username: string;
+  sampleCount: number | null;
+  avgCpuPercent: number | null;
+  maxCpuPercent: number | null;
+  avgRamMb: number | null;
+  maxRamMb: number | null;
+  avgVramMb?: number | null;
+  maxVramMb?: number | null;
+  avgGpuUse?: number | null;
+  maxGpuUse?: number | null;
+  avgDiskReadKbps?: number | null;
+  maxDiskReadKbps?: number | null;
+  avgDiskWriteKbps?: number | null;
+  maxDiskWriteKbps?: number | null;
 }
 
 /** Fase operacional (API calcula a partir de `status` + relógio). */
@@ -268,6 +319,7 @@ export interface AllocationMetric {
   /** Intervalo entre pontos do gráfico (minutos), adaptado à duração da sessão. */
   chartBucketMinutes?: number;
   chartSeries?: AllocationChartPoint[];
+  processSummary?: ProcessSessionSummary[];
   createdAt: string;
 }
 

@@ -67,6 +67,17 @@ export default class AllocationMetric extends BaseModel {
   })
   declare chartSeries: Record<string, unknown>[] | null
 
+  /** Resumo agregado por (pid, name) — wire format (cpu/gpu ×10). */
+  @column({
+    prepare: (value: unknown) => (value == null ? null : JSON.stringify(value)),
+    consume: (value: unknown) => {
+      if (value == null) return null
+      if (typeof value === 'string') return JSON.parse(value)
+      return value
+    },
+  })
+  declare processSummary: Record<string, unknown>[] | null
+
   @column.dateTime({ autoCreate: true })
   declare createdAt: DateTime
 

@@ -82,7 +82,24 @@ export const updateMachineValidator = vine.compile(
             vramMb: vine.number().min(0).optional(),
             diskReadKbps: vine.number().min(0).optional(), // <-- Separado
             diskWriteKbps: vine.number().min(0).optional(), // <-- Separado
-            topX: vine.number().min(1).max(50).optional(),
+            topX: vine.number().min(1).max(100).optional(),
+          })
+          .optional(),
+
+        processCaptureConfig: vine
+          .object({
+            compareMetric: vine
+              .enum([
+                'cpuPercent',
+                'ramMb',
+                'vramMb',
+                'gpuUse',
+                'diskReadKbps',
+                'diskWriteKbps',
+              ] as const)
+              .optional(),
+            topX: vine.number().min(1).max(100).optional(),
+            userScope: vine.enum(['session', 'all'] as const).optional(),
           })
           .optional(),
 
@@ -91,11 +108,13 @@ export const updateMachineValidator = vine.compile(
             cpu: vine.boolean().optional(),
             gpu: vine.boolean().optional(),
             ramAndSwap: vine.boolean().optional(),
+            disk: vine.boolean().optional(),
             diskSpace: vine.boolean().optional(),
             diskIO: vine.boolean().optional(),
             networkIO: vine.boolean().optional(),
             temperatures: vine.boolean().optional(),
             activeUsers: vine.boolean().optional(),
+            processCapture: vine.boolean().optional(),
           })
           .optional(),
       })
@@ -119,11 +138,10 @@ export const createProvisionedUserValidator = vine.compile(
 
 export const requestProcessReportValidator = vine.compile(
   vine.object({
-    cpuPercent: vine.number().min(0).max(100).optional(), // Ex: > 2%
-    ramMb: vine.number().min(0).optional(), // Ex: > 200 MB
-    vramMb: vine.number().min(0).optional(), // Ex: > 50 MB
-    diskReadKbps: vine.number().min(0).optional(), // Ex: > 500 Kbps
-    diskWriteKbps: vine.number().min(0).optional(), // Ex: > 500 Kbps
-    topX: vine.number().min(1).max(50).optional(), // Ex: Top 10
+    compareMetric: vine
+      .enum(['cpuPercent', 'ramMb', 'vramMb', 'gpuUse', 'diskReadKbps', 'diskWriteKbps'] as const)
+      .optional(),
+    topX: vine.number().min(1).max(100).optional(),
+    userScope: vine.enum(['session', 'all'] as const).optional(),
   })
 )

@@ -345,31 +345,39 @@ FASE 3 — Provisionar cada item
 | `swapUsedGb` | int ×10 | GB | `ramAndSwap` | Swap em uso |
 | `vramTotalGb` | int ×10 | GB | `gpu` | VRAM dedicada |
 | `vramUsedGb` | int ×10 | GB | `gpu` | VRAM em uso |
-| `diskReadMbps` | int | Mbps | `diskIO` | Throughput agregado leitura |
-| `diskWriteMbps` | int | Mbps | `diskIO` | Throughput agregado escrita |
-| `disksInfo` | array | — | `diskSpace` ou `diskIO` | Por-partição: `device`, `mountpoint`, `totalGb`, `freeGb`, I/O opcional |
+| `diskReadMbps` | int | Mbps | `disk` | Throughput agregado leitura |
+| `diskWriteMbps` | int | Mbps | `disk` | Throughput agregado escrita |
+| `disksInfo` | array | — | `disk` | Por-partição: `device`, `mountpoint`, `totalGb`, `freeGb`, I/O |
 | `downloadMbps` | int | Mbps | `networkIO` | Tráfego recebido |
 | `uploadMbps` | int | Mbps | `networkIO` | Tráfego enviado |
 | `activeUsers` | array | — | `activeUsers` | Sessões `lab.*` (detalhe TTY/SSH) |
-| `processes` | array | — | on-demand (5 batches) | Top processos pesados |
+| `processes` | array | — | `processCapture` ou on-demand (5 batches) | Top processos (todos os usuários) |
 
 **Valores omitidos / null:** Métrica desligada no preset → campo ausente ou `null` (API normaliza para UI `—`).
 
-#### `processes[]` (on-demand)
+#### `processes[]` (captura contínua ou on-demand)
 
-Disparado quando admin solicita relatório → heartbeat inclui `onDemandProcessConfig.requestTimestamp` → agente seta `PROCESS_BATCHES_REMAINING = 5`.
+Quando `telemetrySet.processCapture` está ativo, o agente envia o Top X a cada amostra, ordenado pela métrica configurada em `processCaptureConfig.compareMetric` e filtrado por `processCaptureConfig.userScope`.
 
-Thresholds default (`processThresholds` / on-demand):
+| `userScope` | Comportamento |
+|-------------|---------------|
+| `session` | Apenas processos cujo `username` é um `lab.*` com sessão TTY/SSH ativa (`psutil.users()`) |
+| `all` | Todos os processos do host (qualquer usuário POSIX) |
 
-| Métrica | Limiar | Inclusão |
-|---------|--------|----------|
-| CPU | ≥ 2% (`cpuPercent` ×10) | OR |
-| RAM | ≥ 200 MB | OR |
-| VRAM | ≥ 50 MB | OR |
-| Disk read | ≥ 1000 Kbps | OR |
-| Disk write | ≥ 1000 Kbps | |
+Gatilho on-demand (`POST /machines/:id/request-processes`) dispara 5 batches extras com `compareMetric`, `topX` e `userScope`.
 
-Ordenação: VRAM > CPU > RAM > read > write; top `topX` (default 10).
+**Compatibilidade legado:** pedidos pendentes gravados antes do refactor usam `thresholds: { cpuPercent, ramMb, vramMb, diskReadKbps, diskWriteKbps, topX }` (limiares mínimos OR + ordenação fixa VRAM > CPU > RAM > I/O). O agente mapeia para o modelo Top-X: `topX` é lido de `thresholds.topX`; `compareMetric` infere-se pelo primeiro limiar não-default nessa ordem de prioridade (padrão `vramMb`); `userScope` passa a `all` (equivalente ao scan de host antigo, exceto root/systemd/messagebus). Não reproduz o filtro OR exato — apenas preserva a intenção de ordenação e o Top X solicitado.
+
+| Campo | Wire | Descrição |
+|-------|------|-----------|
+| `cpuPercent` | int ×10 | Uso de CPU do processo |
+| `ramMb` | int | RAM RSS em MB |
+| `vramMb` | int | VRAM em MB (NVIDIA via nvitop) |
+| `gpuUse` | int ×10 | Uso SM da GPU (NVIDIA via nvitop; modelos antigos podem retornar 0) |
+| `diskReadKbps` | int | Leitura de disco |
+| `diskWriteKbps` | int | Escrita de disco |
+
+Métricas de comparação disponíveis: `cpuPercent`, `ramMb`, `vramMb`, `gpuUse`, `diskReadKbps`, `diskWriteKbps`.
 
 ---
 
@@ -659,12 +667,12 @@ main()
 
 Ordem em `_detect_gpu_backend()`:
 
-1. **NVIDIA** (`pynvml`) — uso, temp, VRAM, power
+1. **NVIDIA** (`nvitop` + `pynvml`) — uso GPU/VRAM/processos via **nvitop**; nome da placa em sync-specs via pynvml. **Compatível com placas NVIDIA suportadas pelo driver/NVML moderno; modelos muito antigos podem não expor métricas via nvitop** (uso GPU e `gpuUse` por processo ficam ausentes/zerados).
 2. **AMD** (`amdgpu` sysfs) — `gpu_busy_percent`, VRAM, power hwmon
 3. **Intel** (i915/xe sysfs) — freq ratio como proxy de uso
 4. **_NullBackend** — zeros silenciosos
 
-Multi-GPU: usa índice 0 NVML; comentário no código para iterar `nvmlDeviceGetCount()` se necessário.
+Multi-GPU: usa índice 0; comentário no código para iterar dispositivos se necessário.
 
 ---
 
@@ -716,14 +724,14 @@ Referência de **todas** as funções de coleta em `agentd.py`: origem dos dados
 | `_read_temperatures()` | psutil | `sensors_temperatures()` | `cpuTemp`, `moboTemperature` (×10) | `temperatures` | Ver §19.2 |
 | `_ram_wire()` | psutil | `virtual_memory()` total/available | `ramTotalGb`, `ramUsedGb` (×10) | `ramAndSwap` | Pressão de RAM |
 | `_swap_wire()` | psutil | `swap_memory()` total/used | `swapTotalGb`, `swapUsedGb` (×10) | `ramAndSwap` | Swap em uso |
-| `_GPU.usage()` | backend GPU | NVML / sysfs Intel / AMD busy | `gpuUsage` (×10) | `gpu` | Utilização GPU |
+| `_GPU.usage()` | backend GPU | nvitop (NVIDIA) / sysfs AMD/Intel | `gpuUsage` (×10) | `gpu` | Utilização GPU; NVIDIA exige nvitop |
 | `_GPU.temp()` | backend GPU | NVML / `sensors_temperatures` amdgpu | `gpuTemp` (×10) | `gpu` | Termal GPU |
 | `_GPU.power()` | backend GPU | NVML mW / AMD hwmon µW | `gpuPowerWatts` (int W) | `gpu` | Consumo elétrico |
 | `_GPU.vram()` | backend GPU | NVML mem / AMD mem_info_vram_* | `vramTotalGb`, `vramUsedGb` (×10) | `gpu` | Memória dedicada; omitido se total=0 (iGPU) |
 | `_net_delta()` | psutil | `net_io_counters()` + delta monotonic | `downloadMbps`, `uploadMbps` | `networkIO` | Ver §19.3 |
-| `_disk_metrics(space, io)` | psutil | `disk_partitions`, `disk_usage`, `disk_io_counters` | `diskReadMbps`, `diskWriteMbps`, `disksInfo[]` | `diskSpace` / `diskIO` | Ver §19.4 |
+| `_disk_metrics(space, io)` | psutil | `disk_partitions`, `disk_usage`, `disk_io_counters` | `diskReadMbps`, `diskWriteMbps`, `disksInfo[]` | `disk` | Espaço e I/O juntos |
 | `_active_users()` | psutil | `users()` filtrado `lab.*` | `activeUsers[]` | `activeUsers` | Sessões TTY/SSH provisionadas |
-| `_get_heavy_processes()` | psutil + pynvml | `process_iter` + NVML compute procs | `processes[]` | on-demand (5 batches) | Ver §19.5 |
+| `_get_top_processes()` | psutil + nvitop | `process_iter` + nvitop `Device.processes()` | `processes[]` | `processCapture` | Ver §19.5 |
 
 **Aquecimento:** `telemetry_worker` chama `psutil.cpu_percent(interval=None)` uma vez antes do loop para estabilizar a primeira leitura de CPU.
 
@@ -757,17 +765,20 @@ GPU **não** entra aqui — temperatura GPU vem exclusivamente de `_GPU.temp()` 
 
 **Sync-specs vs telemetria:** `_disk_partitions()` (boot) envia `device`, `fstype`, `totalGb`, `freeGb`, `role`; telemetria envia `usagePct` + I/O opcional sem repetir `device` em todos os presets.
 
-### 19.5 `_get_heavy_processes(thresholds)`
+### 19.5 `_get_top_processes(compare_metric, top_x)`
 
 | Fonte | Campos lidos | Uso |
 |-------|--------------|-----|
-| `pynvml.nvmlDeviceGetComputeRunningProcesses` | PID → VRAM MB | Só backend `nvidia` |
-| `psutil.process_iter([...])` | `pid`, `name`, `username`, `cpu_percent`, `memory_info`, `io_counters` | Scan de processos |
+| `nvitop.Device.processes()` | PID → VRAM MB, SM % (`gpuUse` ×10) | Somente NVIDIA com nvitop |
+| `psutil.process_iter([...])` | `pid`, `name`, `username`, `cpu_percent`, `memory_info`, `io_counters` | Host inteiro ou filtrado por sessão |
+| `_active_users()` + `_session_lab_usernames()` | usernames `lab.*` conectados | Filtro quando `userScope=session` |
 | Delta I/O | cache `_process_io_prev` por PID | `diskReadKbps`, `diskWriteKbps` |
 
-**Filtros:** ignora `root`, `systemd`, `messagebus`. Inclui processo se **qualquer** limiar atingido (CPU %, RAM MB, VRAM MB, read Kbps, write Kbps).
+**Ordenação:** pela métrica em `processCaptureConfig.compareMetric` (ou on-demand); retorna Top `topX` (1–100). Se `compareMetric` for `gpuUse` ou `vramMb` e o host **não** tiver NVIDIA com nvitop, faz **fallback para `cpuPercent`**.
 
-**Saída wire:** `cpuPercent` ×10, `ramMb` inteiro, `vramMb` inteiro, `name` truncado 50 chars.
+Cada processo no array inclui **todas** as métricas coletadas (`cpuPercent`, `ramMb`, `vramMb`, `gpuUse`, `diskReadKbps`, `diskWriteKbps`); a métrica de comparação serve apenas para ranquear, não filtra campos.
+
+**Divisão psutil / nvitop:** uma passagem `psutil.process_iter` coleta CPU, RAM e I/O de todos os PIDs; um mapa único `nvitop.Device.processes()` (NVIDIA) enriquece VRAM e `gpuUse` por PID — processos sem GPU ficam com `vramMb`/`gpuUse` = 0.
 
 ### 19.6 Heartbeat e inventário
 
@@ -796,7 +807,7 @@ GPU **não** entra aqui — temperatura GPU vem exclusivamente de `_GPU.temp()` 
 
 | Classe | Detecção | Métodos | Fontes |
 |--------|----------|---------|--------|
-| `_NvidiaBackend` | `pynvml.nvmlInit()` | `usage`, `temp`, `vram`, `power` | NVML utilization, temperature GPU, memory info, power mW |
+| `_NvidiaBackend` | `pynvml` + `nvitop` | `usage`, `temp`, `vram`, `power`, `gpu_process_metrics` | nvitop utilization/memory/processes; pynvml para nome sync-specs |
 | `_AmdSysfsBackend` | glob `gpu_busy_percent` em DRM | idem | sysfs `gpu_busy_percent`, `mem_info_vram_*`, hwmon `power*_average` |
 | `_IntelSysfsBackend` | glob `rps_cur_freq_mhz` | `usage` proxy freq ratio; `temp` via psutil sensors | sysfs i915/xe |
 | `_NullBackend` | fallback | zeros | Sem GPU mensurável |

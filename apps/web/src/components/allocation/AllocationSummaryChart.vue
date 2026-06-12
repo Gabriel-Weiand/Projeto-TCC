@@ -44,6 +44,16 @@ const activeDefinition = computed(
   () => tabs.value.find((t) => t.id === activeTab.value) ?? tabs.value[0] ?? null,
 );
 
+/** Teto do eixo Y na aba VRAM = capacidade total reportada (evita escala enganosa). */
+const vramAxisMaxGb = computed(() => {
+  if (activeTab.value !== "vram") return undefined;
+  const totals = props.points
+    .map((p) => p.vramTotalGb)
+    .filter((v): v is number => v != null && v > 0);
+  if (totals.length === 0) return undefined;
+  return Math.max(...totals);
+});
+
 const labels = computed(() =>
   props.points.map((p) => formatChartAxisLabel(p.timestamp, props.timezone)),
 );
@@ -138,6 +148,10 @@ function buildChartOptions(tab: NonNullable<typeof activeDefinition.value>) {
       y: {
         ticks: { color: tickColor },
         grid: { color: gridColor },
+        suggestedMax:
+          tab.id === "vram" && vramAxisMaxGb.value != null
+            ? vramAxisMaxGb.value
+            : undefined,
         title: {
           display: true,
           text: tab.unit,

@@ -1,6 +1,6 @@
-import { ref, onUnmounted, watch, type MaybeRefOrGetter, toValue } from "vue";
+import { ref, onUnmounted, watch, computed, type MaybeRefOrGetter, toValue } from "vue";
 import { useMachinesStore } from "@/stores/machines";
-import type { RealtimeTelemetry } from "@/types";
+import type { RealtimeTelemetry, TelemetryProcessSnapshot } from "@/types";
 import {
   TELEMETRY_STREAM_BATCH_MAX,
   diffTelemetryBatches,
@@ -8,6 +8,7 @@ import {
   telemetryStepDelaysMs,
   telemetryTimestampMs,
 } from "@/utils/telemetryBatchDiff";
+import { pickLatestProcessesFromBatch } from "@/utils/processTelemetry";
 
 const POLL_INTERVAL_MS = 3_000;
 const STALE_BATCH_MS = POLL_INTERVAL_MS * 3;
@@ -15,6 +16,7 @@ const MAX_STEP_MS = 60_000;
 
 export function useTelemetryPlayback(machineId: MaybeRefOrGetter<number>) {
   const current = ref<RealtimeTelemetry | null>(null);
+  const latestBatch = ref<RealtimeTelemetry[]>([]);
   const isActive = ref(false);
 
   const machinesStore = useMachinesStore();
@@ -42,6 +44,7 @@ export function useTelemetryPlayback(machineId: MaybeRefOrGetter<number>) {
     lastDisplayedMs = 0;
     previousBatch = [];
     current.value = null;
+    latestBatch.value = [];
   }
 
   /** Atualiza só se o timestamp for >= ao já exibido (nunca volta no tempo). */
@@ -116,10 +119,12 @@ export function useTelemetryPlayback(machineId: MaybeRefOrGetter<number>) {
       const rawBatch = result.batch ?? result.entries ?? [];
       if (!rawBatch.length) {
         if (result.latest) commitIfNewer(result.latest);
+        latestBatch.value = result.latest ? [result.latest] : [];
         return;
       }
 
       const sortedBatch = sortTelemetryByTimestamp(rawBatch);
+      latestBatch.value = sortedBatch;
 
       if (previousBatch.length === 0) {
         const latest = sortedBatch[sortedBatch.length - 1]!;
@@ -178,8 +183,23 @@ export function useTelemetryPlayback(machineId: MaybeRefOrGetter<number>) {
 
   onUnmounted(stop);
 
+  const latestProcesses = computed<TelemetryProcessSnapshot[] | null>(() =>
+    pickLatestProcessesFromBatch(latestBatch.value),
+  );
+
+  const latestProcessBatchTimestamp = computed<string | null>(() => {
+    for (let i = latestBatch.value.length - 1; i >= 0; i--) {
+      const row = latestBatch.value[i];
+      if (row?.processes?.length) return row.timestamp;
+    }
+    return null;
+  });
+
   return {
     current,
+    latestBatch,
+    latestProcesses,
+    latestProcessBatchTimestamp,
     isActive,
     start,
     stop,

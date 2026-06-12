@@ -3,6 +3,7 @@ import { reactive, ref, onMounted, computed } from "vue";
 import { useLabConfigStore } from "@/stores/labConfig";
 import NumberStepper from "@/components/NumberStepper.vue";
 import TelemetryMetricGrid from "@/components/TelemetryMetricGrid.vue";
+import ProcessCaptureOptions from "@/components/ProcessCaptureOptions.vue";
 import {
   DEFAULT_LAB_TELEMETRY_PRESETS,
   TELEMETRY_BATCH_MAX,
@@ -10,8 +11,10 @@ import {
   TELEMETRY_PRESET_INTERVAL_MIN,
   clampTelemetryInterval,
   enforceMandatoryTelemetrySet,
+  normalizeProcessCaptureConfig,
   validateBatchSize,
   validatePresetInterval,
+  validateProcessCaptureTopX,
   type LabTelemetryPresets,
 } from "@/utils/telemetryPresets";
 
@@ -46,20 +49,24 @@ onMounted(async () => {
     form.fast = {
       ...structuredClone(data.fast),
       telemetrySet: enforceMandatoryTelemetrySet(data.fast.telemetrySet),
+      processCaptureConfig: normalizeProcessCaptureConfig(data.fast.processCaptureConfig),
     };
     form.eco = {
       ...structuredClone(data.eco),
       telemetrySet: enforceMandatoryTelemetrySet(data.eco.telemetrySet),
+      processCaptureConfig: normalizeProcessCaptureConfig(data.eco.processCaptureConfig),
     };
   } catch {
     const fromConfig = labStore.telemetryPresets;
     form.fast = {
       ...structuredClone(fromConfig.fast),
       telemetrySet: enforceMandatoryTelemetrySet(fromConfig.fast.telemetrySet),
+      processCaptureConfig: normalizeProcessCaptureConfig(fromConfig.fast.processCaptureConfig),
     };
     form.eco = {
       ...structuredClone(fromConfig.eco),
       telemetrySet: enforceMandatoryTelemetrySet(fromConfig.eco.telemetrySet),
+      processCaptureConfig: normalizeProcessCaptureConfig(fromConfig.eco.processCaptureConfig),
     };
   } finally {
     loading.value = false;
@@ -76,12 +83,25 @@ const batchErrors = computed(() => ({
   eco: validateBatchSize(form.eco.batchSize),
 }));
 
+const processCaptureErrors = computed(() => ({
+  fast:
+    form.fast.telemetrySet.processCapture
+      ? validateProcessCaptureTopX(form.fast.processCaptureConfig.topX)
+      : null,
+  eco:
+    form.eco.telemetrySet.processCapture
+      ? validateProcessCaptureTopX(form.eco.processCaptureConfig.topX)
+      : null,
+}));
+
 const hasValidationErrors = computed(
   () =>
     intervalErrors.value.fast !== null ||
     intervalErrors.value.eco !== null ||
     batchErrors.value.fast !== null ||
-    batchErrors.value.eco !== null,
+    batchErrors.value.eco !== null ||
+    processCaptureErrors.value.fast !== null ||
+    processCaptureErrors.value.eco !== null,
 );
 
 async function handleSave() {
@@ -98,11 +118,13 @@ async function handleSave() {
         intervalSeconds: clampTelemetryInterval(form.fast.intervalSeconds),
         batchSize: form.fast.batchSize,
         telemetrySet: enforceMandatoryTelemetrySet(form.fast.telemetrySet),
+        processCaptureConfig: normalizeProcessCaptureConfig(form.fast.processCaptureConfig),
       },
       eco: {
         intervalSeconds: clampTelemetryInterval(form.eco.intervalSeconds),
         batchSize: form.eco.batchSize,
         telemetrySet: enforceMandatoryTelemetrySet(form.eco.telemetrySet),
+        processCaptureConfig: normalizeProcessCaptureConfig(form.eco.processCaptureConfig),
       },
     });
     saved.value = true;
@@ -168,6 +190,13 @@ async function handleSave() {
           </div>
         </div>
         <TelemetryMetricGrid v-model="form[section.key].telemetrySet" />
+        <ProcessCaptureOptions
+          v-if="form[section.key].telemetrySet.processCapture"
+          v-model="form[section.key].processCaptureConfig"
+        />
+        <p v-if="processCaptureErrors[section.key]" class="field-error">
+          {{ processCaptureErrors[section.key] }}
+        </p>
       </div>
 
       <p v-if="error" class="form-error">{{ error }}</p>

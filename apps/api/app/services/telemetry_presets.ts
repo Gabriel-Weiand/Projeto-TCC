@@ -3,21 +3,38 @@ import { readFileSync, writeFileSync, mkdirSync, existsSync } from 'node:fs'
 import { dirname } from 'node:path'
 import type Machine from '#models/machine'
 
+export type ProcessCaptureCompareMetric =
+  | 'cpuPercent'
+  | 'ramMb'
+  | 'vramMb'
+  | 'gpuUse'
+  | 'diskReadKbps'
+  | 'diskWriteKbps'
+
+export type ProcessCaptureUserScope = 'session' | 'all'
+
+export type ProcessCaptureConfig = {
+  compareMetric: ProcessCaptureCompareMetric
+  topX: number
+  userScope: ProcessCaptureUserScope
+}
+
 export type TelemetrySetConfig = {
   cpu: boolean
   gpu: boolean
   ramAndSwap: boolean
-  diskSpace: boolean
-  diskIO: boolean
+  disk: boolean
   networkIO: boolean
   temperatures: boolean
   activeUsers: boolean
+  processCapture: boolean
 }
 
 export type TelemetryPresetProfile = {
   intervalSeconds: number
   batchSize: number
   telemetrySet: TelemetrySetConfig
+  processCaptureConfig: ProcessCaptureConfig
 }
 
 export type LabTelemetryPresets = {
@@ -35,27 +52,36 @@ export const TELEMETRY_CUSTOM_INTERVAL_MIN = 2
 /** Sempre coletadas em fast, eco e custom (não podem ser desligadas). */
 export const MANDATORY_TELEMETRY_METRICS = ['cpu', 'ramAndSwap'] as const satisfies readonly (keyof TelemetrySetConfig)[]
 
+export const DEFAULT_PROCESS_CAPTURE_CONFIG: ProcessCaptureConfig = {
+  compareMetric: 'cpuPercent',
+  topX: 10,
+  userScope: 'session',
+}
+
+/** Limite máximo de processos retornados por amostra (preset ou personalizado). */
+export const TELEMETRY_PROCESS_CAPTURE_TOP_X_MAX = 100
+
 /** Métricas que o agente suporta coletar. */
 export const FULL_TELEMETRY_SET: TelemetrySetConfig = {
   cpu: true,
   gpu: true,
   ramAndSwap: true,
-  diskSpace: true,
-  diskIO: true,
+  disk: true,
   networkIO: true,
   temperatures: true,
   activeUsers: true,
+  processCapture: false,
 }
 
 const ECO_TELEMETRY_SET: TelemetrySetConfig = {
   cpu: true,
   gpu: false,
   ramAndSwap: true,
-  diskSpace: true,
-  diskIO: false,
+  disk: true,
   networkIO: false,
   temperatures: false,
   activeUsers: true,
+  processCapture: false,
 }
 
 /** Valores padrão do laboratório (sobrescritos por storage ou env). */
@@ -64,11 +90,13 @@ export const DEFAULT_LAB_TELEMETRY_PRESETS: LabTelemetryPresets = {
     intervalSeconds: 30,
     batchSize: 4,
     telemetrySet: { ...FULL_TELEMETRY_SET },
+    processCaptureConfig: { ...DEFAULT_PROCESS_CAPTURE_CONFIG },
   },
   eco: {
     intervalSeconds: 60,
     batchSize: 15,
     telemetrySet: { ...ECO_TELEMETRY_SET },
+    processCaptureConfig: { ...DEFAULT_PROCESS_CAPTURE_CONFIG },
   },
 }
 
@@ -86,12 +114,48 @@ export function clampCustomTelemetryInterval(seconds: number): number {
   return clampTelemetryInterval(seconds, TELEMETRY_CUSTOM_INTERVAL_MIN)
 }
 
-export function normalizeTelemetrySet(set: TelemetrySetConfig): TelemetrySetConfig {
-  const out = { ...set }
+export function normalizeTelemetrySet(
+  set: Partial<TelemetrySetConfig> & { diskSpace?: boolean; diskIO?: boolean }
+): TelemetrySetConfig {
+  const legacyDisk =
+    typeof set.disk === 'boolean' ? set.disk : !!(set.diskSpace || set.diskIO)
+  const out: TelemetrySetConfig = {
+    ...FULL_TELEMETRY_SET,
+    ...set,
+    disk: legacyDisk,
+    processCapture: set.processCapture === true,
+  }
   for (const key of MANDATORY_TELEMETRY_METRICS) {
     out[key] = true
   }
   return out
+}
+
+export function normalizeProcessCaptureConfig(
+  config?: Partial<ProcessCaptureConfig> | null
+): ProcessCaptureConfig {
+  const compareMetric = config?.compareMetric
+  const allowed: ProcessCaptureCompareMetric[] = [
+    'cpuPercent',
+    'ramMb',
+    'vramMb',
+    'gpuUse',
+    'diskReadKbps',
+    'diskWriteKbps',
+  ]
+  const topX =
+    typeof config?.topX === 'number'
+      ? Math.min(TELEMETRY_PROCESS_CAPTURE_TOP_X_MAX, Math.max(1, Math.round(config.topX)))
+      : 10
+  const userScope: ProcessCaptureUserScope =
+    config?.userScope === 'all' || config?.userScope === 'session' ? config.userScope : 'session'
+  return {
+    compareMetric: allowed.includes(compareMetric as ProcessCaptureCompareMetric)
+      ? (compareMetric as ProcessCaptureCompareMetric)
+      : 'cpuPercent',
+    topX,
+    userScope,
+  }
 }
 
 export function normalizePresetProfile(profile: TelemetryPresetProfile): TelemetryPresetProfile {
@@ -99,6 +163,7 @@ export function normalizePresetProfile(profile: TelemetryPresetProfile): Telemet
     intervalSeconds: clampTelemetryInterval(profile.intervalSeconds),
     batchSize: profile.batchSize,
     telemetrySet: normalizeTelemetrySet(profile.telemetrySet),
+    processCaptureConfig: normalizeProcessCaptureConfig(profile.processCaptureConfig),
   }
 }
 
@@ -158,12 +223,22 @@ function mergeProfile(
   base: TelemetryPresetProfile,
   patch?: Partial<TelemetryPresetProfile> | null
 ): TelemetryPresetProfile {
-  if (!patch) return normalizePresetProfile({ ...base, telemetrySet: { ...base.telemetrySet } })
+  if (!patch) {
+    return normalizePresetProfile({
+      ...base,
+      telemetrySet: { ...base.telemetrySet },
+      processCaptureConfig: { ...base.processCaptureConfig },
+    })
+  }
   return normalizePresetProfile({
     intervalSeconds:
       typeof patch.intervalSeconds === 'number' ? patch.intervalSeconds : base.intervalSeconds,
     batchSize: typeof patch.batchSize === 'number' ? patch.batchSize : base.batchSize,
     telemetrySet: mergeTelemetrySet(base.telemetrySet, patch.telemetrySet),
+    processCaptureConfig: {
+      ...base.processCaptureConfig,
+      ...(patch.processCaptureConfig ?? {}),
+    },
   })
 }
 
@@ -259,6 +334,9 @@ export function buildAgentTelemetryConfig(
           ? labPresets.fast.intervalSeconds
           : labPresets.eco.intervalSeconds
     )
+    const customProcessCapture = customConfig.processCaptureConfig as
+      | Partial<ProcessCaptureConfig>
+      | undefined
     return {
       intervalSeconds,
       batchSize:
@@ -269,6 +347,9 @@ export function buildAgentTelemetryConfig(
       telemetrySet: mergeTelemetrySet(
         FULL_TELEMETRY_SET,
         customConfig.telemetrySet as Partial<TelemetrySetConfig> | undefined
+      ),
+      processCaptureConfig: normalizeProcessCaptureConfig(
+        customProcessCapture ?? labPresets.fast.processCaptureConfig
       ),
       onDemandProcessConfig: customConfig.onDemandProcessConfig ?? null,
     }
@@ -282,6 +363,7 @@ export function buildAgentTelemetryConfig(
     telemetryPreset: runtimePreset,
     telemetryMode: 'auto',
     telemetrySet: { ...profile.telemetrySet },
+    processCaptureConfig: { ...profile.processCaptureConfig },
     onDemandProcessConfig: customConfig.onDemandProcessConfig ?? null,
   }
 }

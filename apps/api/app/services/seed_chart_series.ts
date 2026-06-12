@@ -1,6 +1,9 @@
 /**
  * Gera chart_series e telemetrias brutas para seed — perfis em degraus (sem senoides).
  */
+import type { ProcessWireSnapshot } from '#services/process_summary'
+import type { TelemetrySetConfig } from '#services/telemetry_presets'
+
 export type UsageProfile =
   | 'training_burst'
   | 'inference_gaps'
@@ -39,6 +42,366 @@ type SeedHardware = {
   hasGpu: boolean
   ramTotalGbWire: number
   vramTotalGbWire?: number | null
+}
+
+type SeedProcessTemplate = {
+  pid: number
+  name: string
+  username: string
+  cpuScale: number
+  ramBaseMb: number
+  ramScale: number
+  vramScale?: number
+  gpuScale?: number
+  diskIoScale?: number
+}
+
+const LAB_USER = 'lab.gabriel_santos'
+
+const SYNTH_PROCESS_NAMES = [
+  'python3',
+  'node',
+  'ffmpeg',
+  'bash',
+  'make',
+  'gcc',
+  'java',
+  'docker',
+  'code',
+  'chrome',
+  'train.py',
+  'rsync',
+  'tar',
+  'ssh',
+  'systemd',
+  'nginx',
+  'postgres',
+  'redis-server',
+  'jupyter',
+  'nvidia-smi',
+] as const
+
+const GPU_PROCESS_TEMPLATES: SeedProcessTemplate[] = [
+  {
+    pid: 12450,
+    name: 'python3',
+    username: LAB_USER,
+    cpuScale: 0.52,
+    ramBaseMb: 900,
+    ramScale: 5200,
+    vramScale: 0.58,
+    gpuScale: 0.78,
+    diskIoScale: 0.06,
+  },
+  {
+    pid: 12478,
+    name: 'python3',
+    username: LAB_USER,
+    cpuScale: 0.14,
+    ramBaseMb: 240,
+    ramScale: 1100,
+    vramScale: 0.1,
+    gpuScale: 0.08,
+    diskIoScale: 0.02,
+  },
+  {
+    pid: 8921,
+    name: 'node',
+    username: LAB_USER,
+    cpuScale: 0.08,
+    ramBaseMb: 180,
+    ramScale: 640,
+    vramScale: 0.04,
+    gpuScale: 0.03,
+  },
+  {
+    pid: 4102,
+    name: 'systemd',
+    username: 'root',
+    cpuScale: 0.02,
+    ramBaseMb: 12,
+    ramScale: 48,
+  },
+  {
+    pid: 3310,
+    name: 'sshd',
+    username: 'root',
+    cpuScale: 0.01,
+    ramBaseMb: 8,
+    ramScale: 24,
+  },
+]
+
+const CPU_PROCESS_TEMPLATES: SeedProcessTemplate[] = [
+  {
+    pid: 18220,
+    name: 'ffmpeg',
+    username: LAB_USER,
+    cpuScale: 0.62,
+    ramBaseMb: 420,
+    ramScale: 2800,
+    diskIoScale: 0.35,
+  },
+  {
+    pid: 18221,
+    name: 'python3',
+    username: LAB_USER,
+    cpuScale: 0.28,
+    ramBaseMb: 320,
+    ramScale: 1900,
+    diskIoScale: 0.12,
+  },
+  {
+    pid: 18222,
+    name: 'make',
+    username: LAB_USER,
+    cpuScale: 0.45,
+    ramBaseMb: 90,
+    ramScale: 520,
+    diskIoScale: 0.08,
+  },
+  {
+    pid: 4102,
+    name: 'systemd',
+    username: 'root',
+    cpuScale: 0.02,
+    ramBaseMb: 12,
+    ramScale: 48,
+  },
+]
+
+const IO_PROCESS_TEMPLATES: SeedProcessTemplate[] = [
+  {
+    pid: 22001,
+    name: 'rsync',
+    username: LAB_USER,
+    cpuScale: 0.22,
+    ramBaseMb: 64,
+    ramScale: 280,
+    diskIoScale: 0.55,
+  },
+  {
+    pid: 22002,
+    name: 'python3',
+    username: LAB_USER,
+    cpuScale: 0.18,
+    ramBaseMb: 210,
+    ramScale: 980,
+    diskIoScale: 0.28,
+  },
+  {
+    pid: 22003,
+    name: 'tar',
+    username: LAB_USER,
+    cpuScale: 0.12,
+    ramBaseMb: 40,
+    ramScale: 160,
+    diskIoScale: 0.42,
+  },
+]
+
+function processTemplatesForProfile(profile: UsageProfile, hasGpu: boolean): SeedProcessTemplate[] {
+  if (profile === 'io_bursts') return IO_PROCESS_TEMPLATES
+  if (!hasGpu || profile === 'cpu_batch' || profile === 'compile_spikes') {
+    return CPU_PROCESS_TEMPLATES
+  }
+  return GPU_PROCESS_TEMPLATES
+}
+
+function synthesizeExtraProcessSnapshots(
+  count: number,
+  level: LevelSample,
+  hw: SeedHardware,
+  startRank: number
+): ProcessWireSnapshot[] {
+  const vramTotalMb =
+    hw.hasGpu && hw.vramTotalGbWire ? Math.round((hw.vramTotalGbWire / 10) * 1024) : 0
+  const out: ProcessWireSnapshot[] = []
+
+  for (let i = 0; i < count; i++) {
+    const rank = startRank + i
+    const decay = 1 / (1 + rank * 0.07)
+    const name = SYNTH_PROCESS_NAMES[rank % SYNTH_PROCESS_NAMES.length]
+    const username = rank % 9 === 0 ? 'root' : LAB_USER
+    const cpuPercent = Math.max(1, Math.round(level.cpu * 1000 * decay * 0.35))
+    const ramMb = Math.max(8, Math.round((40 + level.ram * 900) * decay))
+    const proc: ProcessWireSnapshot = {
+      pid: 50_000 + rank,
+      name,
+      username,
+      cpuPercent,
+      ramMb,
+    }
+    if (hw.hasGpu && vramTotalMb > 0 && rank % 3 !== 0) {
+      proc.vramMb = Math.max(0, Math.round(level.gpu * vramTotalMb * decay * 0.04))
+      proc.gpuUse = Math.max(0, Math.round(level.gpu * 1000 * decay * 0.05))
+    }
+    if (level.diskIo && rank % 4 === 0) {
+      const ioBase = 600 + level.cpu * 3200 * decay
+      proc.diskReadKbps = Math.round(ioBase)
+      proc.diskWriteKbps = Math.round(ioBase * 0.4)
+    }
+    out.push(proc)
+  }
+
+  return out
+}
+
+/** Top processos wire (×10 em cpu/gpu) coerentes com o nível de carga da amostra. */
+export function generateProcessSnapshotsWire(
+  level: LevelSample,
+  hw: SeedHardware,
+  profile: UsageProfile,
+  topX: number = 8
+): ProcessWireSnapshot[] {
+  const limit = Math.max(1, Math.min(topX, 100))
+
+  if (level.cpu < 0.08 && level.gpu < 0.05) {
+    const idleCount = Math.min(limit, 2)
+    const idle = processTemplatesForProfile(profile, hw.hasGpu)
+      .filter((t) => t.username === 'root')
+      .slice(0, idleCount)
+      .map((t) => ({
+        pid: t.pid,
+        name: t.name,
+        username: t.username,
+        cpuPercent: Math.round(level.cpu * 1000 * t.cpuScale * 4),
+        ramMb: Math.round(t.ramBaseMb + level.ram * t.ramScale * 0.15),
+      }))
+    if (idle.length >= limit) return idle
+    return [
+      ...idle,
+      ...synthesizeExtraProcessSnapshots(limit - idle.length, level, hw, idle.length),
+    ].slice(0, limit)
+  }
+
+  const load = Math.max(level.cpu, level.gpu * 0.85)
+  const vramTotalMb =
+    hw.hasGpu && hw.vramTotalGbWire ? Math.round((hw.vramTotalGbWire / 10) * 1024) : 0
+
+  const procs = processTemplatesForProfile(profile, hw.hasGpu).map((t) => {
+    const cpuPercent = Math.round(level.cpu * 1000 * t.cpuScale * (1 + load * 0.35))
+    const ramMb = Math.round(t.ramBaseMb + level.ram * t.ramScale * (0.4 + load * 0.6))
+    const proc: ProcessWireSnapshot = {
+      pid: t.pid,
+      name: t.name,
+      username: t.username,
+      cpuPercent,
+      ramMb,
+    }
+    if (hw.hasGpu && t.vramScale != null && vramTotalMb > 0) {
+      proc.vramMb = Math.round(level.gpu * vramTotalMb * t.vramScale)
+      proc.gpuUse = Math.round(level.gpu * 1000 * (t.gpuScale ?? 0))
+    }
+    if (level.diskIo && t.diskIoScale != null) {
+      const ioBase = 800 + level.cpu * 4200
+      proc.diskReadKbps = Math.round(ioBase * t.diskIoScale)
+      proc.diskWriteKbps = Math.round(ioBase * t.diskIoScale * 0.42)
+    }
+    return proc
+  })
+
+  if (procs.length < limit) {
+    procs.push(...synthesizeExtraProcessSnapshots(limit - procs.length, level, hw, procs.length))
+  }
+
+  procs.sort((a, b) => b.cpuPercent - a.cpuPercent)
+  return procs.slice(0, limit)
+}
+
+export function seedDisksInfoWire(level: LevelSample): Record<string, unknown>[] {
+  return [
+    {
+      mountpoint: '/',
+      totalGb: 480,
+      freeGb: Math.round(120 + (1 - level.ram) * 80),
+      usagePct: Math.round(650 + level.ram * 250),
+      diskReadMbps: level.diskIo ? Math.round(80 + level.cpu * 400) : 0,
+      diskWriteMbps: level.diskIo ? Math.round(40 + level.cpu * 180) : 0,
+    },
+    {
+      mountpoint: '/data',
+      totalGb: 1920,
+      freeGb: Math.round(900 + (1 - level.ram) * 200),
+      usagePct: Math.round(450 + level.ram * 180),
+      diskReadMbps: level.diskIo ? Math.round(120 + level.cpu * 900) : 0,
+      diskWriteMbps: level.diskIo ? Math.round(60 + level.cpu * 420) : 0,
+    },
+  ]
+}
+
+export function seedActiveUsersWire(): Record<string, unknown>[] {
+  return [
+    {
+      username: LAB_USER,
+      terminal: 'pts/0',
+      host: '192.168.8.55',
+      startedAt: new Date().toISOString(),
+    },
+    {
+      username: 'lab.maria_oliveira',
+      terminal: 'pts/1',
+      host: '192.168.8.60',
+      startedAt: new Date().toISOString(),
+    },
+  ]
+}
+
+/** Aplica telemetrySet ao row de seed (campos omitidos quando a métrica está desligada). */
+export function applyTelemetrySetToSeedRow(
+  row: RawTelemetrySeed & {
+    disksInfo?: Record<string, unknown>[] | null
+    activeUsers?: Record<string, unknown>[] | null
+  },
+  set: TelemetrySetConfig,
+  level: LevelSample
+): typeof row {
+  const out: typeof row = {
+    allocationId: row.allocationId,
+    timestamp: row.timestamp,
+    cpuUsage: row.cpuUsage,
+    cpuTemp: row.cpuTemp,
+    gpuUsage: set.gpu ? row.gpuUsage : 0,
+    gpuTemp: set.gpu ? row.gpuTemp : 0,
+  }
+
+  if (set.ramAndSwap) {
+    out.ramTotalGb = row.ramTotalGb
+    out.ramUsedGb = row.ramUsedGb
+    out.swapTotalGb = row.swapTotalGb
+    out.swapUsedGb = row.swapUsedGb
+  }
+
+  if (set.gpu) {
+    out.gpuPowerWatts = row.gpuPowerWatts
+    out.vramTotalGb = row.vramTotalGb
+    out.vramUsedGb = row.vramUsedGb
+  }
+
+  if (set.temperatures) {
+    out.moboTemperature = row.moboTemperature
+  }
+
+  if (set.disk) {
+    out.diskReadMbps = row.diskReadMbps
+    out.diskWriteMbps = row.diskWriteMbps
+    out.disksInfo = row.disksInfo ?? seedDisksInfoWire(level)
+  }
+
+  if (set.networkIO) {
+    out.downloadMbps = row.downloadMbps ?? Math.round(20 + level.cpu * 140)
+    out.uploadMbps = row.uploadMbps ?? Math.round(6 + level.cpu * 40)
+  }
+
+  if (set.activeUsers) {
+    out.activeUsers = row.activeUsers ?? seedActiveUsersWire()
+  }
+
+  if (set.processCapture && row.processes) {
+    out.processes = row.processes
+  }
+
+  return out
 }
 
 function levelAtProgress(progress: number, profile: UsageProfile, hasGpu: boolean): LevelSample {
@@ -132,7 +495,7 @@ function wirePointFromLevel(
   if (hw.hasGpu && vramTotal > 0) {
     point.gpuPowerWatts = Math.round(80 + level.gpu * 340)
     point.vramTotalGb = vramTotal
-    point.vramUsedGb = Math.round(level.gpu * vramTotal * 0.95)
+    point.vramUsedGb = Math.round(level.gpu * vramTotal)
   }
 
   if (level.diskIo) {
@@ -208,7 +571,12 @@ type RawTelemetrySeed = {
   diskWriteMbps?: number
   downloadMbps?: number
   uploadMbps?: number
+  disksInfo?: Record<string, unknown>[] | null
+  activeUsers?: Record<string, unknown>[] | null
+  processes?: ProcessWireSnapshot[]
 }
+
+export type { RawTelemetrySeed }
 
 export function generateRawTelemetriesWire(
   allocationId: number,
@@ -221,6 +589,9 @@ export function generateRawTelemetriesWire(
     ramTotalGbWire?: number
     vramTotalGbWire?: number | null
     includeDiskIo?: boolean
+    includeProcessCapture?: boolean
+    processTopX?: number
+    telemetrySet?: TelemetrySetConfig
   } = {}
 ): RawTelemetrySeed[] {
   const {
@@ -229,7 +600,17 @@ export function generateRawTelemetriesWire(
     ramTotalGbWire = 960,
     vramTotalGbWire = 480,
     includeDiskIo = true,
+    includeProcessCapture = false,
+    processTopX = 10,
+    telemetrySet,
   } = options
+
+  const captureEnabled = telemetrySet?.processCapture ?? includeProcessCapture
+  const processLimit = telemetrySet?.processCapture
+    ? (processTopX ?? 10)
+    : includeProcessCapture
+      ? processTopX
+      : 0
 
   const hw: SeedHardware = { hasGpu, ramTotalGbWire, vramTotalGbWire }
   const records: RawTelemetrySeed[] = []
@@ -244,7 +625,7 @@ export function generateRawTelemetriesWire(
     }
 
     const point = wirePointFromLevel(ts, level, hw)
-    records.push({
+    let row: RawTelemetrySeed = {
       allocationId,
       timestamp: point.timestamp,
       cpuUsage: point.cpuUsage,
@@ -261,7 +642,20 @@ export function generateRawTelemetriesWire(
       moboTemperature: point.moboTemperature,
       diskReadMbps: point.diskReadMbps,
       diskWriteMbps: point.diskWriteMbps,
-    })
+      downloadMbps: Math.round(20 + level.cpu * 140),
+      uploadMbps: Math.round(6 + level.cpu * 40),
+      disksInfo: seedDisksInfoWire(level),
+      activeUsers: seedActiveUsersWire(),
+    }
+    if (captureEnabled && processLimit > 0) {
+      row.processes = generateProcessSnapshotsWire(level, hw, profile, processLimit)
+    }
+    if (telemetrySet) {
+      row = applyTelemetrySetToSeedRow(row, telemetrySet, level)
+    } else if (!includeProcessCapture) {
+      delete row.processes
+    }
+    records.push(row)
     tick++
     if (tick > 50_000) break
   }
