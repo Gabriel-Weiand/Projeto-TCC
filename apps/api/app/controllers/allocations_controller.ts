@@ -501,24 +501,6 @@ export default class AllocationsController {
   }
 
   /**
-   * Histórico de alocações de um usuário.
-   *
-   * GET /api/v1/users/:id/allocations
-   */
-  async userHistory({ params, request, response }: HttpContext) {
-    const { page = 1, limit = 20 } = request.qs()
-
-    const allocations = await Allocation.query()
-      .where('userId', params.id)
-      .preload('machine')
-      .preload('metric')
-      .orderBy('startTime', 'desc')
-      .paginate(page, limit)
-
-    return response.ok(allocations)
-  }
-
-  /**
    * Histórico de alocações de uma máquina.
    * - Admin: vê tudo (usuário, motivo, métricas)
    * - User: horários + isOwn; nomes se LAB_ALLOCATION_PUBLIC_NAMES=true

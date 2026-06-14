@@ -252,10 +252,6 @@ export function listUserDiskPartitions(disks: unknown): DiskPartitionRecord[] {
   return enrichDiskPartitions(disks).filter((d) => d.role === 'user' && d.mountpoint)
 }
 
-export function listUserDiskMountpoints(disks: unknown): string[] {
-  return listUserDiskPartitions(disks).map((d) => d.mountpoint)
-}
-
 export function resolveMainDiskMountpoint(disks: unknown): string | null {
   const main = listUserDiskPartitions(disks).find((d) => d.mainDisk)
   if (main) return main.mountpoint
@@ -353,12 +349,4 @@ export function normalizeAllocationHomeMount(
   }
 
   return { mountpoint: trimmed, error: null }
-}
-
-export function isHomeMountpointAllowed(
-  disks: unknown,
-  onlyMainDisk: boolean,
-  homeMountpoint: string | null | undefined
-): boolean {
-  return normalizeAllocationHomeMount(disks, onlyMainDisk, homeMountpoint).error === null
 }

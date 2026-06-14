@@ -11,6 +11,7 @@ const emit = defineEmits<{ close: [] }>();
 const store = useNotificationsStore();
 const lab = useLabConfigStore();
 const marking = ref<number | null>(null);
+const removing = ref<number | null>(null);
 
 watch(
   () => props.open,
@@ -29,6 +30,15 @@ async function toggleRead(id: number, isRead: boolean) {
     await store.markRead(id, !isRead);
   } finally {
     marking.value = null;
+  }
+}
+
+async function remove(id: number) {
+  removing.value = id;
+  try {
+    await store.remove(id);
+  } finally {
+    removing.value = null;
   }
 }
 
@@ -77,19 +87,31 @@ async function markAll() {
             class="notif-item"
             :class="{ 'notif-item--unread': !n.isRead }"
           >
-            <div class="notif-item-top">
-              <strong class="notif-item-title">{{ n.title }}</strong>
-              <time class="notif-item-time">{{ fmt(n.createdAt) }}</time>
-            </div>
-            <p class="notif-item-msg">{{ displayNotificationMessage(n.message) }}</p>
-            <div class="notif-item-footer">
+            <div class="notif-item-row">
               <button
                 type="button"
-                class="btn btn-ghost btn-sm"
+                class="btn btn-ghost btn-sm notif-item-mark"
                 :disabled="marking === n.id"
                 @click="toggleRead(n.id, n.isRead)"
               >
                 {{ n.isRead ? "Marcar não lida" : "Marcar lida" }}
+              </button>
+
+              <div class="notif-item-body">
+                <div class="notif-item-top">
+                  <strong class="notif-item-title">{{ n.title }}</strong>
+                  <time class="notif-item-time">{{ fmt(n.createdAt) }}</time>
+                </div>
+                <p class="notif-item-msg">{{ displayNotificationMessage(n.message) }}</p>
+              </div>
+
+              <button
+                type="button"
+                class="btn btn-ghost btn-sm notif-item-delete"
+                :disabled="removing === n.id"
+                @click="remove(n.id)"
+              >
+                Excluir
               </button>
             </div>
           </li>
@@ -162,13 +184,35 @@ async function markAll() {
 }
 
 .notif-item {
-  padding: 1rem 1.35rem;
+  padding: 0.85rem 1rem;
   border-bottom: 1px solid var(--border-subtle);
 }
 
 .notif-item--unread {
   background: rgba(102, 126, 234, 0.06);
   box-shadow: inset 3px 0 0 var(--accent);
+}
+
+.notif-item-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.65rem;
+}
+
+.notif-item-mark,
+.notif-item-delete {
+  flex-shrink: 0;
+  align-self: center;
+  white-space: nowrap;
+}
+
+.notif-item-delete {
+  color: var(--danger, #e57373);
+}
+
+.notif-item-body {
+  flex: 1;
+  min-width: 0;
 }
 
 .notif-item-top {
@@ -193,14 +237,5 @@ async function markAll() {
   font-size: 0.86rem;
   color: var(--text-secondary);
   line-height: 1.45;
-}
-
-.notif-item-footer {
-  display: flex;
-  justify-content: flex-end;
-  align-items: center;
-  margin-top: 0.65rem;
-  padding-top: 0.5rem;
-  border-top: 1px solid var(--border-subtle);
 }
 </style>

@@ -3,7 +3,6 @@ import User from '#models/user'
 import Machine from '#models/machine'
 import SshConnectionAttempt from '#models/ssh_connection_attempt'
 import testUtils from '@adonisjs/core/services/test_utils'
-import { DateTime } from 'luxon'
 
 test.group('SSH Attempts', (group) => {
   group.each.setup(() => testUtils.db().withGlobalTransaction())
@@ -67,40 +66,5 @@ test.group('SSH Attempts', (group) => {
     response.assertStatus(204)
     const deleted = await SshConnectionAttempt.find(attempt.id)
     assert.isNull(deleted)
-  })
-
-  test('DELETE /ssh-attempts/:keepDays remove tentativas mais antigas que o intervalo', async ({
-    client,
-    assert,
-  }) => {
-    const admin = await User.create({
-      fullName: 'Admin 3',
-      email: 'a3@teste.com',
-      password: '123',
-      role: 'admin',
-    })
-    const machine = await Machine.create({ name: 'PC-3', description: 'Lab', status: 'available' })
-
-    const antiga = await SshConnectionAttempt.create({
-      machineId: machine.id,
-      sourceIp: '10.0.0.2',
-      targetUsername: 'root',
-      status: 'failed',
-    })
-    await antiga.merge({ createdAt: DateTime.now().minus({ days: 10 }) }).save()
-
-    const recente = await SshConnectionAttempt.create({
-      machineId: machine.id,
-      sourceIp: '10.0.0.3',
-      targetUsername: 'user',
-      status: 'failed',
-    })
-
-    const response = await client.delete('/api/v1/ssh-attempts/4').loginAs(admin)
-
-    response.assertStatus(200)
-    assert.isAtLeast(response.body().deleted, 1)
-    assert.isNull(await SshConnectionAttempt.find(antiga.id))
-    assert.isNotNull(await SshConnectionAttempt.find(recente.id))
   })
 })

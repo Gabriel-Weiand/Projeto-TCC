@@ -37,6 +37,11 @@ export const useNotificationsStore = defineStore("notifications", () => {
     await Promise.all(unread.map((n) => markRead(n.id, true)));
   }
 
+  async function remove(id: number) {
+    await api.delete(`/api/v1/notifications/${id}`);
+    items.value = items.value.filter((n) => n.id !== id);
+  }
+
   return {
     items,
     loading,
@@ -44,5 +49,6 @@ export const useNotificationsStore = defineStore("notifications", () => {
     fetchNotifications,
     markRead,
     markAllRead,
+    remove,
   };
 });

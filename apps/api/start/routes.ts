@@ -58,18 +58,18 @@ router
             .patch('notifications/:id/read', [NotificationsController, 'markAsRead'])
             .as('notifications.read')
             .where('id', router.matchers.number())
+          router
+            .delete('notifications/:id', [NotificationsController, 'destroy'])
+            .as('notifications.destroy')
+            .where('id', router.matchers.number())
 
           // --- Users (Admin Only) ---
           router
             .group(() => {
               router.post('/', [UsersController, 'store']).as('users.store')
               router.get('/', [UsersController, 'index']).as('users.index')
-              router.get('/:id', [UsersController, 'show']).as('users.show')
               router.put('/:id', [UsersController, 'update']).as('users.update')
               router.delete('/:id', [UsersController, 'destroy']).as('users.destroy')
-              router
-                .get('/:id/allocations', [AllocationsController, 'userHistory'])
-                .as('users.allocations')
             })
             .prefix('users')
             .where('id', router.matchers.number())
@@ -95,7 +95,6 @@ router
             .group(() => {
               router.get('/', [MachineGroupsController, 'index']).as('machineGroups.index')
               router.post('/', [MachineGroupsController, 'store']).as('machineGroups.store')
-              router.get('/:id', [MachineGroupsController, 'show']).as('machineGroups.show')
               router.put('/:id', [MachineGroupsController, 'update']).as('machineGroups.update')
               router
                 .delete('/:id', [MachineGroupsController, 'destroy'])
@@ -127,9 +126,6 @@ router
                 .post('/:id/regenerate-token', [MachinesController, 'regenerateToken'])
                 .as('machines.regenerateToken')
               router
-                .post('/:id/request-processes', [MachinesController, 'requestProcessReport'])
-                .as('machines.requestProcesses')
-              router
                 .get('/:id/provisioned-users', [MachinesController, 'provisionedUsers'])
                 .as('machines.provisionedUsers.index')
               router
@@ -158,13 +154,9 @@ router
           router
             .group(() => {
               router.get('/', [SshAttemptsController, 'index']).as('sshAttempts.index')
-              router
-                .delete('/:keepDays', [SshAttemptsController, 'destroy'])
-                .as('sshAttempts.destroy')
             })
             .prefix('ssh-attempts')
             .use(middleware.isAdmin())
-            .where('keepDays', router.matchers.number())
 
           // --- Machines Allocations (General - anonimizado para users) ---
           router

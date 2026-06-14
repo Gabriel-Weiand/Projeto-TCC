@@ -628,45 +628,6 @@ test.group('Machines', (group) => {
     assert.equal(response.body().data[0]?.user?.fullName, 'Maria Silva')
     assert.isFalse(response.body().data[0]?.isOwn)
   })
-  test('admin deve conseguir solicitar relatório de processos on-demand', async ({
-    client,
-    assert,
-  }) => {
-    const admin = await User.create({
-      fullName: 'Admin',
-      email: 'admin.process@teste.com',
-      password: 'senha123',
-      role: 'admin',
-    })
-
-    const machine = await Machine.create({
-      name: 'PC-PROCESS',
-      description: 'Máquina para teste on-demand',
-      status: 'available',
-    })
-
-    // Act: Admin pede um relatório on-demand (Top 15 por VRAM)
-    const response = await client
-      .post(`/api/v1/machines/${machine.id}/request-processes`)
-      .loginAs(admin)
-      .json({
-        topX: 15,
-        compareMetric: 'vramMb',
-      })
-
-    // Assert
-    response.assertStatus(200)
-    response.assertBodyContains({
-      message: 'Gatilho enviado. Agente coletará o Top 15 nos próximos envios.',
-    })
-
-    await machine.refresh()
-    const config = machine.customAgentConfig as any
-    assert.isNotNull(config.onDemandProcessConfig)
-    assert.exists(config.onDemandProcessConfig.requestTimestamp)
-    assert.equal(config.onDemandProcessConfig.topX, 15)
-    assert.equal(config.onDemandProcessConfig.compareMetric, 'vramMb')
-  })
 
   test('admin pode restringir volumes allocatable na política de discos', async ({
     client,

@@ -58,18 +58,3 @@ export const telemetryReportValidator = vine.compile(
     data: vine.array(telemetrySchema).minLength(1).maxLength(15),
   })
 )
-
-/**
- * Validator para query params de listagem de telemetria.
- */
-export const listTelemetryValidator = vine.compile(
-  vine.object({
-    // Período
-    startDate: vine.date({ formats: ['iso8601'] }).optional(),
-    endDate: vine.date({ formats: ['iso8601'] }).optional(),
-
-    // Paginação
-    page: vine.number().positive().optional(),
-    limit: vine.number().positive().max(1000).optional(),
-  })
-)

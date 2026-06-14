@@ -29,16 +29,6 @@ export default class UsersController {
   }
 
   /**
-   * Exibe um usuário específico.
-   *
-   * GET /api/v1/users/:id
-   */
-  async show({ params, response }: HttpContext) {
-    const user = await User.findOrFail(params.id)
-    return response.ok(user)
-  }
-
-  /**
    * Atualiza um usuário (Exclusivo para ADMIN).
    * * PUT /api/v1/users/:id
    */

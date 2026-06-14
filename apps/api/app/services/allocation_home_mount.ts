@@ -11,18 +11,6 @@ export function canChangeAllocationHomeMount(
   return now.toMillis() < allocation.startTime.toMillis()
 }
 
-export function validateAllocationHomeMount(
-  machine: Machine,
-  homeMountpoint: string | null | undefined
-): string | null {
-  const { error } = normalizeAllocationHomeMount(
-    machine.disks,
-    Boolean(machine.onlyMainDisk),
-    homeMountpoint
-  )
-  return error
-}
-
 export function resolveAllocationHomeMountForCreate(
   machine: Machine,
   homeMountpoint: string | null | undefined

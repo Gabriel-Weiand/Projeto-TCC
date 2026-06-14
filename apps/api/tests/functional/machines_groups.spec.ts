@@ -171,19 +171,4 @@ test.group('Machine Groups', (group) => {
     await group.refresh()
     assert.equal(group.title, 'Título Original')
   })
-
-  test('admin deve visualizar um grupo específico', async ({ client, assert }) => {
-    const admin = await User.create({
-      fullName: 'Admin',
-      email: 'ag2@teste.com',
-      password: '123',
-      role: 'admin',
-    })
-    const group = await MachineGroup.create({ title: 'Lab Unico' })
-
-    const response = await client.get(`/api/v1/machine-groups/${group.id}`).loginAs(admin)
-
-    response.assertStatus(200)
-    assert.equal(response.body().title, 'Lab Unico')
-  })
 })

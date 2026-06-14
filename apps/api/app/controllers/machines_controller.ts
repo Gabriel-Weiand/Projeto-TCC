@@ -3,7 +3,6 @@ import Machine from '#models/machine'
 import Allocation from '#models/allocation'
 import {
   createMachineValidator,
-  requestProcessReportValidator,
   updateMachineValidator,
   updateProvisionedUserValidator,
   createProvisionedUserValidator,
@@ -18,7 +17,6 @@ import { telemetryBuffer } from '#services/telemetry_buffer'
 import { idleTelemetryBuffer } from '#services/telemetry_idle_buffer'
 import { normalizeChartSeriesPoint } from '#services/telemetry_api_format'
 import { machineCache } from '#services/machine_cache'
-import { DateTime } from 'luxon'
 import { cancelAllocationsForMaintenance } from '#services/notification_service'
 import { normalizeCustomAgentConfig } from '#services/telemetry_presets'
 import { normalizeRealtimeTelemetry } from '#services/telemetry_normalize'
@@ -424,32 +422,5 @@ export default class MachinesController {
       }
       throw error
     }
-  }
-
-  /**
-   * Dispara o gatilho para o Agente reportar processos nos próximos 5 batches.
-   * POST /api/v1/machines/:id/request-processes
-   */
-  async requestProcessReport({ params, request, response }: HttpContext) {
-    const machine = await Machine.findOrFail(params.id)
-    const options = await request.validateUsing(requestProcessReportValidator)
-
-    const config = machine.customAgentConfig || {}
-
-    // Salva o timestamp do pedido e os filtros que o admin escolheu na hora
-    config.onDemandProcessConfig = {
-      requestTimestamp: DateTime.now().toISO(),
-      compareMetric: options.compareMetric ?? 'cpuPercent',
-      topX: options.topX ?? 10,
-      userScope: options.userScope ?? 'session',
-    }
-
-    machine.customAgentConfig = config
-    await machine.save()
-
-    return response.ok({
-      message: `Gatilho enviado. Agente coletará o Top ${config.onDemandProcessConfig.topX} nos próximos envios.`,
-      machineId: machine.id,
-    })
   }
 }

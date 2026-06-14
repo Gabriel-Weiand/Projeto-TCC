@@ -42,4 +42,22 @@ export default class NotificationsController {
 
     return response.ok(notification)
   }
+
+  /**
+   * Remove uma notificação do usuário logado.
+   * DELETE /api/v1/notifications/:id
+   */
+  async destroy({ auth, params, response }: HttpContext) {
+    const user = auth.user!
+    const notification = await Notification.findOrFail(params.id)
+
+    if (notification.userId !== user.id) {
+      return response.forbidden({
+        message: 'Você não tem permissão para excluir esta notificação.',
+      })
+    }
+
+    await notification.delete()
+    return response.noContent()
+  }
 }

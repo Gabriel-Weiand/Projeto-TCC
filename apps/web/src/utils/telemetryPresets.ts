@@ -7,9 +7,6 @@ export const TELEMETRY_PRESET_INTERVAL_MIN = 10;
 /** Config custom por máquina. */
 export const TELEMETRY_CUSTOM_INTERVAL_MIN = 2;
 
-/** @deprecated Use TELEMETRY_PRESET_INTERVAL_MIN ou TELEMETRY_CUSTOM_INTERVAL_MIN */
-export const TELEMETRY_INTERVAL_MIN = TELEMETRY_PRESET_INTERVAL_MIN;
-
 /** Sempre ativas em fast, eco e custom. */
 export const MANDATORY_TELEMETRY_METRICS = ["cpu", "ramAndSwap"] as const;
 

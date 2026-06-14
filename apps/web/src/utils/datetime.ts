@@ -293,17 +293,3 @@ export function isNowWithinSftpAfterGrace(
   const sftpEndMs = graceEndMs + postSftpMinutes * 60_000;
   return nowMs >= graceEndMs && nowMs < sftpEndMs;
 }
-
-/** Sessão já começou e ainda dentro da janela ativa ou do grace pós-fim. */
-export function canFinishApprovedAllocation(
-  startIso: string,
-  endIso: string,
-  graceMinutes: number,
-  nowMs = Date.now(),
-): boolean {
-  if (isNowBeforeUtc(startIso, nowMs)) return false;
-  return (
-    isNowInUtcRange(startIso, endIso, nowMs) ||
-    isNowWithinGraceAfterEnd(endIso, graceMinutes, nowMs)
-  );
-}

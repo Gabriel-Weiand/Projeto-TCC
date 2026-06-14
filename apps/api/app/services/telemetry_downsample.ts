@@ -195,7 +195,7 @@ export function compressPointsToBuckets(
   return downsampleToBuckets(points, bucketMs, rangeStartMs, rangeEndMs)
 }
 
-export { mergeTwaAccumulators, addTwaSample, finalizeTwa, parseTimestampMs }
+export { parseTimestampMs }
 
 /** Grade fina para sessões curtas / alta densidade de brutas (passos de 1 min). */
 export const CHART_FINE_BUCKET_STEP_MS = 60_000
@@ -205,9 +205,6 @@ export const CHART_FINE_BUCKET_MS = 120_000
 
 /** Grade grossa = múltiplos do intervalo máximo de captura (5 min). */
 export const CHART_COARSE_BUCKET_MS = TELEMETRY_INTERVAL_MAX * 1000
-
-/** @deprecated Prefer CHART_COARSE_BUCKET_MS */
-export const CHART_MIN_BUCKET_MS = CHART_COARSE_BUCKET_MS
 
 /** Máximo de pontos no gráfico final (sem zoom no front). */
 export const CHART_MAX_POINTS = 100

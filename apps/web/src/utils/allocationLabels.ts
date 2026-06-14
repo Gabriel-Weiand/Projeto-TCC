@@ -1,9 +1,5 @@
 import type { AllocationLifecycleStatus } from "@/types";
-import {
-  formatLabDate,
-  formatLabDateTime,
-  formatLabTime,
-} from "@/utils/datetime";
+import { formatLabDateTime } from "@/utils/datetime";
 
 /** Limite do campo motivo (alinhado à API). */
 export const ALLOCATION_REASON_MAX_LENGTH = 200;
@@ -178,16 +174,6 @@ export function allocationStatusLabel(
     finished: "Finalizada",
   };
   return map[key] || key;
-}
-
-/** @deprecated use formatLabDateTime(iso, labTz) */
-export function fmtAllocationDate(iso: string): string {
-  return formatLabDate(iso);
-}
-
-/** @deprecated use formatLabTime(iso, labTz) */
-export function fmtAllocationTime(iso: string): string {
-  return formatLabTime(iso);
 }
 
 export function fmtAllocationDateTime(iso: string, timeZone?: string): string {

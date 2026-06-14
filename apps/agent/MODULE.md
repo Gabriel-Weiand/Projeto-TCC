@@ -151,6 +151,12 @@ Se falhar (API offline, timeout 5 s), permanece `_ECO_TELEMETRY_OFFLINE` até o 
 
 **Objetivo:** Registrar hardware **estável** no banco. Telemetria dinâmica (uso %) não passa por aqui.
 
+### Política de sobreposição na API (`applySyncSpecsIfEmpty`)
+
+Cada campo de spec só é gravado se estiver **vazio** no banco (`null`, string em branco ou wire GB ≤ 0). Se o admin já preencheu CPU, RAM, disco, IP etc., o sync **mantém** o valor admin. Se o admin **limpar** o campo, o próximo boot do agente repreenche.
+
+**Exceções:** `publicIpAddress` e política de discos (`mainDisk`, `allocatable`) são exclusivos do painel admin — o agente não os envia.
+
 ### Request (corpo JSON)
 
 | Campo | Tipo | Origem no agente | Justificativa |
@@ -159,7 +165,8 @@ Se falhar (API offline, timeout 5 s), permanece `_ECO_TELEMETRY_OFFLINE` até o 
 | `gpuModel` | string? | NVML (NVIDIA) ou `lspci -mm` | Exibição; fallback quando driver não expõe nome |
 | `totalRamGb` | int | `psutil.virtual_memory().total` → **GB×10** | Formato wire único (155 = 15,5 GB) |
 | `totalVramGb` | int? | `_GPU.vram()` total → GB×10 | Omitido se iGPU / VRAM dedicada = 0 |
-| `ipAddress` | string? | UDP connect trick / interface local | IP interno da estação |
+| `totalDiskGb` | int | Disco raiz (`/` ou principal) → **GB×10** | Spec de capacidade total; distinta da soma de partições |
+| `ipAddress` | string? | UDP connect trick / interface local | **IP local** da estação |
 | `hostFingerprint` | string? | `ssh-keygen -l -f /etc/ssh/ssh_host_ed25519_key.pub` | Front valida fingerprint na conexão SSH |
 | `disks` | array | `_disk_partitions()` | Inventário de partições; ver abaixo |
 
@@ -174,14 +181,14 @@ Se falhar (API offline, timeout 5 s), permanece `_ECO_TELEMETRY_OFFLINE` até o 
 | `freeGb` | Espaço livre (1 decimal) |
 | `role` | `system` \| `user` — classificação local espelhada em `#services/disk_partitions.ts` |
 
-**API:** `mergeDiskPartitionsFromAgent` preserva flags admin (`mainDisk`, `role`) ao atualizar `totalGb`/`freeGb` do agente.
+**API:** `mergeDiskPartitionsFromAgent` preserva flags admin (`mainDisk`, `allocatable`) ao atualizar `totalGb`/`freeGb`. Capacidade ao vivo também é refrescada por `disksInfo` na telemetria (`mergeDiskPartitionsFromTelemetry`).
 
 ### Response 200
 
 ```json
 {
   "synced": true,
-  "machine": { "id", "name", "cpuModel", "gpuModel", "totalVramGb", "totalRamGb" }
+  "machine": { "id", "name", "cpuModel", "gpuModel", "totalVramGb", "totalRamGb", "totalDiskGb" }
 }
 ```
 
@@ -353,7 +360,13 @@ FASE 3 — Provisionar cada item
 | `activeUsers` | array | — | `activeUsers` | Sessões `lab.*` (detalhe TTY/SSH) |
 | `processes` | array | — | `processCapture` ou on-demand (5 batches) | Top processos (todos os usuários) |
 
-**Valores omitidos / null:** Métrica desligada no preset → campo ausente ou `null` (API normaliza para UI `—`).
+**Valores omitidos / null:** Métrica desligada no preset → campo **ausente ou `null`** na amostra (API persiste null; UI `—`). **Não** enviar `0` como substituto de “desligado” para temperaturas ou toggles off.
+
+Temperaturas: `cpuTemp`, `moboTemp`, `gpuTemp` só coletadas com toggle `temperatures` / GPU ativo; caso contrário omitidas.
+
+#### `disksInfo[]` (telemetria)
+
+Inclui `totalGb`, `freeGb`, `usagePct` (wire ×10), I/O opcional. API mescla na última amostra do lote para atualizar `machines.disks`.
 
 #### `processes[]` (captura contínua ou on-demand)
 
@@ -370,12 +383,12 @@ Gatilho on-demand (`POST /machines/:id/request-processes`) dispara 5 batches ext
 
 | Campo | Wire | Descrição |
 |-------|------|-----------|
-| `cpuPercent` | int ×10 | % da capacidade total do host (psutil bruto ÷ CPUs lógicas) |
+| `cpuPercent` | int ×10 | % da capacidade total do host (psutil bruto ÷ CPUs lógicas; máx. 100%) |
 | `ramMb` | int | RAM RSS em MB |
-| `vramMb` | int | VRAM em MB (NVIDIA via nvitop) |
-| `gpuUse` | int ×10 | Uso SM da GPU (NVIDIA via nvitop; modelos antigos podem retornar 0) |
-| `diskReadKbps` | int | Leitura de disco |
-| `diskWriteKbps` | int | Escrita de disco |
+| `vramMb` | int? | VRAM em MB (NVIDIA via nvitop); omitido se 0 |
+| `gpuUse` | int ×10? | Uso SM da GPU; omitido se 0 |
+| `diskReadKbps` | int? | Leitura de disco; omitido se 0 |
+| `diskWriteKbps` | int? | Escrita de disco; omitido se 0 |
 
 Métricas de comparação disponíveis: `cpuPercent`, `ramMb`, `vramMb`, `gpuUse`, `diskReadKbps`, `diskWriteKbps`.
 
@@ -859,7 +872,8 @@ telemetry      ← collect_telemetry() = todas as entradas §19.1
 | `apps/api/app/controllers/agent_controller.ts` | Entrada HTTP agente |
 | `apps/api/app/services/heartbeat_service.ts` | provisioning, decommission |
 | `apps/api/app/services/machine_decommission.ts` | Exclusão admin 2 fases |
-| `apps/api/app/services/disk_partitions.ts` | Roles, mainDisk, homeDirectory |
+| `apps/api/app/services/machine_specs_merge.ts` | Fill-empty no sync-specs |
+| `apps/api/app/services/disk_partitions.ts` | Roles, mainDisk, homeDirectory, merge telemetria |
 | `apps/api/app/services/allocation_access.ts` | Fases prepare→teardown; `allowHomeMigrationForUser` |
 | `apps/api/app/services/telemetry_presets.ts` | Presets eco/fast/custom |
 | `apps/api/tests/functional/agent.spec.ts` | Testes contrato agente |
@@ -880,6 +894,18 @@ telemetry      ← collect_telemetry() = todas as entradas §19.1
        │ useradd/usermod/userdel                   │ allocations
        │ pkill, authorized_keys                    │ machine_users
        ▼                                           ▼
-  /etc/passwd                                 PostgreSQL
-  /home, /data/*, …                           + Redis/cache
+  /etc/passwd                                 SQLite
+  /home, /data/*, …                           (API)
 ```
+
+---
+
+## Mudanças recentes (jun/2026)
+
+| Área | Alteração |
+|------|-----------|
+| sync-specs | Envia `totalDiskGb`; API aplica **fill-empty** (`applySyncSpecsIfEmpty`) |
+| Telemetria | Métricas off → `null`/omitido; `cpuUsage` condicionado ao toggle `cpu` |
+| Processos | `cpuPercent` normalizado ÷ CPUs lógicas; campos 0 omitidos (`vramMb`, I/O…) |
+| Discos | `disksInfo` inclui `totalGb`; API atualiza `machines.disks` por lote |
+| Logs | Falha no POST de telemetria exibe status + trecho do corpo da resposta |

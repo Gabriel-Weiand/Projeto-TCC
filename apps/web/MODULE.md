@@ -8,10 +8,12 @@ SPA Vue 3 para reservas, monitoramento de máquinas e administração do laborat
 
 ## Papel
 
-- Alunos: calendário Gantt, criar/cancelar/estender reservas, conectar SSH, ver resumos de sessão.
-- Admins: parque, usuários, alocações, telemetria, manutenção e políticas do lab.
+Interface entre **usuários** (alunos/pesquisadores) e **administradores** do lab. Consome a API REST em `/api/v1` com Bearer token; bootstrap público via `GET /api/config` (fuso, calendário, flags de alocação).
 
-Comunicação REST com a API em `/api/v1` (Bearer token). Bootstrap público via `GET /api/config` (fuso, calendário, flags de alocação).
+| Público | O que faz no front |
+|---------|-------------------|
+| **User** | Gantt, reservas, SSH, minhas alocações, estatísticas de sessão, parque de máquinas |
+| **Admin** | Tudo acima + CRUD usuários/máquinas/alocações, telemetria ao vivo, manutenção, políticas |
 
 ---
 
@@ -24,32 +26,32 @@ echo "VITE_API_URL=http://localhost:3333" > .env
 npm run dev
 ```
 
-Requisito: **Node.js 22.x** (mesma versão da API). API rodando antes do front.
+Requisito: **Node.js 22.x** e API rodando. Guia de seed: [`README.md`](README.md).
 
-Guia rápido de uso e seed: [`README.md`](README.md).
+Testes utilitários: `node src/utils/datetime.spec.mjs`, `ssh.spec.mjs`, `notificationMessage.spec.mjs`.
 
 ---
 
 ## Rotas (`src/router/index.ts`)
 
-| Rota | View | Auth |
-|------|------|------|
-| `/login` | `LoginView` | Pública |
-| `/` | `HomeView` | User — calendário Gantt + nova reserva |
-| `/my-allocations` | `MyAllocationsView` | User |
-| `/machines` | `MachinesView` | User |
-| `/machines/:id` | `MachineDetailView` | User |
-| `/profile` | `ProfileView` | User |
-| `/admin` | `AdminDashboardView` | Admin |
-| `/admin/users` | `AdminUsersView` | Admin |
-| `/admin/machines` | `AdminMachinesView` | Admin |
-| `/admin/machines/:id` | → redirect `MachineDetailView?from=admin` | Admin |
-| `/admin/machines/:id/edit` | `AdminMachineEditView` | Admin |
-| `/admin/allocations` | `AdminAllocationsView` | Admin |
-| `/admin/maintenance` | `AdminMaintenanceView` | Admin |
-| `/admin/lab-telemetry` | → redirect maintenance `?tab=telemetria` | Admin |
+| Rota | View | Auth | Descrição |
+|------|------|------|-----------|
+| `/login` | `LoginView` | Pública | Login e-mail/senha |
+| `/` | `HomeView` | User | Calendário Gantt + nova reserva |
+| `/my-allocations` | `MyAllocationsView` | User | Histórico e ações sobre reservas |
+| `/machines` | `MachinesView` | User | Parque agrupado + busca |
+| `/machines/:id` | `MachineDetailView` | User | Specs, reservar, conectar; **admin** vê seções ao vivo |
+| `/profile` | `ProfileView` | User | Perfil + chave SSH ed25519 |
+| `/admin` | `AdminDashboardView` | Admin | Dashboard |
+| `/admin/users` | `AdminUsersView` | Admin | CRUD usuários |
+| `/admin/machines` | `AdminMachinesView` | Admin | CRUD máquinas |
+| `/admin/machines/:id` | → `MachineDetailView?from=admin` | Admin | Mesmo detalhe com contexto admin |
+| `/admin/machines/:id/edit` | `AdminMachineEditView` | Admin | Specs, discos (política), telemetria custom, SSH |
+| `/admin/allocations` | `AdminAllocationsView` | Admin | Todas as alocações + ações |
+| `/admin/maintenance` | `AdminMaintenanceView` | Admin | Abas: telemetria, políticas, retenção, grupos |
+| `/admin/lab-telemetry` | redirect → `?tab=telemetria` | Admin | Compatibilidade de bookmark (view antiga removida) |
 
-Layout: `AppLayout.vue` (navbar, sino de notificações, abas admin).
+Layout: `AppLayout.vue` (navbar, notificações, links admin).
 
 ---
 
@@ -57,14 +59,117 @@ Layout: `AppLayout.vue` (navbar, sino de notificações, abas admin).
 
 | Store | Responsabilidade |
 |-------|------------------|
-| `auth` | Login, token, `/me` |
+| `auth` | Login, token, `/me`, roles |
 | `allocations` | CRUD reservas, minhas alocações |
-| `machines` | Listagem, detalhe, telemetria |
+| `machines` | Listagem, detalhe, stream de telemetria, idle history |
 | `users` | Lista de usuários (admin) |
 | `notifications` | Inbox, marcar lida |
-| `labConfig` | Cache de `GET /api/config` |
+| `labConfig` | Cache de `GET /api/config`, presets de telemetria |
 | `machineGroups` | Grupos de máquinas (admin) |
-| `systemMaintenance` | Prune, manutenção em lote |
+| `systemMaintenance` | Prune e jobs de manutenção |
+
+---
+
+## Fluxo do usuário
+
+### Reservas (`HomeView`, `CalendarGanttScroll`, `ReservationFormFields`)
+
+1. Escolhe máquina(s) no Gantt ou formulário.
+2. Informa início/fim no **relógio de parede do lab** (`LabWallClockDateInput` / `LabWallClockTimeInput`).
+3. Se a máquina tem vários volumes user: escolhe **disco de home** (`listAllocatableDiskMountpoints`).
+4. Validações client-side espelham a API: ordem do período, passado, duração mínima, limite futuro, conflito de grace.
+5. Submete → `pending` ou `approved` conforme política do lab.
+
+### Minhas alocações (`ProfileMyAllocationsTab`, `MyAllocationDetailPanel`)
+
+- **Lifecycle** derivado no front via `effectiveLifecycleStatus` + relógio sincronizado (`serverNowMs`).
+- Ações: cancelar, finalizar, estender (`ExtendAllocationOverlay`), ocultar do histórico.
+- **Conectar:** `ProfileAllocationConnectModal` — IP, porta, `systemUsername`, comando SSH/SFTP (`utils/ssh.ts`).
+- **Estatísticas:** `AllocationUsageStatsModal` — TWA, picos, gráficos (`AllocationSummaryChart`) quando existe `allocation.metric`.
+
+### Parque (`MachinesView`, `MachineParkCard`, `MachineParkInfoModal`)
+
+- Cards com RAM, GPU+VRAM, **disco total** (`displayTotalDiskGb`), status efetivo.
+- Modal: specs completas, partições ordenadas por tamanho, livre/total por volume.
+
+### Detalhe da máquina — usuário (`MachineDetailView`)
+
+- Header: CPU, GPU, RAM, VRAM, **Disco**, **IP local** (placeholder *Aguardando sync* se vazio).
+- Disco total: spec `totalDiskGb` ou fallback soma de partições.
+- Botão reservar / conectar conforme alocação própria ativa.
+
+---
+
+## Fluxo do administrador
+
+### Edição de máquina (`AdminMachineEditView`)
+
+Abas via `AdminMachine*Tab`:
+
+| Aba | Editável | Somente leitura / agente |
+|-----|----------|---------------------------|
+| **Hardware** | CPU, GPU, RAM, VRAM, **disco total**, IP local, IP alternativo | Valores vazios serão preenchidos no próximo `sync-specs` |
+| **Discos** | `mainDisk`, `allocatable`, `onlyMainDisk` | `totalGb`, `freeGb`, `%` — atualizados por sync/telemetria |
+| **Telemetria** | Preset custom (intervalo, batch, toggles, processos) | Presets fast/eco globais em manutenção |
+| **Usuários provisionados** | Override `shell` / `sftp` / `auto` | Inventário reconciliado no heartbeat |
+| **SSH** | Porta, IP alternativo para conexão | Tentativas de login (auditoria) |
+
+**Regra de specs:** admin preenche → agente **não sobrescreve** no boot. Admin **limpa** campo → agente repreenche no próximo sync.
+
+### Detalhe ao vivo — admin (`MachineDetailView` + `MachineLiveSections`)
+
+Visível para `role === 'admin'` (ou discos para todos quando existem partições):
+
+| Seção | Componente | Conteúdo |
+|-------|------------|----------|
+| Telemetria preset | `MachineTelemetryPanel` | Editar custom inline |
+| Gráficos ociosos 24 h | `MachineIdleHistoryChart` | Buffer idle da API |
+| Partições | `MachineLiveSections` | Merge telemetria + spec; uso % clampado 0–100 |
+| Processos | `MachineLiveProcessSection` | Top processos; filtros **Todos / Usuário lab. / Sistema**; ordenação |
+| Usuários | Collapsible | Sessões ativas (telemetria + heartbeat) |
+
+Playback: composable `useTelemetryPlayback` — polling/stream, diff de lotes (`telemetryBatchDiff`), processos do último lote.
+
+### Manutenção (`AdminMaintenanceView`)
+
+Abas inline (`.filter-tabs` — componente `AdminTabBar` foi removido; UI unificada aqui):
+
+- **Telemetria:** presets fast/eco globais (`AdminMaintenanceTelemetryTab`) — substitui a antiga `AdminLabTelemetryView`.
+- **Políticas:** aprovação, grace, SFTP, nomes no Gantt.
+- **Retenção / grupos / execução:** prune e jobs.
+
+### Alocações admin (`AdminAllocationsView`)
+
+- Filtros por status e sub-estado lifecycle.
+- Aprovar, negar, cancelar, editar período (overlay Gantt), gerar resumo, excluir definitivamente.
+
+---
+
+## Specs e discos no front
+
+Utilitário central: `src/utils/machineDisks.ts`.
+
+| Função | Uso |
+|--------|-----|
+| `displayTotalDiskGb` | Spec `totalDiskGb` **ou** soma de `totalGb` das partições |
+| `mergeDiskPartitionsWithTelemetry` | Atualiza livre/total/% na UI ao vivo |
+| `diskUsedPct` | Percentual 0–100 (sanitiza arredondamento EFI) |
+| `listAllocatableDiskMountpoints` | Picker de disco na reserva |
+| `formatPartitionFreeTotal` | Cards do parque: `livre / total` |
+
+Wire GB×10 fica só na API/DB; HTTP e inputs admin usam **GB decimal** (1 casa).
+
+---
+
+## Processos (admin)
+
+`MachineLiveProcessSection` + `ProcessTelemetryTable`:
+
+- Filtro **Usuário:** `Todos` | `Usuário lab.` (`username` começa com `lab.`) | `Sistema` (demais contas).
+- Ordenação por métrica (CPU, RAM, VRAM, GPU, I/O).
+- `cpuPercent` exibido como % do **host** (agente já normaliza psutil ÷ CPUs lógicas).
+
+Helpers: `src/utils/processTelemetry.ts` (`filterProcessesByUserScope`, `sortProcessSnapshots`).
 
 ---
 
@@ -73,22 +178,26 @@ Layout: `AppLayout.vue` (navbar, sino de notificações, abas admin).
 | Camada | Formato |
 |--------|---------|
 | API / banco | **UTC** (`…Z`) |
-| Inputs de data/hora | Relógio de parede no fuso do lab (`labConfig.timezone`, ex. `America/Sao_Paulo`) |
-| Gantt, tabelas, modais | `formatLabDateTime` / `parseApiUtc` |
+| Inputs | Relógio de parede no fuso do lab (`labConfig.timezone`) |
+| Exibição | `formatLabDateTime` / `fmtAllocationDateTime` |
 
-Utilitário central: `src/utils/datetime.ts`
+Utilitário: `src/utils/datetime.ts` — `wallClockToUtcIso`, validações de período em `allocationPeriodValidation.ts`.
 
-| Função | Uso |
-|--------|-----|
-| `wallClockToUtcIso` | Enviar início/fim de reserva |
-| `formatLabDateTime` | Exibir instantes da API |
-| `LabWallClockDateInput` / `LabWallClockTimeInput` | Campos dd/mm/aaaa e hh:mm |
+Sincronização de relógio: `src/services/timeSync.ts` — `startTimeSync()` + `serverNowMs()` (offset via `GET /api/time`).
 
-**Regra:** nunca enviar datetime sem `Z`; nunca exibir ISO UTC cru sem converter para o fuso do lab.
+---
 
-Teste: `node apps/web/src/utils/datetime.spec.mjs`
+## Telemetria no front
 
-Sincronização de relógio: `src/utils/timeSync.ts` + `GET /api/time` (offset ms; não substitui conversão de fuso).
+| Arquivo | Papel |
+|---------|--------|
+| `telemetryPresets.ts` | Constantes, validação de intervalo/batch/processos |
+| `telemetryBatchDiff.ts` | Merge de lotes streaming, timestamps |
+| `telemetryChartConfig.ts` | Cores e definição de abas de gráfico |
+| `buildAllocationChartTabs.ts` | Séries para resumo de alocação |
+| `allocationMetricFormat.ts` | Formatação TWA para modal de estatísticas |
+
+Métricas ausentes na amostra (`null`) → UI mostra `—`, não zero.
 
 ---
 
@@ -97,63 +206,52 @@ Sincronização de relógio: `src/utils/timeSync.ts` + `GET /api/time` (offset m
 | Área | Componentes |
 |------|-------------|
 | Reservas | `CalendarGanttScroll`, `ReservationFormFields`, `ReservationMachinePicker`, `ExtendAllocationOverlay` |
-| Máquinas | `MachineLiveSections`, `MachineTelemetryPanel`, `AdminMachine*Tab` |
-| SSH | `ProfileAllocationConnectModal`, chave no perfil |
+| Máquinas | `MachineLiveSections`, `MachineLiveProcessSection`, `MachineTelemetryPanel`, `AdminMachine*Tab` |
+| Relatórios | `AllocationUsageStatsModal`, `AllocationSummaryChart` |
+| SSH | `ProfileAllocationConnectModal` |
 | Notificações | `NotificationsPanel` |
-| Admin manutenção | `AdminMaintenance*Tab`, `AdminTabBar` |
+| Admin manutenção | `AdminMaintenance*Tab` |
 | Datetime | `LabWallClockDateInput`, `LabWallClockTimeInput` |
 
 ---
 
 ## Notificações (inbox)
 
-A API gera eventos; o front lista e marca como lidas (`stores/notifications.ts`).
-
-### Usuário
-
-| Título (API) | Quando |
-|--------------|--------|
-| Reserva aprovada / negada / cancelada | Mudança de status |
-| Reserva cancelada (manutenção) | Máquina em manutenção |
-| Reserva em breve | ~10 min antes do início |
-| Chave SSH — reserva em 5 min / iniciada | Sem chave ed25519 no perfil |
-| Sessão encerrada | Auto-finalize |
-| Resumo da sessão disponível | Admin gerou métricas |
-| Cadastre sua chave SSH | Conta criada pelo admin |
-
-### Admin
-
-| Título (API) | Quando |
-|--------------|--------|
-| Nova reserva pendente | `LAB_ALLOCATION_REQUIRE_ADMIN_APPROVAL=true` |
-| Possível flood SSH | Muitas falhas na janela |
-| Agente offline | Sem heartbeat >10 min (cooldown 24 h) |
-
----
-
-## SSH e conexão
-
-- Usuário cadastra chave **ed25519** no perfil.
-- Com alocação ativa: `ProfileAllocationConnectModal` mostra IP, porta, login (`systemUsername`), comando (`utils/ssh.ts`).
-- Admin configura IP/porta SSH da máquina; auditoria em `/admin` → tentativas SSH.
+A API gera eventos; o front lista e marca como lidas (`stores/notifications.ts`). Ver tabelas em [`apps/api/MODULE.md`](../api/MODULE.md#notificações-notification_service).
 
 ---
 
 ## API e interceptors
 
-- `src/services/api.ts` — Axios, base URL `VITE_API_URL`, header `Authorization`.
-- Resposta de login: `{ value, user }` (token em `value`).
+- `src/services/api.ts` — Axios, `VITE_API_URL`, header `Authorization`.
+- Login: `{ value, user }` (token em `value`).
 - Roles: `user` | `admin`.
 
 ---
 
 ## Estilos
 
-Tema escuro em `src/assets/main.css` (variáveis CSS `--bg-*`, `--text-*`, `--border`).
+Tema escuro em `src/assets/main.css` (`--bg-*`, `--text-*`, `--border`). Listagens admin compartilham `allocation-list.css`.
+
+---
+
+## Mudanças recentes (jun/2026)
+
+| Mudança | Impacto no front |
+|---------|------------------|
+| Specs merge só quando vazias | Admin edita hardware; placeholders *Aguardando sync*; limpar reabilita sync |
+| `totalDiskGb` como coluna de spec | Label **Disco** no header; fallback soma partições |
+| Capacidade de partição read-only no admin | `AdminMachineDisksTab` só edita política |
+| IP local vs alternativo | Labels distintas; `publicIpAddress` só admin |
+| Telemetria nullable | Gráficos e painéis usam `—` para métrica desligada |
+| Telemetria lab → manutenção | `/admin/lab-telemetry` redirect; removidos `AdminLabTelemetryView`, `AdminTabBar` |
+| Filtro de processos por tipo de usuário | Toolbar em `MachineLiveProcessSection` |
+| Seção Usuários no detalhe admin | Sessões ativas; removido bloco debug da API |
 
 ---
 
 ## Referências
 
 - Contratos e endpoints: [`apps/api/MODULE.md`](../api/MODULE.md)
-- Agente e fases de acesso: [`apps/agent/MODULE.md`](../agent/MODULE.md)
+- Agente, sync-specs e fases: [`apps/agent/MODULE.md`](../agent/MODULE.md)
+- Visão geral do sistema: [`README.md`](../../README.md)

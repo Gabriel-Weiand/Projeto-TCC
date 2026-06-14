@@ -55,13 +55,51 @@ node ace test
 
 - `users` com `system_username` e `ssh_public_key` (ed25519).
 - `machine_groups` para agrupar o parque (ex.: CUDA vídeo, render).
-- `machines` com `agent_token`, specs (`total_ram_gb`, `total_vram_gb` em **wire GB×10**), `telemetry_preset`, `custom_agent_config`, `host_fingerprint`.
+- `machines` com `agent_token`, specs (`total_ram_gb`, `total_vram_gb`, **`total_disk_gb`** em wire GB×10), `disks` JSONB, `telemetry_preset`, `custom_agent_config`, `host_fingerprint`, `ip_address` (local), `public_ip_address` (alternativo, só admin).
 - `machine_users` — vínculo usuário ↔ máquina provisionada no SO.
 - `allocations` com janela de uso (no seed dev, reservas típicas de **2–4 semanas**).
-- `telemetries` — amostras brutas durante alocações (wire ×10; removidas após resumo).
+- `telemetries` — amostras brutas durante alocações (wire ×10; **métricas nullable** quando toggle off; removidas após resumo).
 - `allocation_metrics` — TWA, picos por sessão e `chart_series` (série resumida para gráfico).
 - `ssh_connection_attempts` — auditoria de login SSH.
 - `notifications` — caixa de entrada por usuário.
+
+## Specs, discos e sobreposição admin ↔ agente
+
+Hardware estável e política de volumes seguem regras distintas. Serviços: `#services/machine_specs_merge.ts`, `#services/disk_partitions.ts`.
+
+### Merge de specs no `sync-specs` (`applySyncSpecsIfEmpty`)
+
+O agente envia specs no boot (`PUT /api/v1/agent/sync-specs`). A API **só grava** quando o campo no banco está vazio:
+
+| Campo | Vazio = | Agente preenche se |
+|-------|---------|-------------------|
+| `cpuModel`, `gpuModel`, `ipAddress`, `hostFingerprint` | `null` ou string em branco | Valor detectado no host |
+| `totalRamGb`, `totalVramGb`, `totalDiskGb` | `null` ou wire ≤ 0 | Valor wire GB×10 do agente |
+
+**Admin** edita via `PUT /api/v1/machines/:id` (GB decimal convertido por `normalizeAdminMachineWireFields`). Valor admin **prevalece** sobre sync. **Limpar** campo no admin → próximo sync repreenche.
+
+**Não merge “fill-empty”:** `publicIpAddress` (só admin), `sshPort`, status, preset, `customAgentConfig`, flags de disco.
+
+### Partições (`machines.disks[]`)
+
+| Responsável | Campos |
+|-------------|--------|
+| **Agente** (sync + telemetria `disksInfo`) | `device`, `mountpoint`, `fstype`, `totalGb`, `freeGb`, `usagePct` |
+| **Admin** (`mergeAdminDiskPolicyUpdate`) | `mainDisk`, `allocatable`; `onlyMainDisk` na máquina |
+| **Preservado** | `role` (system/user), classificação por mountpoint |
+
+Funções:
+
+- `mergeDiskPartitionsFromAgent` — sync-specs; preserva flags admin.
+- `mergeDiskPartitionsFromTelemetry` — última amostra do lote com `disksInfo` no POST telemetry.
+- `mergeAdminDiskPolicyUpdate` — PUT máquina; **não** altera capacidade.
+- `sanitizeDiskCapacities` / `diskUsagePercent` — evita % negativo (ex.: `/boot/efi`).
+
+`totalDiskGb` na máquina é **capacidade total de disco da spec** (disco principal detectado no boot), **não** soma automática de partições no model — o front pode somar partições como fallback de exibição.
+
+### Resposta HTTP de máquinas
+
+Colunas wire → GB decimal na serialização (`MachinesController.agentGbToApi`): `totalRamGb`, `totalVramGb`, `totalDiskGb`.
 
 ## Consolidação de telemetria
 
@@ -1386,9 +1424,9 @@ Autenticação: `Authorization: Bearer <MACHINE_TOKEN>` (middleware `machineAuth
 
 | Método | Rota | Descrição |
 |--------|------|-----------|
-| PUT | `/sync-specs` | Boot: CPU/GPU, RAM/VRAM (wire), discos, `hostFingerprint`. |
+| PUT | `/sync-specs` | Boot: specs estáveis (**fill-empty**), discos, fingerprint. Não sobrescreve admin. |
 | POST | `/heartbeat` | A cada ~30s: provisionamento SSH, usuários ativos, lote de `sshAttempts`. |
-| POST | `/telemetry` | Lotes de métricas (persistidas só com alocação ativa na API). |
+| POST | `/telemetry` | Lotes de métricas (persistidas com alocação ativa); atualiza `disks` se `disksInfo`; métricas **null** se toggle off. |
 
 **Resposta típica do heartbeat:**
 
@@ -1495,3 +1533,15 @@ apps/api/
 │   └── kernel.ts         # Middlewares globais
 └── tests/                # Testes automatizados
 ```
+
+---
+
+## Mudanças recentes (jun/2026)
+
+| Área | Alteração |
+|------|-----------|
+| Specs | `applySyncSpecsIfEmpty` — agente preenche só campos vazios; admin pode limpar para forçar novo sync |
+| Disco | Coluna `total_disk_gb`; capacidade de partições via agente/telemetria; admin edita só política (`mergeAdminDiskPolicyUpdate`) |
+| Telemetria | Colunas CPU/GPU nullable; processo `cpuPercent` = % do host (máx. wire 1000) |
+| Agente | `disksInfo` com `totalGb`; merge de partições a cada lote; erros de POST logam corpo resumido |
+| Limpeza | Removidos validators/funções mortas (`listTelemetryValidator`, `wireGbToApi`, wrappers duplicados de disco) |

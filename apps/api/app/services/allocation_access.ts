@@ -213,10 +213,6 @@ export function allowHomeMigrationForUser(
   return true
 }
 
-export function isTelemetryHotPhase(phase: AccessPhase): boolean {
-  return phase === 'active' || phase === 'grace'
-}
-
 /** Máquina com alocação em curso (prepare → pós-SFTP), exceto teardown. */
 export function machineHasAllocationTelemetry(phase: AccessPhase): boolean {
   return phase !== 'none' && phase !== 'teardown'

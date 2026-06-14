@@ -1,26 +1,38 @@
 # Sistema Distribuído de Gestão de Laboratórios
 
-Monorepo do TCC (UFPel): API central AdonisJS, dashboard Vue 3 e agente Python (`agentd.py`) nas máquinas do laboratório. O sistema alinha **estado desejado** (reservas na API) com **estado real** (usuários POSIX, chaves SSH e telemetria no Linux).
+Monorepo do TCC (UFPel): **API** central AdonisJS, **dashboard** Vue 3 e **agente** Python (`agentd.py`) nas máquinas do laboratório. O sistema alinha **estado desejado** (reservas, políticas e specs na API) com **estado real** (usuários POSIX, chaves SSH, uso de hardware e telemetria no Linux).
 
 ---
 
 ## Sumário
 
-1. [Contexto](#contexto)
+1. [Objetivos](#objetivos)
 2. [Arquitetura](#arquitetura)
-3. [Funcionalidades](#funcionalidades)
-4. [Métricas e qualidade](#métricas-e-qualidade)
-5. [Status e documentação](#status-e-documentação)
-6. [Tecnologias](#tecnologias)
-7. [Como rodar](#como-rodar)
-8. [Estrutura do repositório](#estrutura-do-repositório)
-9. [Trabalhos futuros](#trabalhos-futuros)
+3. [Papéis: usuário e administrador](#papéis-usuário-e-administrador)
+4. [Funcionalidades por domínio](#funcionalidades-por-domínio)
+5. [Specs, discos e sobreposição admin ↔ agente](#specs-discos-e-sobreposição-admin--agente)
+6. [Alocação, controle de acesso e relatórios](#alocação-controle-de-acesso-e-relatórios)
+7. [Telemetria e métricas](#telemetria-e-métricas)
+8. [Métricas e qualidade](#métricas-e-qualidade)
+9. [Documentação por módulo](#documentação-por-módulo)
+10. [Tecnologias](#tecnologias)
+11. [Como rodar](#como-rodar)
+12. [Estrutura do repositório](#estrutura-do-repositório)
+13. [Trabalhos futuros](#trabalhos-futuros)
 
 ---
 
-## Contexto
+## Objetivos
 
-Laboratórios de pesquisa costumam gerir máquinas com planilhas e acordos informais. Este sistema centraliza reservas, provisionamento SSH por alocação, telemetria de uso e painel administrativo.
+Substituir planilhas e acordos informais por um fluxo único:
+
+| Objetivo | Como o sistema atende |
+|----------|------------------------|
+| **Reservar máquinas** com calendário, conflitos e aprovação configurável | Alocações com validação de período, gap de grace e status (`pending` / `approved`) |
+| **Provisionar acesso SSH** só durante a janela da reserva | Agente reconcilia `lab.*`, chaves ed25519 e fases `full_shell` → grace → `sftp_only` |
+| **Medir uso real** (CPU, GPU, RAM, disco, processos) | Telemetria em lote + resumo TWA por sessão + gráficos para usuário e admin |
+| **Operar o parque** (specs, discos, telemetria, manutenção) | Painel admin com edição de hardware, política de volumes, presets globais e prune |
+| **Auditar segurança** | Tentativas SSH agregadas no heartbeat; alertas de flood para admin |
 
 **Papéis:** `user` (aluno/pesquisador) e `admin` — não há cadastro público; contas são criadas pelo admin.
 
@@ -45,92 +57,133 @@ Laboratórios de pesquisa costumam gerir máquinas com planilhas e acordos infor
 |------------|--------------|------------------|
 | **Web** | Bearer token de usuário | Reservas, calendário Gantt, perfil, SSH, admin |
 | **API** | Tokens de usuário + agent keys (512 bits) | Regras de negócio, notificações, telemetria, manutenção |
-| **Agente** | `MACHINE_TOKEN` | `useradd`/chaves SSH, fases `full_shell`/`sftp_only`, métricas |
+| **Agente** | `MACHINE_TOKEN` | `useradd`/chaves SSH, fases de acesso, métricas, sync de specs |
 
-O agente **não** bloqueia tela de login gráfico — o controle de acesso é via **SSH** (shell completo na sessão, SFTP pós-sessão, revogação de chave).
+O agente **não** bloqueia login gráfico — o controle de acesso é via **SSH** (shell na sessão, SFTP pós-sessão, revogação de chave).
 
 Documentação detalhada: [`apps/api/MODULE.md`](apps/api/MODULE.md), [`apps/web/MODULE.md`](apps/web/MODULE.md), [`apps/agent/MODULE.md`](apps/agent/MODULE.md).
 
 ---
 
-## Funcionalidades
+## Papéis: usuário e administrador
+
+### Usuário (`user`)
+
+- Calendário **Gantt** multi-máquina; nova reserva com motivo, disco de home (quando permitido) e validações de horário no fuso do lab.
+- **Minhas alocações:** cancelar (antes do início), finalizar antecipadamente, estender fim, **conectar SSH**, ver **estatísticas e gráficos TWA** da sessão, ocultar do histórico.
+- **Parque:** listagem por grupo, busca, modal de specs; detalhe da máquina com hardware e atalho para reservar.
+- **Perfil:** nome, e-mail, senha; chave SSH **ed25519** obrigatória para reservas.
+- **Notificações** in-app (aprovação, lembretes, chave ausente, resumo disponível).
+
+### Administrador (`admin`)
+
+- **Usuários:** CRUD; `system_username` imutável; ver alocações por usuário.
+- **Máquinas:** CRUD, grupos, status efetivo (online/offline/ocupada/manutenção), **edição de specs** (CPU, GPU, RAM, VRAM, disco total, IP local/alternativo), **política de discos** (principal / reservável), preset de telemetria por máquina, token do agente, descomissionamento em duas fases, usuários provisionados (override shell/sftp).
+- **Detalhe ao vivo:** telemetria streaming, gráficos 24 h ocioso, **tabela de processos** com filtro Todos / Usuário lab. / Sistema, sessões ativas, partições com uso em tempo real.
+- **Alocações:** listagem global, filtros por sub-estado (ativa, grace, SFTP…), aprovar/negar/cancelar, editar período, **gerar resumo TWA**, reservar em nome de outro usuário.
+- **Manutenção** (`/admin/maintenance`): presets globais fast/eco, políticas do lab (aprovação, grace, SFTP, nomes no Gantt), retenção e prune manual.
+
+---
+
+## Funcionalidades por domínio
 
 ### Autenticação e perfil
 
-- Login/logout (`POST /api/v1/login`, `DELETE /api/v1/logout`); tokens Adonis (hash SHA-256 no banco)
-- Login invalida sessões anteriores do mesmo usuário
-- Perfil: nome, e-mail, senha; chave SSH **ed25519** obrigatória para reservas
-- Sincronização de relógio web ↔ API (`GET /api/time`) para validação de horários no fuso do lab
+- Login/logout; tokens Adonis (hash SHA-256); login invalida sessões anteriores.
+- Sincronização de relógio web ↔ API (`GET /api/time`) para validação de horários.
 
-### Reservas (usuário)
+### Reservas
 
-- Calendário **Gantt** multi-máquina com janela configurável (dias passados/futuros via `GET /api/config`)
-- Nova reserva: data/hora início e fim no fuso do laboratório, motivo opcional, escolha de volume/disco quando a máquina permite
-- Validações: ordem início/fim, duração mínima, limite futuro, **horário no passado**, conflito com gap de grace (`LAB_ALLOCATION_GRACE_MINUTES`, padrão **10 min**)
-- Aprovação automática ou pendente (`LAB_ALLOCATION_REQUIRE_ADMIN_APPROVAL`)
-- **Minhas alocações:** cancelar (antes do início), finalizar antecipadamente, estender fim, conectar SSH, estatísticas TWA da sessão, ocultar do histórico
-- Fases operacionais: preparação → sessão (`full_shell`) → grace → SFTP (`sftp_only`) → teardown
-
-### Parque de máquinas (usuário)
-
-- Listagem agrupada por laboratório/grupo, busca e modal de specs
-- Detalhe: hardware, fingerprint SSH, atalho para reservar, botão conectar quando a sessão está ativa
+- Validações: ordem início/fim, duração mínima, limite futuro, passado, conflito com gap de grace (`LAB_ALLOCATION_GRACE_MINUTES`, padrão **10 min**).
+- Aprovação automática ou pendente (`LAB_ALLOCATION_REQUIRE_ADMIN_APPROVAL`).
+- Fases operacionais: preparação → sessão (`full_shell`) → grace → SFTP (`sftp_only`) → teardown.
 
 ### Notificações
 
-- Inbox in-app: lembrete de reserva, chave SSH ausente, aprovação/negativa, agente offline, flood SSH (admin)
-- Marcar lida / marcar todas; scheduler na API dispara lembretes
+- Inbox: lembrete de reserva, chave SSH ausente, aprovação/negativa, agente offline, flood SSH (admin), resumo de sessão disponível.
 
-### Administradores — usuários
+### Agente
 
-- CRUD de contas (`user` / `admin`); `system_username` imutável após criação
-- Visualizar alocações por usuário
+- **3 threads:** heartbeat (30 s), telemetria (preset da API), auditoria SSH.
+- Bootstrap: `GET /api/config` → `PUT sync-specs` → loops.
+- Provisionamento declarativo, drift `lab.*`, telemetria em lote, processos on-demand.
 
-### Administradores — máquinas
+---
 
-- CRUD, status efetivo (online/offline por heartbeat, manutenção, ocupada)
-- Specs sincronizadas pelo agente (`PUT /api/v1/agent/sync-specs`): CPU, RAM, VRAM, GPU, discos JSON
-- Política de discos: `only_main_disk`, mountpoints alocáveis, `home_mountpoint` por reserva
-- Grupos de máquinas (laboratórios)
-- Preset de telemetria por máquina (fast/eco) + overrides globais em `/admin/maintenance`
-- Token do agente (512 bits), rotação, descomissionamento em duas fases (202 → agente limpa `lab.*` → 204)
-- **Usuários provisionados:** override manual de acesso (`shell` / `sftp` / `auto`) por máquina
-- Telemetria ao vivo (buffer SSE/polling), histórico ocioso 24 h, solicitar snapshot de processos pesados
-- Auditoria SSH por máquina (`/var/log/auth.log` via agente)
+## Specs, discos e sobreposição admin ↔ agente
 
-### Administradores — alocações
+Hardware estável da máquina é dividido em **colunas de spec** e **partições JSON**. Admin e agente têm papéis distintos; o sync **não sobrescreve** o que o admin já definiu.
 
-- Listagem global com filtros por status/sub-estado (ativa, grace, SFTP, pendente, etc.)
-- Aprovar/negar/cancelar; editar início/fim (overlay com Gantt); gerar resumo TWA; exclusão definitiva
-- Reservar em nome de outro usuário (Home + picker)
+### Colunas de spec (`machines`)
 
-### Administradores — manutenção (`/admin/maintenance`)
+| Campo | Quem preenche | Regra de merge no `sync-specs` |
+|-------|---------------|--------------------------------|
+| `cpuModel`, `gpuModel` | Admin **ou** agente (boot) | Agente só grava se vazio (`null` ou string em branco) |
+| `totalRamGb`, `totalVramGb`, `totalDiskGb` | Idem | Wire **GB×10** no DB; API/front em GB decimal; agente só preenche se ≤ 0 |
+| `ipAddress` | Agente (detectado) ou admin | **IP local** — agente preenche se vazio; admin pode editar/limpar |
+| `publicIpAddress` | **Somente admin** | IP alternativo (NAT/DNS); agente **não** envia |
+| `hostFingerprint` | Agente | Preenche se vazio (chave host ed25519) |
 
-- Presets de telemetria (intervalo, batch, métricas on/off)
-- Políticas do lab: aprovação obrigatória, nomes públicos no Gantt, grace/SFTP/prepare
-- Retenção: resumir telemetria, podar alocações/notificações/tentativas SSH
-- Execução manual de jobs de manutenção e prune
+**Limpar um campo no painel admin** (ex.: CPU em branco) **reabilita** o próximo `sync-specs` do agente a repreencher.
 
-### Agente (`agentd.py`)
+Serviço: `applySyncSpecsIfEmpty` em `#services/machine_specs_merge.ts`.
 
-- **3 threads:** heartbeat (30 s), telemetria (preset da API), auditoria SSH
-- Bootstrap: `GET /api/config` → `PUT sync-specs` → loop
-- **Provisioning declarativo:** `useradd`/`usermod`, chaves ed25519, shell vs SFTP, migração de `$HOME` opcional
-- Reconciliação de drift (usuários/dirs `lab.*` órfãos), descomissionamento multi-partição
-- Telemetria em lote: CPU, RAM, swap, GPU (NVML/AMD/Intel), discos, rede, temperatura, processos on-demand
-- Resiliência: só aplica OS changes em heartbeat **200**; token inválido não apaga usuários
+### Partições (`machines.disks[]`)
 
-### Telemetria e métricas (API)
+| Dado | Fonte | Observação |
+|------|--------|------------|
+| `totalGb`, `freeGb`, `usagePct` | Agente (`sync-specs` + telemetria `disksInfo`) | Atualizados continuamente; admin **não** edita capacidade |
+| `mainDisk`, `allocatable`, `onlyMainDisk` | **Admin** | Política de reserva — qual volume é principal e aparece no picker |
+| `role` (`system` / `user`) | Heurística + preservação | Mounts de boot/EFI = sistema; `/`, `/data` = usuário |
 
-- Amostras brutas ligadas à **alocação ativa**; buffer em memória para tempo real
-- Buffer ocioso 24 h quando não há alocação
-- Resumo **TWA** por sessão → `allocation_metrics` + série para gráficos; purge de raw após resumo
-- Downsample e normalização para front/admin
+Telemetria: última amostra do lote com `disksInfo` atualiza capacidade via `mergeDiskPartitionsFromTelemetry`.
 
-### Configuração
+**Exibição no front:** `totalDiskGb` da spec tem prioridade; se ausente, soma `totalGb` das partições (`displayTotalDiskGb`).
 
-- Políticas via `.env` (`LAB_*`) + overrides runtime (`PUT /api/v1/lab/settings`, JSON em `storage/lab/`)
-- Calendário, limites, fuso e políticas de alocação expostos em `GET /api/config`
+---
+
+## Alocação, controle de acesso e relatórios
+
+### Ciclo da reserva (visão integrada)
+
+```
+pending → approved → [prepare] → active (full_shell) → grace → sftp_only → teardown → finished
+```
+
+| Fase | Usuário vê | Agente aplica | Telemetria API |
+|------|------------|---------------|----------------|
+| Antes do início | Reserva no Gantt; pode cancelar | Sem conta ou preparação | Eco (máquina ociosa) |
+| Sessão ativa | Botão **Conectar SSH**; modal com comando | `full_shell` + chave ed25519 | **Fast** + amostras brutas em `telemetries` |
+| Grace / SFTP | Ainda conectável (SFTP) | `sftp_only`; `pkill` na transição | Fast até teardown |
+| Após fim | Histórico; **estatísticas da sessão** se admin gerou resumo | Remoção gradual (`userdel`) | Raw purgada; fica `allocation_metrics` |
+
+### O que o usuário recebe como “relatório”
+
+- Modal **Estatísticas de uso** (`AllocationUsageStatsModal`): médias/máximas TWA (CPU, GPU, RAM, VRAM, swap, temperaturas, I/O, rede), duração da sessão, gráficos por abas (CPU, GPU, RAM, disco…).
+- Disponível após admin (ou fluxo automático) chamar `POST /allocations/:id/summary` — notificação *“Resumo da sessão disponível”*.
+
+### O que o admin regula
+
+- **Presets** fast/eco em `/admin/maintenance?tab=telemetria` (redirect legado de `/admin/lab-telemetry`).
+- **Custom por máquina** em `AdminMachineEditView` / `MachineTelemetryPanel` (intervalo, batch, toggles de métricas, captura de processos).
+- **Snapshot de processos:** `POST /machines/:id/request-processes` → 5 lotes extras no agente.
+- **Políticas** grace, SFTP pós-sessão, dias até `userdel`, aprovação obrigatória — `.env` + overrides runtime.
+
+---
+
+## Telemetria e métricas
+
+| Contexto | Onde fica | Uso |
+|----------|-----------|-----|
+| Máquina ociosa | Buffer memória 24 h | Gráfico ocioso no admin; downsample 15 min |
+| Alocação ativa | Tabela `telemetries` | Bruto até gerar resumo |
+| Após resumo | `allocation_metrics` + `chart_series` | Gráficos do usuário e admin |
+
+**Métricas desligadas no preset** → campo `null` na amostra (não confundir com 0). UI exibe `—`.
+
+**Processos:** `cpuPercent` no wire = % da **capacidade total do host** (psutil normalizado ÷ CPUs lógicas). Filtro no front admin: contas `lab.*` vs sistema.
+
+Consolidação TWA, buckets adaptativos e buffers: ver [`apps/api/MODULE.md`](apps/api/MODULE.md#consolidação-de-telemetria).
 
 ---
 
@@ -140,43 +193,29 @@ _Medições em junho/2026 (excl. `node_modules` / venv)._
 
 | Métrica | Agente | API | Web |
 |---------|--------|-----|-----|
-| Linhas de código (approx.) | ~1 230 (`agentd.py`) | ~16 000 TS | ~18 000 Vue/TS |
-| Arquivos fonte principais | 1 daemon + docs | 12 controllers, 25 services, 10 migrations, 9 models | 13 views, 31 components, 8 stores |
-| Testes automatizados | — (contrato via API) | **205** specs Japa | 3 scripts Node (`datetime`, `ssh`, `notificationMessage`) |
-| Documentação | `MODULE.md` (~875 linhas) | `MODULE.md` | `MODULE.md` |
+| Linhas principais | ~1 350 (`agentd.py`) | ~16 000 TS | ~18 000 Vue/TS |
+| Testes automatizados | — (contrato via API) | **231** specs Japa | Scripts Node (`datetime`, `ssh`, `notificationMessage`) |
+| Documentação | `MODULE.md` | `MODULE.md` | `MODULE.md` |
 
-**Histórico git:** ~59 commits; ~326 k linhas adicionadas / ~284 k removidas (inclui refactors de documentação).
+### Pontos de atenção (revisão de código)
 
-### Revisão de código — pontos de atenção
+**Agente:** lotes de telemetria sem retry local se POST falhar; log SSH fixo em `/var/log/auth.log`.
 
-**Agente**
-- Possível crash na thread de telemetria com preset eco (`gpuUsage` nulo no log) — `agentd.py` ~1120
-- Lotes de telemetria descartados se o POST falhar (sem retry)
-- Sem testes unitários do daemon; log SSH fixo em `/var/log/auth.log` (Debian/Ubuntu)
+**API:** buffers de telemetria só em memória (não multi-instância); CORS permissivo; token de agente em texto no SQLite.
 
-**API**
-- Filtro `lifecycleStatus` carrega todas as alocações em memória antes de paginar
-- `GET /users` sem paginação (documentado no MODULE, não implementado)
-- CORS permissivo (`origin: true`); sem rate limit no login
-- Token de agente em texto plano no SQLite; buffers de telemetria só em memória (não multi-instância)
-
-**Web**
-- Default `VITE_API_URL` no código é `:7372`; documentação usa `:3333` — exige `.env`
-- Falhas de fetch frequentemente viram “lista vazia” sem mensagem de erro
-- Código órfão: `AdminLabTelemetryView.vue`, `AdminTabBar.vue`
-- UI usa `alert()`/`confirm()` em vários fluxos admin
+**Web:** `VITE_API_URL` default `:7372` no código — usar `.env` com porta da API; falhas de fetch às vezes viram lista vazia; `alert()`/`confirm()` em fluxos admin.
 
 ---
 
-## Status e documentação
+## Documentação por módulo
 
-| Módulo | Estado | Documento |
-|--------|--------|-----------|
-| API | Implementado | [`apps/api/MODULE.md`](apps/api/MODULE.md) |
-| Web | Implementado | [`apps/web/MODULE.md`](apps/web/MODULE.md) |
-| Agente | Implementado | [`apps/agent/MODULE.md`](apps/agent/MODULE.md) |
+| Módulo | Conteúdo principal | Arquivo |
+|--------|-------------------|---------|
+| **API** | Rotas, ER, TWA, specs merge, discos, alocações, agente | [`apps/api/MODULE.md`](apps/api/MODULE.md) |
+| **Web** | Rotas, stores, fluxos user/admin, componentes ao vivo | [`apps/web/MODULE.md`](apps/web/MODULE.md) |
+| **Agente** | Heartbeat, sync-specs, telemetria, provisionamento, GPU | [`apps/agent/MODULE.md`](apps/agent/MODULE.md) |
 
-A pasta `docs/` mantém apenas a proposta em PDF. Conteúdo técnico anterior foi consolidado nos `MODULE.md`.
+A pasta `docs/` mantém a proposta em PDF. Conteúdo técnico está nos `MODULE.md` de cada app.
 
 ---
 
@@ -184,7 +223,7 @@ A pasta `docs/` mantém apenas a proposta em PDF. Conteúdo técnico anterior fo
 
 | Camada | Stack |
 |--------|--------|
-| API | Node.js **22.x**, AdonisJS 6, TypeScript, Lucid, VineJS, SQLite (`better-sqlite3`) |
+| API | Node.js **22.x**, AdonisJS 6, TypeScript, Lucid, VineJS, SQLite |
 | Web | Vue 3, Vite, Pinia, Vue Router, Axios, Chart.js |
 | Agente | Python 3, `psutil`, `requests`, `nvidia-ml-py` (opcional) |
 
@@ -194,11 +233,9 @@ A pasta `docs/` mantém apenas a proposta em PDF. Conteúdo técnico anterior fo
 
 ### Pré-requisitos
 
-- **Node.js 22.x** (`node -v`) — ex.: [NodeSource setup_22.x](https://github.com/nodesource/distributions)
+- **Node.js 22.x**
 - npm
-- Python 3 (somente para o agente nas máquinas)
-
-O `better-sqlite3` é nativo: o `postinstall` em `apps/api` roda `npm rebuild better-sqlite3` após `npm install`.
+- Python 3 (agente nas máquinas)
 
 ### API
 
@@ -206,18 +243,14 @@ O `better-sqlite3` é nativo: o `postinstall` em `apps/api` roda `npm rebuild be
 cd apps/api
 npm install
 cp .env.example .env
-# Ajuste TZ (ex.: America/Sao_Paulo) e LAB_* — ver .env.example
-
 node ace migration:run
-# ou, em dev com schema novo: node ace migration:fresh --seed
-
+# dev com seed: node ace migration:fresh --seed
 node ace serve --watch
-# ou: npm run dev
 ```
 
-Testes: `node ace test` (205 specs; banco de teste em `tmp/test.sqlite3`).
+Testes: `node ace test` (231 specs).
 
-Testes web (utilitários): `node apps/web/src/utils/datetime.spec.mjs` (e `ssh.spec.mjs`, `notificationMessage.spec.mjs`).
+Utilitários web: `node apps/web/src/utils/datetime.spec.mjs`
 
 ### Web
 
@@ -228,11 +261,11 @@ echo "VITE_API_URL=http://localhost:3333" > .env
 npm run dev
 ```
 
-Abre em `http://localhost:5173`. Credenciais de seed: ver [`apps/web/README.md`](apps/web/README.md).
+Credenciais de seed: [`apps/web/README.md`](apps/web/README.md).
 
 ### Agente
 
-Ver [`apps/agent/MODULE.md`](apps/agent/MODULE.md) — variáveis `MACHINE_TOKEN`, `SERVER_URL`, instalação como serviço (root, systemd).
+Ver [`apps/agent/MODULE.md`](apps/agent/MODULE.md) — `MACHINE_TOKEN`, `SERVER_URL`, systemd.
 
 ---
 
@@ -241,8 +274,8 @@ Ver [`apps/agent/MODULE.md`](apps/agent/MODULE.md) — variáveis `MACHINE_TOKEN
 ```
 Projeto-TCC/
 ├── apps/
-│   ├── api/          # Backend AdonisJS (~133 arquivos)
-│   ├── web/          # Frontend Vue 3 (~147 arquivos)
+│   ├── api/          # Backend AdonisJS
+│   ├── web/          # Frontend Vue 3
 │   └── agent/        # Daemon Python (agentd.py)
 ├── docs/             # Proposta TCC (PDF)
 └── README.md
@@ -252,12 +285,11 @@ Projeto-TCC/
 
 ## Trabalhos futuros
 
-- Integração LDAP/AD
-- Notificações push / e-mail
-- WebSocket para status em tempo real (hoje: polling + stream de telemetria)
-- Testes E2E web; testes de integração do agente
-- Rate limiting, paginação em `/users`, enforcement de horário comercial (`LAB_SCHEDULE_*`)
-- Correções da revisão: retry de telemetria no agente, tratamento de erro no Gantt, remoção de código morto no front
+- Integração LDAP/AD; notificações e-mail/push
+- WebSocket para status (hoje: polling + stream de telemetria)
+- Testes E2E web; testes unitários do agente
+- Rate limiting, paginação em `/users`, horário comercial (`LAB_SCHEDULE_*`)
+- Retry de telemetria no agente; mensagens de erro consistentes no front
 
 ---
 

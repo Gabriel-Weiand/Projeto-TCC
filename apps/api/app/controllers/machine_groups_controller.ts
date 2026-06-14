@@ -57,16 +57,6 @@ export default class MachineGroupsController {
   }
 
   /**
-   * Exibe um grupo específico e as máquinas que o compõem.
-   * GET /api/v1/machine-groups/:id
-   */
-  async show({ params, response }: HttpContext) {
-    const group = await MachineGroup.findOrFail(params.id)
-    await group.load('machines')
-    return response.ok(group)
-  }
-
-  /**
    * Atualiza título, descrição e/ou máquinas associadas.
    * PUT /api/v1/machine-groups/:id
    */

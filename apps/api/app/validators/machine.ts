@@ -137,13 +137,3 @@ export const createProvisionedUserValidator = vine.compile(
     accessType: vine.enum(['shell', 'sftp', 'revoked'] as const).optional(),
   })
 )
-
-export const requestProcessReportValidator = vine.compile(
-  vine.object({
-    compareMetric: vine
-      .enum(['cpuPercent', 'ramMb', 'vramMb', 'gpuUse', 'diskReadKbps', 'diskWriteKbps'] as const)
-      .optional(),
-    topX: vine.number().min(1).max(100).optional(),
-    userScope: vine.enum(['session', 'all'] as const).optional(),
-  })
-)

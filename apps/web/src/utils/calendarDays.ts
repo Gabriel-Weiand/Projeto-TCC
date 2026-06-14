@@ -18,13 +18,6 @@ export function dateKey(d: Date): string {
   return `${y}-${m}-${day}`
 }
 
-/** Soma dias a uma data ISO (YYYY-MM-DD) no calendário civil local. */
-export function addDaysToIsoDate(isoDate: string, delta: number): string {
-  const dt = localDateFromIso(isoDate)
-  dt.setDate(dt.getDate() + delta)
-  return dateKey(dt)
-}
-
 /** Linha do tempo: de (hoje - pastDays) até (hoje + futureDays), inclusive. */
 export function buildTimelineDays(
   todayIso: string,

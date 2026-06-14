@@ -5,7 +5,6 @@ const API_BASE = import.meta.env.VITE_API_URL || "http://localhost:7372";
 
 /** Clock offset in milliseconds (server - local). */
 let offsetMs = 0;
-let synced = false;
 let intervalId: ReturnType<typeof setInterval> | null = null;
 
 /**
@@ -24,7 +23,6 @@ async function sync(): Promise<void> {
     const rtt = after - before;
     const localMid = before + rtt / 2;
     offsetMs = data.unixMs - localMid;
-    synced = true;
     if (data.localDate) {
       useLabConfigStore().config.now.localDate = data.localDate;
     }
@@ -38,32 +36,9 @@ export function serverNowMs(): number {
   return Date.now() + offsetMs;
 }
 
-/** Returns current UTC as ISO string adjusted by server offset. */
-export function serverNowISO(): string {
-  return new Date(serverNowMs()).toISOString();
-}
-
-/** Whether at least one successful sync has occurred. */
-export function isSynced(): boolean {
-  return synced;
-}
-
-/** Returns the current offset in ms (server - local). */
-export function getOffsetMs(): number {
-  return offsetMs;
-}
-
 /** Starts periodic sync. Safe to call multiple times. */
 export function startTimeSync(): void {
   if (intervalId) return;
   sync();
   intervalId = setInterval(sync, 5 * 60_000);
-}
-
-/** Stops periodic sync. */
-export function stopTimeSync(): void {
-  if (intervalId) {
-    clearInterval(intervalId);
-    intervalId = null;
-  }
 }

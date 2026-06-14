@@ -202,31 +202,6 @@ export function primaryDiskDeviceName(
   return d?.device?.trim() || null;
 }
 
-export function sumDisksFreeGb(
-  disks: DiskPartition[] | null | undefined,
-): number | null {
-  if (!disks?.length) return null;
-  const sum = disks.reduce((acc, d) => acc + Number(d.freeGb ?? 0), 0);
-  if (sum <= 0 && !disks.some((d) => d.freeGb != null)) return null;
-  return Math.round(sum * 10) / 10;
-}
-
-/** Texto padronizado: livre primeiro, depois percentual de uso. */
-export function formatDiskFreeThenUsage(
-  totalGb: number | null | undefined,
-  freeGb: number | null | undefined,
-): string | null {
-  if (totalGb == null && freeGb == null) return null;
-  const freePart =
-    freeGb != null ? `${freeGb.toFixed(1)} GB livre` : "— livre";
-  const pct = diskUsedPct(totalGb ?? null, freeGb ?? null);
-  return `${freePart} · ${pct}% uso`;
-}
-
-export function formatPartitionFreeUsage(d: DiskPartition): string | null {
-  return formatDiskFreeThenUsage(d.totalGb, d.freeGb);
-}
-
 /** Partição: `livre GB / total GB` (card do parque, linha inferior). */
 export function formatPartitionFreeTotal(
   freeGb: number | null | undefined,
@@ -236,13 +211,4 @@ export function formatPartitionFreeTotal(
   const free = freeGb != null ? `${freeGb} GB` : "—";
   const total = totalGb != null ? `${totalGb} GB` : "—";
   return `${free} / ${total}`;
-}
-
-export function machineAggregateDiskFreeUsage(machine: {
-  disks?: DiskPartition[] | null;
-  totalDiskGb?: number | null;
-}): string | null {
-  const total = displayTotalDiskGb(machine);
-  const free = sumDisksFreeGb(machine.disks);
-  return formatDiskFreeThenUsage(total, free);
 }

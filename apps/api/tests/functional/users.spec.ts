@@ -108,26 +108,6 @@ test.group('Users', (group) => {
     response.assertBodyContains([{ email: 'admin@teste.com' }, { email: 'teste@teste.com' }])
   })
 
-  test('admin deve visualizar um usuário específico', async ({ client }) => {
-    const admin = await User.create({
-      fullName: 'Admin',
-      email: 'admin@teste.com',
-      password: 'senha123',
-      role: 'admin',
-    })
-    const user = await User.create({
-      fullName: 'User Ver',
-      email: 'ver@teste.com',
-      password: 'senha123',
-      role: 'user',
-    })
-
-    const response = await client.get(`/api/v1/users/${user.id}`).loginAs(admin)
-
-    response.assertStatus(200)
-    response.assertBodyContains({ fullName: 'User Ver' })
-  })
-
   test('admin deve atualizar senha e cargo de um usuário', async ({ client, assert }) => {
     const admin = await User.create({
       fullName: 'Admin',
@@ -360,21 +340,5 @@ test.group('Users', (group) => {
     })
 
     response.assertStatus(422)
-  })
-
-  test('admin deve listar histórico de alocações de um usuário específico', async ({
-    client,
-    assert,
-  }) => {
-    const admin = await User.create({
-      fullName: 'Admin',
-      email: 'a.hist@teste.com',
-      password: '123',
-      role: 'admin',
-    })
-    const response = await client.get(`/api/v1/users/${admin.id}/allocations`).loginAs(admin)
-
-    response.assertStatus(200)
-    assert.exists(response.body().meta.total)
   })
 })

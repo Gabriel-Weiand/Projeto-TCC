@@ -68,12 +68,6 @@ export function apiGbToWire(apiGb: number): number {
   return Math.round(apiGb * 10)
 }
 
-/** Converte wire GB×10 para GB decimal (API/front). */
-export function wireGbToApi(wire: number | null | undefined): number | null {
-  if (wire == null || Number.isNaN(wire)) return null
-  return wire / 10
-}
-
 /** Normaliza payload admin: GB decimal → wire para colunas do agente. */
 export function normalizeAdminMachineWireFields(data: Record<string, unknown>): void {
   if (data.totalRamGb !== undefined && data.totalRamGb !== null) {
