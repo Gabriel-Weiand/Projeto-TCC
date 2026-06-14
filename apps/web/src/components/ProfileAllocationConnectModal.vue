@@ -42,17 +42,17 @@ const isSftpPhase = computed(
 
 const commandBlocks = computed(() => {
   const ip = machine.value?.ipAddress;
-  const publicIp = machine.value?.publicIpAddress?.trim();
+  const alternateIp = machine.value?.publicIpAddress?.trim();
   const user = systemUser.value;
   if (!ip || !user) return null;
   const port = machine.value?.sshPort;
   const build = isSftpPhase.value ? buildSftpCommand : buildSshCommand;
   const blocks = [{ id: "local", title: "IP local", command: build(ip, user, port) }];
-  if (publicIp) {
+  if (alternateIp) {
     blocks.push({
-      id: "public",
-      title: "IP público",
-      command: build(publicIp, user, port),
+      id: "alternate",
+      title: "IP alternativo",
+      command: build(alternateIp, user, port),
     });
   }
   return blocks;
@@ -106,7 +106,7 @@ async function copyCommand(text: string) {
                 <dd>{{ machine.description }}</dd>
               </div>
               <div v-if="machine?.ipAddress" class="connect-details-row">
-                <dt>Endereço IP</dt>
+                <dt>IP local</dt>
                 <dd><code class="connect-inline-code">{{ machine.ipAddress }}</code></dd>
               </div>
               <div v-if="systemUser" class="connect-details-row">

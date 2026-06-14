@@ -534,6 +534,62 @@ test.group('Agent API', (group) => {
     assert.equal(machine.disks?.length, 2)
   })
 
+  test('sync-specs não sobrescreve specs já preenchidas', async ({ client, assert }) => {
+    const machine = await Machine.create({
+      name: 'PC-SYNC-KEEP',
+      description: 'Lab',
+      token: 't-sync-keep',
+      cpuModel: 'Admin CPU',
+      gpuModel: 'Admin GPU',
+      totalRamGb: 480,
+      totalVramGb: 240,
+      totalDiskGb: 24800,
+      ipAddress: '192.168.0.10',
+    })
+
+    const response = await client
+      .put('/api/v1/agent/sync-specs')
+      .header('Authorization', `Bearer ${machine.token}`)
+      .json({
+        cpuModel: 'Agent CPU',
+        gpuModel: 'Agent GPU',
+        totalRamGb: 960,
+        totalVramGb: 480,
+        totalDiskGb: 50000,
+        ipAddress: '10.0.0.99',
+      })
+
+    response.assertStatus(200)
+    await machine.refresh()
+    assert.equal(machine.cpuModel, 'Admin CPU')
+    assert.equal(machine.gpuModel, 'Admin GPU')
+    assert.equal(machine.totalRamGb, 480)
+    assert.equal(machine.totalVramGb, 240)
+    assert.equal(machine.totalDiskGb, 24800)
+    assert.equal(machine.ipAddress, '192.168.0.10')
+  })
+
+  test('sync-specs repreenche campo limpo pelo admin', async ({ client, assert }) => {
+    const machine = await Machine.create({
+      name: 'PC-SYNC-REFILL',
+      description: 'Lab',
+      token: 't-sync-refill',
+      cpuModel: 'Valor antigo',
+    })
+
+    machine.cpuModel = ''
+    await machine.save()
+
+    const response = await client
+      .put('/api/v1/agent/sync-specs')
+      .header('Authorization', `Bearer ${machine.token}`)
+      .json({ cpuModel: 'Detectado no boot' })
+
+    response.assertStatus(200)
+    await machine.refresh()
+    assert.equal(machine.cpuModel, 'Detectado no boot')
+  })
+
   test('telemetry deve aceitar dados em lote convertendo VRAM e processos', async ({
     client,
     assert,
@@ -576,9 +632,79 @@ test.group('Agent API', (group) => {
     assert.equal(machine.status, 'available')
   })
 
-  // =========================================================================
-  // 6. MIGRAÇÃO DE HOME (multi-disco, no_key da reserva antiga)
-  // =========================================================================
+  test('telemetry aceita processo com cpuPercent normalizado (% do host, máx. 100%)', async ({
+    client,
+  }) => {
+    const machine = await Machine.create({
+      name: 'PC-NORM-CPU',
+      description: 'Lab',
+      token: 't-norm-cpu',
+      status: 'available',
+    })
+
+    const response = await client
+      .post('/api/v1/agent/telemetry')
+      .header('Authorization', `Bearer ${machine.token}`)
+      .json({
+        data: [
+          {
+            timestamp: new Date().toISOString(),
+            cpuUsage: 450,
+            gpuUsage: 200,
+            ramTotalGb: 160,
+            ramUsedGb: 80,
+            processes: [
+              {
+                pid: 9999,
+                name: 'chrome',
+                username: 'gabriel',
+                cpuPercent: 412,
+                ramMb: 4096,
+              },
+            ],
+          },
+        ],
+      })
+
+    response.assertStatus(204)
+  })
+
+  test('telemetry aceita métricas ausentes como null (toggle desligado)', async ({ client }) => {
+    const machine = await Machine.create({
+      name: 'PC-NULL-METRICS',
+      description: 'Lab',
+      token: 't-null-metrics',
+      status: 'available',
+    })
+
+    const response = await client
+      .post('/api/v1/agent/telemetry')
+      .header('Authorization', `Bearer ${machine.token}`)
+      .json({
+        data: [
+          {
+            timestamp: new Date().toISOString(),
+            cpuUsage: 120,
+            cpuTemp: null,
+            gpuUsage: null,
+            gpuTemp: null,
+            ramTotalGb: 320,
+            ramUsedGb: 80,
+            processes: [
+              {
+                pid: 42,
+                name: 'bash',
+                username: 'lab.aluno',
+                cpuPercent: 50,
+                ramMb: 128,
+              },
+            ],
+          },
+        ],
+      })
+
+    response.assertStatus(204)
+  })
 
   test('allowHomeMigration quando reserva antiga em no_key e nova active em outro disco', async ({
     client,

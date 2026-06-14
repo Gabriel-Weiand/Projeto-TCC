@@ -30,11 +30,14 @@ export default class extends BaseSchema {
       // RAM/VRAM: inteiro ×10 (ex.: 15,5 GB → 155; 12,0 GB VRAM → 120)
       table.integer('total_vram_gb').unsigned().nullable()
       table.integer('total_ram_gb').unsigned().nullable()
+      /** Capacidade total de disco (spec wire GB×10) — distinta da soma de partições. */
+      table.integer('total_disk_gb').unsigned().nullable()
 
       // Convertido para JSONB para alta performance e portabilidade
       table.jsonb('disks').nullable()
 
       // Identificador de Rede
+      /** IP local — preenchido pelo agente (sync) se vazio; admin pode editar/limpar. */
       table.string('ip_address', 45).nullable()
       /** null = porta SSH padrão 22 */
       table.smallint('ssh_port').unsigned().nullable()
@@ -52,6 +55,7 @@ export default class extends BaseSchema {
       table.jsonb('current_sessions').nullable()
 
       table.boolean('only_main_disk').notNullable().defaultTo(false)
+      /** IP alternativo — somente admin (NAT/DNS externo); agente não envia. */
       table.string('public_ip_address', 45).nullable()
 
       table.timestamp('created_at')

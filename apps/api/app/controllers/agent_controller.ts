@@ -8,7 +8,8 @@ import { resolveMachineIntervalSeconds } from '#services/telemetry_presets'
 import { machineCache } from '#services/machine_cache'
 import HeartbeatService from '#services/heartbeat_service'
 import Allocation from '#models/allocation'
-import { enrichDiskPartitions, mergeDiskPartitionsFromAgent } from '#services/disk_partitions'
+import { mergeDiskPartitionsFromTelemetry } from '#services/disk_partitions'
+import { applySyncSpecsIfEmpty } from '#services/machine_specs_merge'
 
 export default class AgentController {
   async heartbeat({ authenticatedMachine, request, response }: HttpContext) {
@@ -32,12 +33,7 @@ export default class AgentController {
     const machine = authenticatedMachine!
     const data = await request.validateUsing(syncSpecsValidator)
 
-    const { disks, ...machineData } = data as any
-    machine.merge(machineData)
-
-    if (disks !== undefined && Array.isArray(disks)) {
-      machine.disks = mergeDiskPartitionsFromAgent(disks, machine.disks)
-    }
+    applySyncSpecsIfEmpty(machine, data)
 
     await machine.save()
     machineCache.invalidate(machine.token)
@@ -51,6 +47,7 @@ export default class AgentController {
         gpuModel: machine.gpuModel,
         totalVramGb: machine.totalVramGb,
         totalRamGb: machine.totalRamGb,
+        totalDiskGb: machine.totalDiskGb,
       },
     })
   }
@@ -97,9 +94,16 @@ export default class AgentController {
 
     telemetryBuffer.recordBatch(machine.id, batchPayload)
 
-    // 3. Atualiza presença do agente
+    // 3. Atualiza presença e capacidade de partições (última amostra do lote com disksInfo)
     machine.lastSeenAt = DateTime.now()
+    const latestDisksSample = [...batchPayload]
+      .reverse()
+      .find((item) => Array.isArray(item.disksInfo) && item.disksInfo.length > 0)
+    if (latestDisksSample?.disksInfo) {
+      machine.disks = mergeDiskPartitionsFromTelemetry(latestDisksSample.disksInfo, machine.disks)
+    }
     await machine.save()
+    machineCache.invalidate(machine.token)
 
     return response.noContent()
   }

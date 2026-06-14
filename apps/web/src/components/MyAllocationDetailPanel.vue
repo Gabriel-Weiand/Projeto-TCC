@@ -183,7 +183,7 @@ function machineDescription(desc?: string | null) {
                 </dd>
               </div>
               <div v-if="machine.ipAddress" class="detail-row">
-                <dt>IP</dt>
+                <dt>IP local</dt>
                 <dd><code class="detail-code">{{ machine.ipAddress }}</code></dd>
               </div>
               <div v-if="machine.cpuModel" class="detail-row">

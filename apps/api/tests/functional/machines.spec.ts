@@ -177,6 +177,69 @@ test.group('Machines', (group) => {
     })
   })
 
+  test('admin deve editar specs de hardware com conversão GB wire', async ({ client, assert }) => {
+    const admin = await User.create({
+      fullName: 'Admin Specs',
+      email: 'admin-specs@teste.com',
+      password: 'senha123',
+      role: 'admin',
+    })
+
+    const machine = await Machine.create({
+      name: 'PC-SPECS',
+      description: 'Lab',
+      status: 'available',
+    })
+
+    const response = await client.put(`/api/v1/machines/${machine.id}`).loginAs(admin).json({
+      cpuModel: 'Intel Core i7-11700',
+      gpuModel: 'NVIDIA RTX 4090 D',
+      totalRamGb: 48,
+      totalVramGb: 24,
+      totalDiskGb: 2480,
+      ipAddress: 'arendt.lab.local',
+    })
+
+    response.assertStatus(200)
+    response.assertBodyContains({
+      cpuModel: 'Intel Core i7-11700',
+      gpuModel: 'NVIDIA RTX 4090 D',
+      totalRamGb: 48,
+      totalVramGb: 24,
+      totalDiskGb: 2480,
+      ipAddress: 'arendt.lab.local',
+    })
+
+    await machine.refresh()
+    assert.equal(machine.totalRamGb, 480)
+    assert.equal(machine.totalVramGb, 240)
+    assert.equal(machine.totalDiskGb, 24800)
+  })
+
+  test('admin pode limpar cpuModel para permitir novo sync', async ({ client, assert }) => {
+    const admin = await User.create({
+      fullName: 'Admin Clear',
+      email: 'admin-clear@teste.com',
+      password: 'senha123',
+      role: 'admin',
+    })
+
+    const machine = await Machine.create({
+      name: 'PC-CLEAR',
+      description: 'Lab',
+      cpuModel: 'Manual CPU',
+      status: 'available',
+    })
+
+    const response = await client.put(`/api/v1/machines/${machine.id}`).loginAs(admin).json({
+      cpuModel: null,
+    })
+
+    response.assertStatus(200)
+    await machine.refresh()
+    assert.isNull(machine.cpuModel)
+  })
+
   test('status efetivo: alocação ativa marca máquina como ocupada', async ({
     client,
     assert,

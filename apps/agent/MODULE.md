@@ -370,7 +370,7 @@ Gatilho on-demand (`POST /machines/:id/request-processes`) dispara 5 batches ext
 
 | Campo | Wire | Descrição |
 |-------|------|-----------|
-| `cpuPercent` | int ×10 | Uso de CPU do processo |
+| `cpuPercent` | int ×10 | % da capacidade total do host (psutil bruto ÷ CPUs lógicas) |
 | `ramMb` | int | RAM RSS em MB |
 | `vramMb` | int | VRAM em MB (NVIDIA via nvitop) |
 | `gpuUse` | int ×10 | Uso SM da GPU (NVIDIA via nvitop; modelos antigos podem retornar 0) |

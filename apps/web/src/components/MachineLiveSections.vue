@@ -1,9 +1,10 @@
 <script setup lang="ts">
-import { ref } from "vue";
+import { ref, computed } from "vue";
 import type { Machine, RealtimeTelemetry } from "@/types";
 import {
   diskPartitionKey,
   diskUsedPct as diskUsedPctUtil,
+  mergeDiskPartitionsWithTelemetry,
   partitionRoleLabel,
   sortDisksBySize,
 } from "@/utils/machineDisks";
@@ -12,7 +13,7 @@ import MachineIdleHistoryChart from "@/components/MachineIdleHistoryChart.vue";
 import MachineLiveProcessSection from "@/components/MachineLiveProcessSection.vue";
 import type { TelemetryProcessSnapshot } from "@/types";
 
-withDefaults(
+const props = withDefaults(
   defineProps<{
     machine: Machine;
     machineId: number;
@@ -27,6 +28,13 @@ withDefaults(
     latestProcessBatchTimestamp?: string | null;
   }>(),
   { showTelemetry: true, showCharts: false, showProcesses: false },
+);
+
+const displayDisks = computed(() =>
+  mergeDiskPartitionsWithTelemetry(
+    props.machine.disks ?? [],
+    props.liveData?.disksInfo as Parameters<typeof mergeDiskPartitionsWithTelemetry>[1],
+  ),
 );
 
 const telemetryCollapsed = ref(false);
@@ -109,8 +117,8 @@ function fmtTempLine(val: number | null | undefined): string {
   return `${val.toFixed(1)} °C`;
 }
 
-function diskUsedPct(total: number | null, free: number | null): number {
-  return diskUsedPctUtil(total, free);
+function diskUsedPct(total: number | null, free: number | null, usagePct?: number | null): number {
+  return diskUsedPctUtil(total, free, usagePct);
 }
 </script>
 
@@ -286,7 +294,7 @@ function diskUsedPct(total: number | null, free: number | null): number {
     />
 
     <CollapsibleSection
-      v-if="machine.disks && machine.disks.length > 0"
+      v-if="displayDisks.length > 0"
       v-model:collapsed="disksCollapsed"
       title="Partições"
     >
@@ -302,7 +310,7 @@ function diskUsedPct(total: number | null, free: number | null): number {
           <span class="disk-col bar-col">Uso</span>
         </div>
         <div
-          v-for="(d, i) in sortDisksBySize(machine.disks)"
+          v-for="(d, i) in sortDisksBySize(displayDisks)"
           :key="diskPartitionKey(d, i)"
           class="disk-row-detail"
         >
@@ -340,23 +348,23 @@ function diskUsedPct(total: number | null, free: number | null): number {
           >
             {{ fmtGb(d.freeGb) }}
           </span>
-          <span class="disk-col size-col">{{ fmtGb(d.totalGb) }}</span>
+            <span class="disk-col size-col">{{ fmtGb(d.totalGb) }}</span>
           <span class="disk-col bar-col">
             <div class="disk-bar-track">
               <div
                 class="disk-bar-fill"
                 :style="{
-                  width: diskUsedPct(d.totalGb, d.freeGb) + '%',
+                  width: diskUsedPct(d.totalGb, d.freeGb, d.usagePct) + '%',
                   background:
-                    diskUsedPct(d.totalGb, d.freeGb) > 90
+                    diskUsedPct(d.totalGb, d.freeGb, d.usagePct) > 90
                       ? 'var(--danger)'
-                      : diskUsedPct(d.totalGb, d.freeGb) > 70
+                      : diskUsedPct(d.totalGb, d.freeGb, d.usagePct) > 70
                         ? 'var(--warning)'
                         : 'var(--success)',
                 }"
               ></div>
             </div>
-            <span class="disk-pct-label">{{ diskUsedPct(d.totalGb, d.freeGb) }}%</span>
+            <span class="disk-pct-label">{{ diskUsedPct(d.totalGb, d.freeGb, d.usagePct) }}%</span>
           </span>
         </div>
       </div>

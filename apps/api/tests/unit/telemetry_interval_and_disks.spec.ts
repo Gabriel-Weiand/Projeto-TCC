@@ -8,6 +8,9 @@ import {
   enrichDiskPartitions,
   listAllocatableDiskMountpoints,
   mergeDiskPartitionsFromAgent,
+  mergeAdminDiskPolicyUpdate,
+  sanitizeDiskCapacities,
+  diskUsagePercent,
   normalizeAllocationHomeMount,
   resolveDefaultAllocationHomeMount,
   resolveMainDiskMountpoint,
@@ -171,6 +174,63 @@ test.group('Disk partitions', () => {
       { device: 'sdc1', mountpoint: '/data', role: 'user', mainDisk: true, allocatable: true },
     ])
     assert.equal(resolveDefaultAllocationHomeMount(disks2, false), '/data')
+  })
+
+  test('sanitizeDiskCapacities limita free ao total (arredondamento EFI)', async ({
+    assert,
+  }) => {
+    const { totalGb, freeGb } = sanitizeDiskCapacities(1.0, 1.04)
+    assert.equal(totalGb, 1.0)
+    assert.equal(freeGb, 1.0)
+    assert.equal(diskUsagePercent(1.0, 1.04), 0)
+    assert.equal(diskUsagePercent(1.0, 1.04, 0), 0)
+  })
+
+  test('diskUsagePercent limita entre 0 e 100', async ({ assert }) => {
+    assert.equal(diskUsagePercent(100, -5), 0)
+    assert.equal(diskUsagePercent(100, 150), 0)
+    assert.equal(diskUsagePercent(100, 0), 100)
+    assert.equal(diskUsagePercent(100, 50, 1050), 100)
+  })
+
+  test('mergeAdminDiskPolicyUpdate preserva capacidade e altera só política', async ({
+    assert,
+  }) => {
+    const existing = enrichDiskPartitions([
+      {
+        device: 'sdb1',
+        mountpoint: '/',
+        role: 'user',
+        mainDisk: true,
+        totalGb: 480,
+        freeGb: 102,
+        allocatable: true,
+      },
+      {
+        device: 'sdc1',
+        mountpoint: '/data',
+        role: 'user',
+        totalGb: 1000,
+        freeGb: 500,
+        allocatable: true,
+      },
+    ])
+
+    const merged = mergeAdminDiskPolicyUpdate(
+      [
+        { mountpoint: '/', mainDisk: false, allocatable: true },
+        { mountpoint: '/data', mainDisk: true, allocatable: true },
+      ],
+      existing
+    )
+
+    const root = merged.find((d) => d.mountpoint === '/')
+    const data = merged.find((d) => d.mountpoint === '/data')
+    assert.equal(root?.totalGb, 480)
+    assert.equal(root?.freeGb, 102)
+    assert.isFalse(root?.mainDisk)
+    assert.isTrue(data?.mainDisk)
+    assert.equal(data?.totalGb, 1000)
   })
 
   test('mergeDiskPartitionsFromAgent preserva allocatable admin', async ({ assert }) => {

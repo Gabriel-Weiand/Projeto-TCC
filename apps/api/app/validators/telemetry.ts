@@ -1,13 +1,14 @@
 import vine from '@vinejs/vine'
+import { TELEMETRY_PROCESS_CPU_PERCENT_WIRE_MAX } from '#services/telemetry_presets'
 
 const processSchema = vine.object({
   pid: vine.number().positive(),
   name: vine.string().maxLength(128),
   username: vine.string().maxLength(64),
-  cpuPercent: vine.number().min(0).max(1000), // * 10
+  cpuPercent: vine.number().min(0).max(TELEMETRY_PROCESS_CPU_PERCENT_WIRE_MAX), // % do host × 10
   ramMb: vine.number().min(0),
-  vramMb: vine.number().min(0).optional(),
-  gpuUse: vine.number().min(0).max(1000).optional(), // * 10, NVIDIA via nvitop
+  vramMb: vine.number().min(0).nullable().optional(),
+  gpuUse: vine.number().min(0).max(1000).nullable().optional(), // * 10, NVIDIA via nvitop
   diskReadKbps: vine.number().min(0).optional(),
   diskWriteKbps: vine.number().min(0).optional(),
 })

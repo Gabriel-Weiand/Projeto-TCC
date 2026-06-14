@@ -6,9 +6,10 @@ export type DiskPartitionRecord = {
   fstype?: string | null
   totalGb?: number | null
   freeGb?: number | null
+  /** Uso wire ×10 (telemetria); opcional. */
+  usagePct?: number | null
   role?: DiskPartitionRole
   mainDisk?: boolean
-  /** Admin: volume aparece no dropdown de reserva (default true em discos user). */
   allocatable?: boolean
 }
 
@@ -98,7 +99,53 @@ export function enrichDiskPartitions(disks: unknown): DiskPartitionRecord[] {
   return finalizeDiskPartitions(mapped)
 }
 
-/** Mescla flags admin (`mainDisk`, `allocatable`) ao atualizar specs do agente. */
+function parseIncomingGb(value: unknown): number | null {
+  if (value == null) return null
+  const n = Number(value)
+  return !Number.isNaN(n) ? n : null
+}
+
+/** Garante free ≤ total e valores não negativos (evita % negativo por arredondamento). */
+export function sanitizeDiskCapacities(
+  totalGb: number | null | undefined,
+  freeGb: number | null | undefined
+): { totalGb: number | null; freeGb: number | null } {
+  let total = totalGb ?? null
+  let free = freeGb ?? null
+  if (total != null && total < 0) total = null
+  if (free != null && free < 0) free = null
+  if (total != null && free != null && free > total) free = total
+  return { totalGb: total, freeGb: free }
+}
+
+/** Percentual de uso 0–100 a partir de capacidades ou usagePct wire (×10) do agente. */
+export function diskUsagePercent(
+  totalGb: number | null | undefined,
+  freeGb: number | null | undefined,
+  usagePctWire?: number | null
+): number {
+  if (usagePctWire != null && Number.isFinite(Number(usagePctWire))) {
+    const pct = Number(usagePctWire) / 10
+    return Math.min(100, Math.max(0, Math.round(pct)))
+  }
+  const { totalGb: total, freeGb: free } = sanitizeDiskCapacities(totalGb, freeGb)
+  if (total == null || total <= 0 || free == null) return 0
+  const raw = ((total - free) / total) * 100
+  return Math.min(100, Math.max(0, Math.round(raw)))
+}
+
+/** Deriva total a partir de livre + usagePct (wire ×10) quando total não veio no payload. */
+function deriveTotalGbFromUsage(
+  freeGb: number | null,
+  usagePctWire: unknown
+): number | null {
+  if (freeGb == null || usagePctWire == null) return null
+  const pct = Number(usagePctWire) / 10
+  if (!Number.isFinite(pct) || pct < 0 || pct >= 100) return null
+  return Math.round((freeGb / (1 - pct / 100)) * 10) / 10
+}
+
+/** Mescla flags admin (`mainDisk`, `allocatable`) ao atualizar specs/telemetria do agente. */
 export function mergeDiskPartitionsFromAgent(
   incoming: unknown,
   existing: unknown
@@ -115,14 +162,30 @@ export function mergeDiskPartitionsFromAgent(
   const merged = incoming.map((raw, index) => {
     const d = raw as Record<string, unknown>
     const mountpoint = String(d.mountpoint ?? '')
-    const role = classifyDiskPartitionRole(mountpoint)
+    const role =
+      (d.role as DiskPartitionRole | undefined) ??
+      classifyDiskPartitionRole(mountpoint)
     const prev = prevByMount.get(mountpoint)
+    prevByMount.delete(mountpoint)
+
+    const incomingFree = parseIncomingGb(d.freeGb)
+    const incomingTotal = parseIncomingGb(d.totalGb)
+    const derivedTotal = deriveTotalGbFromUsage(incomingFree, d.usagePct)
+    const { totalGb, freeGb } = sanitizeDiskCapacities(
+      incomingTotal ?? derivedTotal ?? prev?.totalGb ?? null,
+      incomingFree ?? prev?.freeGb ?? null
+    )
+    const usagePctWire = d.usagePct != null ? Number(d.usagePct) : null
+    const usagePct =
+      usagePctWire != null && !Number.isNaN(usagePctWire) ? usagePctWire : (prev?.usagePct ?? null)
+
     return {
       device: String(d.device ?? prev?.device ?? `disk-${index}`),
       mountpoint,
       fstype: (d.fstype as string | null | undefined) ?? prev?.fstype ?? null,
-      totalGb: d.totalGb != null ? Number(d.totalGb) : (prev?.totalGb ?? null),
-      freeGb: d.freeGb != null ? Number(d.freeGb) : (prev?.freeGb ?? null),
+      totalGb,
+      freeGb,
+      usagePct,
       role,
       mainDisk: prev?.mainDisk ?? false,
       allocatable:
@@ -130,7 +193,58 @@ export function mergeDiskPartitionsFromAgent(
     }
   })
 
-  return finalizeDiskPartitions(merged)
+  const leftovers = Array.from(prevByMount.values())
+  return finalizeDiskPartitions([...merged, ...leftovers])
+}
+
+/**
+ * Atualiza livre/total a partir de disksInfo da telemetria.
+ * Preserva device/fstype/role e flags admin (mainDisk, allocatable).
+ */
+export function mergeDiskPartitionsFromTelemetry(
+  disksInfo: unknown,
+  existing: unknown
+): DiskPartitionRecord[] {
+  if (!Array.isArray(disksInfo) || disksInfo.length === 0) {
+    return enrichDiskPartitions(existing)
+  }
+  return mergeDiskPartitionsFromAgent(disksInfo, existing)
+}
+
+/**
+ * Admin só altera política (mainDisk, allocatable). Capacidade vem do agente.
+ */
+export function mergeAdminDiskPolicyUpdate(
+  incoming: unknown,
+  existing: unknown
+): DiskPartitionRecord[] {
+  const prevByMount = new Map(enrichDiskPartitions(existing).map((d) => [d.mountpoint, d]))
+  if (!Array.isArray(incoming)) {
+    return finalizeDiskPartitions(Array.from(prevByMount.values()))
+  }
+
+  const merged: DiskPartitionRecord[] = []
+  for (const raw of incoming) {
+    const d = raw as Record<string, unknown>
+    const mountpoint = String(d.mountpoint ?? '')
+    const prev = prevByMount.get(mountpoint)
+    if (!prev) continue
+    prevByMount.delete(mountpoint)
+
+    const mainDisk = prev.role === 'user' ? Boolean(d.mainDisk) : false
+    merged.push({
+      ...prev,
+      mainDisk,
+      allocatable:
+        prev.role === 'user'
+          ? mainDisk
+            ? true
+            : d.allocatable !== false
+          : false,
+    })
+  }
+
+  return finalizeDiskPartitions([...merged, ...prevByMount.values()])
 }
 
 /** Partições de user-space elegíveis para alocação. */

@@ -143,6 +143,7 @@ export default class extends BaseSeeder {
         gpuModel: machine.gpuModel,
         totalVramGb: machine.totalVramGb,
         totalRamGb: machine.totalRamGb,
+        totalDiskGb: machine.disksGb[0]! * 10,
         ipAddress: machine.anyDeskOnly ? null : mockSshHost(machine.name),
         sshPort: machine.anyDeskOnly ? null : 50000,
         hostFingerprint: hostFingerprint(machine.name),

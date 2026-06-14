@@ -32,6 +32,11 @@ const editTabs = [
 const form = reactive({
   name: "",
   description: "",
+  cpuModel: "",
+  gpuModel: "",
+  totalRamGb: "",
+  totalVramGb: "",
+  totalDiskGb: "",
   ipAddress: "",
   publicIpAddress: "",
   sshPort: "",
@@ -62,9 +67,21 @@ function resolveOperationalMode(m: Machine): MachineOperationalMode {
   return "available";
 }
 
+function parseOptionalGb(raw: string): number | null {
+  const trimmed = raw.trim();
+  if (!trimmed) return null;
+  const n = Number.parseFloat(trimmed.replace(",", "."));
+  return Number.isFinite(n) ? n : null;
+}
+
 function loadForm(m: Machine) {
   form.name = m.name;
   form.description = m.description || "";
+  form.cpuModel = m.cpuModel || "";
+  form.gpuModel = m.gpuModel || "";
+  form.totalRamGb = m.totalRamGb != null ? String(m.totalRamGb) : "";
+  form.totalVramGb = m.totalVramGb != null ? String(m.totalVramGb) : "";
+  form.totalDiskGb = m.totalDiskGb != null ? String(m.totalDiskGb) : "";
   form.ipAddress = m.ipAddress || "";
   form.publicIpAddress = m.publicIpAddress || "";
   form.sshPort = m.sshPort != null ? String(m.sshPort) : "";
@@ -128,6 +145,11 @@ async function handleSave() {
     const payload: Record<string, unknown> = {
       name: form.name.trim(),
       description: form.description.trim(),
+      cpuModel: form.cpuModel.trim() || null,
+      gpuModel: form.gpuModel.trim() || null,
+      totalRamGb: parseOptionalGb(form.totalRamGb),
+      totalVramGb: parseOptionalGb(form.totalVramGb),
+      totalDiskGb: parseOptionalGb(form.totalDiskGb),
       ipAddress: form.ipAddress.trim() || null,
       publicIpAddress: form.publicIpAddress.trim() || null,
       sshPort: parseSshPortInput(form.sshPort),
@@ -208,26 +230,82 @@ function copyToken() {
                 <label class="field-label">Descrição</label>
                 <textarea v-model="form.description" class="field-textarea" rows="2" />
               </div>
+
+              <div class="hardware-section">
+                <h3 class="section-subtitle">Hardware (specs)</h3>
+                <p class="field-hint text-muted hardware-hint">
+                  Campos vazios são preenchidos pelo agente no sync-specs. Valores salvos aqui
+                  não são sobrescritos — limpe o campo para permitir nova detecção.
+                </p>
+                <div class="hardware-grid">
+                  <div class="field">
+                    <label class="field-label">CPU</label>
+                    <input
+                      v-model="form.cpuModel"
+                      type="text"
+                      placeholder="Ex.: Intel Core i7-11700"
+                    />
+                  </div>
+                  <div class="field">
+                    <label class="field-label">GPU</label>
+                    <input
+                      v-model="form.gpuModel"
+                      type="text"
+                      placeholder="Ex.: NVIDIA RTX 4090 D"
+                    />
+                  </div>
+                  <div class="field">
+                    <label class="field-label">RAM (GB)</label>
+                    <input
+                      v-model="form.totalRamGb"
+                      type="text"
+                      inputmode="decimal"
+                      placeholder="Ex.: 48"
+                    />
+                  </div>
+                  <div class="field">
+                    <label class="field-label">VRAM (GB)</label>
+                    <input
+                      v-model="form.totalVramGb"
+                      type="text"
+                      inputmode="decimal"
+                      placeholder="Ex.: 24"
+                    />
+                  </div>
+                  <div class="field">
+                    <label class="field-label">Disco (GB)</label>
+                    <input
+                      v-model="form.totalDiskGb"
+                      type="text"
+                      inputmode="decimal"
+                      placeholder="Ex.: 2480"
+                    />
+                  </div>
+                </div>
+              </div>
+
               <div class="field">
                 <label class="field-label">IP local</label>
                 <input
                   v-model="form.ipAddress"
                   type="text"
-                  placeholder="Capturado pelo agente / rede local"
+                  placeholder="Ex.: arendt.lab.local"
                 />
                 <p class="field-hint text-muted">
-                  Endereço na rede local reportado pelo parque (não é IP público).
+                  Preenchido pelo agente no sync se vazio. Valor salvo aqui não é sobrescrito —
+                  limpe o campo para permitir nova detecção.
                 </p>
               </div>
               <div class="field">
-                <label class="field-label">IP público</label>
+                <label class="field-label">IP alternativo</label>
                 <input
                   v-model="form.publicIpAddress"
                   type="text"
-                  placeholder="Ex.: IP do NAT ou DNS público"
+                  placeholder="Ex.: NAT, DNS ou rota externa"
                 />
                 <p class="field-hint text-muted">
-                  Opcional — usado para orientar conexões externas ao laboratório.
+                  Somente admin — não é obtido pelo agente. Opcional, para orientar conexões
+                  externas ao laboratório.
                 </p>
               </div>
               <div class="field">
@@ -360,6 +438,37 @@ function copyToken() {
   flex-direction: column;
   gap: 1rem;
   max-width: 720px;
+}
+
+.hardware-section {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+  padding: 1rem 0;
+  border-top: 1px solid var(--border-subtle);
+  border-bottom: 1px solid var(--border-subtle);
+}
+
+.section-subtitle {
+  margin: 0;
+  font-size: 0.95rem;
+  font-weight: 600;
+}
+
+.hardware-hint {
+  margin: 0;
+}
+
+.hardware-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 1rem;
+}
+
+@media (max-width: 640px) {
+  .hardware-grid {
+    grid-template-columns: 1fr;
+  }
 }
 
 .form-actions {

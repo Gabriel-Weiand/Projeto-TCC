@@ -61,6 +61,12 @@ export const DEFAULT_PROCESS_CAPTURE_CONFIG: ProcessCaptureConfig = {
 /** Limite máximo de processos retornados por amostra (preset ou personalizado). */
 export const TELEMETRY_PROCESS_CAPTURE_TOP_X_MAX = 100
 
+/**
+ * cpuPercent de processo no wire format (% da capacidade total do host × 10).
+ * O agente normaliza o valor bruto do psutil (soma por núcleo) antes de enviar.
+ */
+export const TELEMETRY_PROCESS_CPU_PERCENT_WIRE_MAX = 1000
+
 /** Métricas que o agente suporta coletar. */
 export const FULL_TELEMETRY_SET: TelemetrySetConfig = {
   cpu: true,

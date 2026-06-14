@@ -86,6 +86,49 @@ export function formatDiskOptionLabel(
   return size ? `${mountpoint} (${size})${main}` : `${mountpoint}${main}`;
 }
 
+export function mergeDiskPartitionsWithTelemetry(
+  base: DiskPartition[] | null | undefined,
+  telemetry:
+    | Array<{
+        mountpoint?: string
+        freeGb?: number | null
+        totalGb?: number | null
+        usagePct?: number | null
+      }>
+    | null
+    | undefined,
+): DiskPartition[] {
+  if (!base?.length) return []
+  if (!telemetry?.length) return base
+
+  const byMount = new Map(
+    telemetry.filter((t) => t.mountpoint).map((t) => [String(t.mountpoint), t]),
+  )
+
+  return base.map((d) => {
+    const t = byMount.get(d.mountpoint)
+    if (!t) return d
+
+    let totalGb = t.totalGb ?? d.totalGb ?? null
+    let freeGb = t.freeGb ?? d.freeGb ?? null
+
+    if ((totalGb == null || totalGb <= 0) && freeGb != null && t.usagePct != null) {
+      const pct = Number(t.usagePct) / 10
+      if (Number.isFinite(pct) && pct >= 0 && pct < 100) {
+        totalGb = Math.round((freeGb / (1 - pct / 100)) * 10) / 10
+      }
+    }
+
+    const sanitized = sanitizeDiskCapacities(totalGb, freeGb)
+    return {
+      ...d,
+      totalGb: sanitized.totalGb,
+      freeGb: sanitized.freeGb,
+      usagePct: t.usagePct ?? d.usagePct ?? null,
+    }
+  })
+}
+
 export function partitionRoleLabel(role: DiskPartition["role"]): string {
   return role === "system" ? "Sistema" : "Usuário";
 }
@@ -100,9 +143,31 @@ export function getLargestDisk(
   );
 }
 
-export function diskUsedPct(total: number | null, free: number | null): number {
-  if (!total || total <= 0 || free == null) return 0;
-  return Math.round(((total - free) / total) * 100);
+export function diskUsedPct(
+  total: number | null,
+  free: number | null,
+  usagePctWire?: number | null,
+): number {
+  if (usagePctWire != null && Number.isFinite(Number(usagePctWire))) {
+    const pct = Number(usagePctWire) / 10
+    return Math.min(100, Math.max(0, Math.round(pct)))
+  }
+  if (total == null || total <= 0 || free == null) return 0
+  const freeClamped = Math.min(Math.max(0, free), total)
+  const raw = ((total - freeClamped) / total) * 100
+  return Math.min(100, Math.max(0, Math.round(raw)))
+}
+
+function sanitizeDiskCapacities(
+  totalGb: number | null | undefined,
+  freeGb: number | null | undefined,
+): { totalGb: number | null; freeGb: number | null } {
+  let total = totalGb ?? null
+  let free = freeGb ?? null
+  if (total != null && total < 0) total = null
+  if (free != null && free < 0) free = null
+  if (total != null && free != null && free > total) free = total
+  return { totalGb: total, freeGb: free }
 }
 
 export function sortDisksBySize(disks: DiskPartition[]): DiskPartition[] {

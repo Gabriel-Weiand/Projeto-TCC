@@ -5,9 +5,12 @@ import CollapsibleSection from "@/components/CollapsibleSection.vue";
 import ProcessTelemetryTable from "@/components/process/ProcessTelemetryTable.vue";
 import {
   PROCESS_SNAPSHOT_SORT_OPTIONS,
+  PROCESS_USER_SCOPE_OPTIONS,
+  filterProcessesByUserScope,
   sortProcessSnapshots,
   type ProcessSortDir,
   type ProcessSortKey,
+  type ProcessUserScope,
 } from "@/utils/processTelemetry";
 
 const props = defineProps<{
@@ -18,10 +21,16 @@ const props = defineProps<{
 const collapsed = ref(false);
 const sortKey = ref<ProcessSortKey>("cpuPercent");
 const sortDir = ref<ProcessSortDir>("desc");
+const userScope = ref<ProcessUserScope>("all");
+
+const filteredProcesses = computed(() => {
+  if (!props.processes?.length) return [];
+  return filterProcessesByUserScope(props.processes, userScope.value);
+});
 
 const sortedProcesses = computed(() => {
-  if (!props.processes?.length) return [];
-  return sortProcessSnapshots(props.processes, sortKey.value, sortDir.value);
+  if (!filteredProcesses.value.length) return [];
+  return sortProcessSnapshots(filteredProcesses.value, sortKey.value, sortDir.value);
 });
 
 function formatBatchTime(iso: string | null): string {
@@ -46,9 +55,24 @@ function formatBatchTime(iso: string | null): string {
     <div class="process-toolbar">
       <p class="process-meta text-secondary">
         Último lote · {{ formatBatchTime(batchTimestamp) }}
-        <span v-if="processes?.length"> · {{ processes.length }} processo(s)</span>
+        <span v-if="processes?.length">
+          · {{ sortedProcesses.length }} processo(s)
+          <template v-if="userScope !== 'all'"> (de {{ processes.length }})</template>
+        </span>
       </p>
       <div class="process-controls">
+        <label class="process-field">
+          <span class="process-label">Usuário</span>
+          <select v-model="userScope" class="process-select">
+            <option
+              v-for="option in PROCESS_USER_SCOPE_OPTIONS"
+              :key="option.value"
+              :value="option.value"
+            >
+              {{ option.label }}
+            </option>
+          </select>
+        </label>
         <label class="process-field">
           <span class="process-label">Ordenar por</span>
           <select v-model="sortKey" class="process-select">

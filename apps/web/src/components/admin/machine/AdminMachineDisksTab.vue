@@ -86,8 +86,9 @@ const userDisks = () => disks.value.filter((d) => (d.role ?? "user") === "user")
 <template>
   <div class="disks-tab">
     <p class="tab-hint text-secondary">
-      Partições sincronizadas pelo agente. Defina o <strong>disco principal</strong>,
-      quais volumes aparecem na reserva e se alocações ficam restritas ao principal.
+      Capacidade (livre/total) é capturada pelo agente via sync-specs e telemetria — não editável
+      aqui. Defina o <strong>disco principal</strong>, quais volumes aparecem na reserva e se
+      alocações ficam restritas ao principal.
     </p>
 
     <div class="policy-mode-grid">
@@ -137,8 +138,11 @@ const userDisks = () => disks.value.filter((d) => (d.role ?? "user") === "user")
             {{ partitionRoleLabel(d.role) }}
           </span>
         </span>
-        <span class="disk-policy-cell text-secondary">
-          {{ d.freeGb != null ? `${d.freeGb} / ${d.totalGb ?? "—"} GB` : "—" }}
+        <span class="disk-policy-cell text-secondary capacity-cell">
+          <span>{{ d.freeGb != null ? `${d.freeGb} GB livre` : "— livre" }}</span>
+          <span class="capacity-total-readonly">
+            {{ d.totalGb != null ? `${d.totalGb} GB total` : "— total" }}
+          </span>
         </span>
         <span class="disk-policy-cell disk-policy-cell--action">
           <label
@@ -306,6 +310,15 @@ const userDisks = () => disks.value.filter((d) => (d.role ?? "user") === "user")
 .disk-policy-row code {
   display: block;
   font-size: 0.8rem;
+}
+
+.capacity-cell {
+  gap: 0.2rem;
+  font-size: 0.78rem;
+}
+
+.capacity-total-readonly {
+  color: var(--text-muted);
 }
 
 .disk-control-toggle {

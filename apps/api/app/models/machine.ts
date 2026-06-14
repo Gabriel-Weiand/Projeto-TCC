@@ -3,7 +3,6 @@ import {
   BaseModel,
   column,
   beforeCreate,
-  computed,
   hasMany,
   manyToMany,
   belongsTo,
@@ -50,6 +49,10 @@ export default class Machine extends BaseModel {
   @column()
   declare totalRamGb: number | null
 
+  /** Disco total wire GB×10 (spec da máquina; não é soma de partições) */
+  @column()
+  declare totalDiskGb: number | null
+
   // JSON stored as text in DB (column name: 'disks').
   @column({
     prepare: (value: any) => JSON.stringify(value),
@@ -57,10 +60,11 @@ export default class Machine extends BaseModel {
   })
   declare disks: any[] | null
 
+  /** IP local — sync do agente preenche se vazio; admin pode editar/limpar. */
   @column()
   declare ipAddress: string | null
 
-  /** IP público (NAT/port-forward) definido pelo admin; distinto do IP local do agente. */
+  /** IP alternativo (NAT/DNS externo) — somente admin; agente não sincroniza. */
   @column()
   declare publicIpAddress: string | null
 
@@ -123,15 +127,6 @@ export default class Machine extends BaseModel {
     pivotColumns: ['os_username', 'provisioned_at', 'last_active_at', 'access_type'],
   })
   declare provisionedUsers: ManyToMany<typeof User>
-
-  /** Computed: soma dos `totalGb` das partições (ou null se não houver dados) */
-  @computed()
-  public get totalDiskGb(): number | null {
-    const arr = this.disks as Array<any>
-    if (!arr || arr.length === 0) return null
-    const sum = arr.reduce((acc, d) => acc + Number(d?.totalGb ?? 0), 0)
-    return Math.round(sum * 10) / 10
-  }
 
   // --- GERAÇÃO AUTOMÁTICA DA API KEY ---
   @beforeCreate()

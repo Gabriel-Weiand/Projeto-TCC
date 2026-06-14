@@ -13,12 +13,12 @@ export default class Telemetry extends BaseModel {
   @column()
   declare timestamp: string
 
-  // --- HARDWARE (Escala 0-1000) ---
-  @column() declare cpuUsage: number
-  @column() declare cpuTemp: number
+  // --- HARDWARE (Escala 0-1000) — null = métrica não coletada nesta amostra ---
+  @column() declare cpuUsage: number | null
+  @column() declare cpuTemp: number | null
   @column() declare cpuFreqMhz: number | null // MHz inteiro, opcional
-  @column() declare gpuUsage: number
-  @column() declare gpuTemp: number
+  @column() declare gpuUsage: number | null
+  @column() declare gpuTemp: number | null
   @column() declare gpuPowerWatts: number | null
   @column() declare vramTotalGb: number | null
   @column() declare vramUsedGb: number | null

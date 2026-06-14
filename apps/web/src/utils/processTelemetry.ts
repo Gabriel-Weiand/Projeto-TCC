@@ -25,6 +25,28 @@ export type ProcessSortKey =
 
 export type ProcessSortDir = "asc" | "desc";
 
+/** Filtro client-side por tipo de conta do processo (prefixo lab.* = usuário de laboratório). */
+export type ProcessUserScope = "all" | "lab" | "system";
+
+export const PROCESS_USER_SCOPE_OPTIONS: { value: ProcessUserScope; label: string }[] = [
+  { value: "all", label: "Todos" },
+  { value: "lab", label: "Usuário lab." },
+  { value: "system", label: "Sistema" },
+];
+
+export function isLabProcessUsername(username: string): boolean {
+  return username.startsWith("lab.");
+}
+
+export function filterProcessesByUserScope<T extends { username: string }>(
+  rows: T[],
+  scope: ProcessUserScope,
+): T[] {
+  if (scope === "all") return rows;
+  if (scope === "lab") return rows.filter((r) => isLabProcessUsername(r.username));
+  return rows.filter((r) => !isLabProcessUsername(r.username));
+}
+
 export const PROCESS_SNAPSHOT_SORT_OPTIONS: { value: ProcessSortKey; label: string }[] = [
   { value: "pid", label: "PID" },
   { value: "name", label: "Nome" },

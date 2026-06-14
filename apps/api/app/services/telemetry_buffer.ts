@@ -9,12 +9,12 @@ export interface TelemetryPayload {
   allocationId: number
   timestamp: string
 
-  // CPU e GPU
-  cpuUsage: number
-  cpuTemp: number
+  // CPU e GPU — null = métrica não coletada nesta amostra
+  cpuUsage?: number | null
+  cpuTemp?: number | null
   cpuFreqMhz?: number | null
-  gpuUsage: number
-  gpuTemp: number
+  gpuUsage?: number | null
+  gpuTemp?: number | null
   gpuPowerWatts?: number | null
   vramTotalMb?: number | null
   vramUsedMb?: number | null

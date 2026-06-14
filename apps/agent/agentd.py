@@ -68,6 +68,8 @@ PROCESS_BATCHES_REMAINING = 0
 # Último accessState por usuário lab.* (pkill na transição full_shell → sftp_only)
 LAST_ACCESS_STATE: dict[str, str] = {}
 _process_io_prev = {} # Cache para calcular velocidade de disco (PID -> bytes)
+# psutil soma % por núcleo lógico; usamos o total para normalizar processos à capacidade do host.
+_LOGICAL_CPUS = psutil.cpu_count(logical=True) or 1
 SSH_AUDIT_BUFFER = []
 
 HEADERS = {
@@ -514,19 +516,25 @@ def _read_temperatures() -> dict:
     Temperatura de CPU e mobo via psutil.
     GPU é agora responsabilidade exclusiva do _GPU backend — não duplicamos aqui.
     """
-    result = {"cpuTemp": 0.0, "moboTemp": None}
+    result = {"cpuTemp": None, "moboTemp": None}
     try:
         sensors = psutil.sensors_temperatures()
+        cpu_temp = None
         for name in ("coretemp", "k10temp", "cpu_thermal"):
             if name in sensors and sensors[name]:
-                result["cpuTemp"] = max(e.current for e in sensors[name])
+                cpu_temp = max(e.current for e in sensors[name])
                 break
         else:
             if "acpitz" in sensors and sensors["acpitz"]:
-                result["cpuTemp"] = sensors["acpitz"][0].current
+                cpu_temp = sensors["acpitz"][0].current
 
-        if result["cpuTemp"] != 0.0 and "acpitz" in sensors and sensors["acpitz"]:
-            result["moboTemp"] = sensors["acpitz"][0].current
+        if cpu_temp is not None and cpu_temp > 0:
+            result["cpuTemp"] = cpu_temp
+
+        if "acpitz" in sensors and sensors["acpitz"]:
+            mobo = sensors["acpitz"][0].current
+            if mobo is not None and mobo > 0:
+                result["moboTemp"] = mobo
     except Exception:
         pass
     return result
@@ -582,6 +590,7 @@ def _disk_metrics(collect_space: bool, collect_io: bool) -> tuple[int, int, list
                         "mountpoint": part.mountpoint,
                         "usagePct":   round(usage.percent * 10),
                         "freeGb":     round(usage.free / 1024**3, 2),
+                        "totalGb":    round(usage.total / 1024**3, 1),
                         "readMbps":   round(p_read)  if collect_io else None,
                         "writeMbps":  round(p_write) if collect_io else None,
                     })
@@ -909,7 +918,7 @@ def sync_specs() -> None:
     specs = {
         "cpuModel":    _cpu_model(),
         "totalRamGb":  ram_total_wire,
-        "totalDiskGb": round(disk.total / 1024**3, 1),
+        "totalDiskGb": _gb_wire(disk.total),
         "ipAddress":   _local_ip(),
         "disks":       disks_info,
         "hostFingerprint": _host_fingerprint(),
@@ -1116,6 +1125,15 @@ def _resolve_on_demand_process_params(on_demand: dict) -> tuple[str, int, str]:
     return compare_metric, top_x, "all"
 
 
+def _process_cpu_wire(raw_cpu_percent: float) -> int:
+    """
+    Converte cpu_percent do psutil (% somada nos núcleos) para % da capacidade total do host.
+    Ex.: 330% em 8 threads → 41,25% do host → wire 412 (×10).
+    """
+    pct_of_machine = min(100.0, max(0.0, raw_cpu_percent / _LOGICAL_CPUS))
+    return round(pct_of_machine * 10)
+
+
 def _get_top_processes(compare_metric: str, top_x: int, user_scope: str = "all") -> list[dict]:
     """
     Captura processos e retorna o Top X pela métrica escolhida.
@@ -1163,17 +1181,22 @@ def _get_top_processes(compare_metric: str, top_x: int, user_scope: str = "all")
             username = p.info.get('username') or '?'
             if allowed_users is not None and username not in allowed_users:
                 continue
-            procs.append({
+            entry = {
                 "pid": pid,
                 "name": (p.info.get('name') or '?')[:50],
                 "username": username,
-                "cpuPercent": round(cpu * 10),
+                "cpuPercent": _process_cpu_wire(cpu),
                 "ramMb": round(ram_mb),
-                "vramMb": vram_mb,
-                "gpuUse": gpu_use,
-                "diskReadKbps": round(r_kbps),
-                "diskWriteKbps": round(w_kbps),
-            })
+            }
+            if vram_mb > 0:
+                entry["vramMb"] = vram_mb
+            if gpu_use > 0:
+                entry["gpuUse"] = gpu_use
+            if r_kbps > 0:
+                entry["diskReadKbps"] = round(r_kbps)
+            if w_kbps > 0:
+                entry["diskWriteKbps"] = round(w_kbps)
+            procs.append(entry)
     except Exception:
         pass
 
@@ -1226,7 +1249,9 @@ def collect_telemetry() -> dict:
             gpu_usage = round(_GPU.usage() * 10) if getattr(_GPU, "_nvitop_ready", lambda: False)() else None
         else:
             gpu_usage = round(_GPU.usage() * 10)
-        gpu_temp = round(_GPU.temp() * 10)
+        if t_set.get("temperatures"):
+            raw_gpu_temp = _GPU.temp()
+            gpu_temp = round(raw_gpu_temp * 10) if raw_gpu_temp and raw_gpu_temp > 0 else None
         gpu_power = _GPU.power()
         vram_used_wire, vram_total_wire = _GPU.vram()
 
@@ -1248,9 +1273,11 @@ def collect_telemetry() -> dict:
     mobo_temp = round(temps["moboTemp"] * 10) if temps.get("moboTemp") is not None else None
     cpu_temp = round(temps["cpuTemp"] * 10) if temps.get("cpuTemp") is not None else None
 
+    cpu_usage = round(cpu_total * 10) if t_set.get("cpu") else None
+
     payload = {
         "timestamp": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
-        "cpuUsage": round(cpu_total * 10),
+        "cpuUsage": cpu_usage,
         "cpuTemp": cpu_temp,
         "cpuFreqMhz": avg_freq_mhz,
         "gpuUsage": gpu_usage,
@@ -1308,8 +1335,14 @@ def telemetry_worker():
                     headers=HEADERS,
                     timeout=5,
                 )
-                status = "✓" if resp.status_code in (200, 201, 204) else f"✗ {resp.status_code}"
-                print(f"  ↳ [{status}] Lote de {len(buffer)} amostras despachado.")
+                if resp.status_code in (200, 201, 204):
+                    print(f"  ↳ [✓] Lote de {len(buffer)} amostras despachado.")
+                else:
+                    detail = (resp.text or "").strip().replace("\n", " ")[:160]
+                    print(
+                        f"  ↳ [✗ {resp.status_code}] Lote de {len(buffer)} amostras despachado."
+                        + (f" {detail}" if detail else "")
+                    )
             except Exception as e:
                 print(f"  ↳ [✗] Erro de rede: {e}")
             buffer = []

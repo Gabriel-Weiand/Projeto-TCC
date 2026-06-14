@@ -17,14 +17,14 @@ export default class extends BaseSchema {
 
       table.timestamp('timestamp').notNullable().index()
 
-      // --- CPU ---
-      table.integer('cpu_usage').unsigned().notNullable()
-      table.integer('cpu_temp').unsigned().notNullable()
+      // --- CPU --- (null = métrica não coletada nesta amostra)
+      table.integer('cpu_usage').unsigned().nullable()
+      table.integer('cpu_temp').unsigned().nullable()
       table.integer('cpu_freq_mhz').unsigned().nullable()
 
       // --- GPU ---
-      table.integer('gpu_usage').unsigned().notNullable()
-      table.integer('gpu_temp').unsigned().notNullable()
+      table.integer('gpu_usage').unsigned().nullable()
+      table.integer('gpu_temp').unsigned().nullable()
       table.integer('gpu_power_watts').unsigned().nullable()
       table.integer('vram_total_gb').unsigned().nullable()
       table.integer('vram_used_gb').unsigned().nullable()

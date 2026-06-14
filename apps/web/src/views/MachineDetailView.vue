@@ -11,6 +11,7 @@ import ProfileAllocationConnectModal from "@/components/ProfileAllocationConnect
 import type { Machine, Allocation } from "@/types";
 import { useRoute, useRouter } from "vue-router";
 import { isNowBeforeUtc, isNowInUtcRange } from "@/utils/datetime";
+import { displayTotalDiskGb } from "@/utils/machineDisks";
 
 const props = defineProps<{ id: string | number }>();
 const machinesStore = useMachinesStore();
@@ -26,8 +27,6 @@ const scheduleAllocations = ref<Allocation[]>([]);
 const loading = ref(true);
 const connectTarget = ref<Allocation | null>(null);
 const usersCollapsed = ref(false);
-const debugRefreshing = ref(false);
-const debugStreamPreview = ref<unknown>(null);
 
 const isAdmin = computed(() => auth.user?.role === "admin");
 
@@ -167,33 +166,6 @@ const activeUserRows = computed((): ActiveUserRow[] => {
   return rows;
 });
 
-const apiDebugJson = computed(() => ({
-  systemUsername: machine.value?.systemUsername ?? null,
-  currentSessions: machine.value?.currentSessions ?? null,
-  activeUsersTelemetry: liveData.value?.activeUsers ?? null,
-  telemetryPreset: machine.value?.telemetryPreset ?? null,
-  telemetrySet: machine.value?.customAgentConfig?.telemetrySet ?? null,
-  diskIO: {
-    readMbps: liveData.value?.diskReadMbps ?? null,
-    writeMbps: liveData.value?.diskWriteMbps ?? null,
-  },
-  streamPreview: debugStreamPreview.value,
-}));
-
-async function refreshFromApi() {
-  debugRefreshing.value = true;
-  try {
-    const [m, stream] = await Promise.all([
-      machinesStore.fetchMachine(machineId.value),
-      machinesStore.fetchTelemetryStream(machineId.value, 5),
-    ]);
-    machine.value = m;
-    debugStreamPreview.value = stream;
-  } finally {
-    debugRefreshing.value = false;
-  }
-}
-
 function goBack() {
   router.push({ name: fromAdmin.value ? "admin-machines" : "machines" });
 }
@@ -244,6 +216,10 @@ function statusLabel(s: string) {
   };
   return map[s] || s;
 }
+
+const displayDiskGb = computed(() =>
+  machine.value ? displayTotalDiskGb(machine.value) : null,
+);
 </script>
 
 <template>
@@ -315,28 +291,41 @@ function statusLabel(s: string) {
       </div>
 
       <div class="specs-grid">
-        <div v-if="machine.cpuModel" class="stat-card">
+        <div class="stat-card">
           <span class="stat-label">CPU</span>
-          <span class="stat-value" style="font-size: 1rem">{{ machine.cpuModel }}</span>
+          <span class="stat-value" style="font-size: 1rem">
+            {{ machine.cpuModel || "—" }}
+          </span>
+          <span v-if="!machine.cpuModel" class="stat-sub text-muted">Aguardando sync</span>
         </div>
-        <div v-if="machine.gpuModel || machine.totalVramGb" class="stat-card">
+        <div class="stat-card">
           <span class="stat-label">GPU</span>
-          <span class="stat-value" style="font-size: 1rem">{{ machine.gpuModel || "—" }}</span>
+          <span class="stat-value" style="font-size: 1rem">
+            {{ machine.gpuModel || "—" }}
+          </span>
           <span v-if="machine.totalVramGb" class="stat-sub text-muted">
             {{ machine.totalVramGb }} GB VRAM
           </span>
+          <span v-else-if="!machine.gpuModel" class="stat-sub text-muted">Aguardando sync</span>
         </div>
-        <div v-if="machine.totalRamGb" class="stat-card">
+        <div class="stat-card">
           <span class="stat-label">RAM</span>
-          <span class="stat-value">{{ machine.totalRamGb }} GB</span>
+          <span class="stat-value">{{ machine.totalRamGb ? `${machine.totalRamGb} GB` : "—" }}</span>
+          <span v-if="!machine.totalRamGb" class="stat-sub text-muted">Aguardando sync</span>
         </div>
-        <div v-if="machine.totalDiskGb" class="stat-card">
-          <span class="stat-label">Disco Total</span>
-          <span class="stat-value">{{ machine.totalDiskGb }} GB</span>
+        <div class="stat-card">
+          <span class="stat-label">Disco</span>
+          <span class="stat-value">
+            {{ displayDiskGb ? `${displayDiskGb} GB` : "—" }}
+          </span>
+          <span v-if="!displayDiskGb" class="stat-sub text-muted">Aguardando sync</span>
         </div>
-        <div v-if="machine.ipAddress" class="stat-card">
-          <span class="stat-label">IP</span>
-          <span class="stat-value" style="font-size: 1rem">{{ machine.ipAddress }}</span>
+        <div class="stat-card">
+          <span class="stat-label">IP local</span>
+          <span class="stat-value" style="font-size: 1rem">
+            {{ machine.ipAddress || "—" }}
+          </span>
+          <span v-if="!machine.ipAddress" class="stat-sub text-muted">Aguardando sync</span>
         </div>
       </div>
 
@@ -355,8 +344,7 @@ function statusLabel(s: string) {
       <template v-if="isAdmin">
         <CollapsibleSection v-model:collapsed="usersCollapsed" title="Usuários">
           <p class="section-hint">
-            Sessões reportadas pelo agente (<code>activeUsers</code> na telemetria e
-            <code>connectedUsers</code> no heartbeat a cada 30s).
+            Sessões ativas reportadas pelo agente e atualizadas a cada 30 segundos.
           </p>
 
           <div v-if="activeUserRows.length" class="table-wrap users-table-wrap">
@@ -384,26 +372,10 @@ function statusLabel(s: string) {
             </tbody>
           </table>
         </div>
-        <div v-else class="empty-state" style="padding: 1rem 0">
-          Nenhuma sessão ativa na API. Se você está em SSH, confira o preset (activeUsers) e se o
-          agente tem permissão para listar sessões.
+        <div v-else class="users-empty">
+          Nenhuma sessão ativa no momento.
         </div>
         </CollapsibleSection>
-
-        <details class="api-debug">
-          <summary>Debug — dados brutos da API</summary>
-          <div class="api-debug-actions">
-            <button
-              type="button"
-              class="btn btn-ghost btn-sm"
-              :disabled="debugRefreshing"
-              @click="refreshFromApi"
-            >
-              {{ debugRefreshing ? "Consultando…" : "Atualizar da API" }}
-            </button>
-          </div>
-          <pre class="api-debug-pre">{{ JSON.stringify(apiDebugJson, null, 2) }}</pre>
-        </details>
       </template>
     </template>
 
@@ -499,47 +471,21 @@ function statusLabel(s: string) {
 }
 
 .section-hint {
-  font-size: 0.82rem;
-  color: var(--text-muted);
+  font-size: 0.85rem;
+  color: var(--text-secondary);
   margin: -0.5rem 0 1rem;
   line-height: 1.45;
-}
-
-.section-hint code {
-  font-size: 0.78rem;
 }
 
 .users-table-wrap {
   margin-bottom: 1rem;
 }
 
-.api-debug {
-  margin-top: 1rem;
-  border: 1px solid var(--border-subtle);
-  border-radius: var(--radius);
-  padding: 0.65rem 0.85rem;
-  background: var(--bg-card-solid);
-}
-
-.api-debug summary {
-  cursor: pointer;
-  font-size: 0.82rem;
-  font-weight: 600;
-  color: var(--text-muted);
-}
-
-.api-debug-actions {
-  margin: 0.75rem 0 0.5rem;
-}
-
-.api-debug-pre {
-  font-size: 0.72rem;
-  max-height: 280px;
-  overflow: auto;
-  background: var(--bg-input);
-  padding: 0.75rem;
-  border-radius: 8px;
+.users-empty {
+  padding: 1rem 0;
+  font-size: 0.9rem;
   color: var(--text-secondary);
+  text-align: center;
 }
 
 </style>

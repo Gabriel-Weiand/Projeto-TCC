@@ -22,7 +22,7 @@ import { DateTime } from 'luxon'
 import { cancelAllocationsForMaintenance } from '#services/notification_service'
 import { normalizeCustomAgentConfig } from '#services/telemetry_presets'
 import { normalizeRealtimeTelemetry } from '#services/telemetry_normalize'
-import { enrichDiskPartitions, validateMachineDiskPolicy } from '#services/disk_partitions'
+import { enrichDiskPartitions, mergeAdminDiskPolicyUpdate, validateMachineDiskPolicy } from '#services/disk_partitions'
 import {
   buildOccupiedMachineIds,
   normalizeOperationalMode,
@@ -33,6 +33,7 @@ import {
   isMachinePendingRemoval,
   prepareMachineDecommission,
 } from '#services/machine_decommission'
+import { normalizeAdminMachineWireFields } from '#services/machine_specs_merge'
 
 export default class MachinesController {
   /** Agente envia GB×10; respostas HTTP ao front em GB (1 decimal). */
@@ -54,6 +55,7 @@ export default class MachinesController {
       fstype: d.fstype ?? null,
       totalGb: d.totalGb ?? null,
       freeGb: d.freeGb ?? null,
+      usagePct: d.usagePct ?? null,
       role: d.role ?? 'user',
       mainDisk: Boolean(d.mainDisk),
       allocatable: d.role === 'user' ? d.allocatable !== false : false,
@@ -82,7 +84,7 @@ export default class MachinesController {
       operationalMode,
       totalVramGb: this.agentGbToApi(machine.totalVramGb),
       totalRamGb: this.agentGbToApi(machine.totalRamGb),
-      totalDiskGb: machine.totalDiskGb,
+      totalDiskGb: this.agentGbToApi(machine.totalDiskGb),
       machineGroupId: machine.machineGroupId,
       group: group
         ? {
@@ -123,10 +125,10 @@ export default class MachinesController {
    * POST /api/v1/machines
    */
   async store({ request, response }: HttpContext) {
-    const data = (await request.validateUsing(createMachineValidator)) as any
-    const { totalDiskGb, ...createData } = data
+    const data = (await request.validateUsing(createMachineValidator)) as Record<string, unknown>
+    normalizeAdminMachineWireFields(data)
 
-    const machine = await Machine.create(createData)
+    const machine = await Machine.create(data)
 
     const occupiedMachineIds = await buildOccupiedMachineIds()
     const presented = this.serializeMachineForApi(machine, null, occupiedMachineIds) as Record<
@@ -167,12 +169,13 @@ export default class MachinesController {
    */
   async update({ params, request, response }: HttpContext) {
     const machine = await Machine.findOrFail(params.id)
-    const data = (await request.validateUsing(updateMachineValidator)) as any
+    const data = (await request.validateUsing(updateMachineValidator)) as Record<string, unknown>
+    normalizeAdminMachineWireFields(data)
 
     const wasNotInMaintenance = machine.status !== 'maintenance'
     const isEnteringMaintenance = data.status === 'maintenance'
 
-    const { totalDiskGb, ...updateData } = data
+    const updateData = data as any
     if (updateData.status !== undefined) {
       updateData.status = normalizeOperationalMode(updateData.status)
     }
@@ -180,7 +183,7 @@ export default class MachinesController {
       updateData.customAgentConfig = normalizeCustomAgentConfig(updateData.customAgentConfig)
     }
     if (updateData.disks !== undefined) {
-      updateData.disks = enrichDiskPartitions(updateData.disks)
+      updateData.disks = mergeAdminDiskPolicyUpdate(updateData.disks, machine.disks)
     }
     const onlyMainDisk =
       updateData.onlyMainDisk !== undefined ? Boolean(updateData.onlyMainDisk) : machine.onlyMainDisk

@@ -170,7 +170,7 @@ function copyToken() {
             <th>Nome</th>
             <th>Status</th>
             <th>Grupo</th>
-            <th>IP</th>
+            <th>IP local</th>
             <th class="col-actions">Ações</th>
           </tr>
         </thead>

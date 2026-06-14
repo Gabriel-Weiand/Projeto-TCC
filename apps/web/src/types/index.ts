@@ -58,6 +58,8 @@ export interface DiskPartition {
   fstype: string | null;
   totalGb: number | null;
   freeGb: number | null;
+  /** Uso wire ×10 (telemetria); preferido para barra de % quando presente. */
+  usagePct?: number | null;
   role?: "system" | "user";
   /** Volume padrão para home de alocações (admin). */
   mainDisk?: boolean;
@@ -134,7 +136,7 @@ export interface Machine {
   totalRamGb: number | null;
   totalDiskGb: number | null;
   ipAddress: string | null;
-  /** IP público (NAT) definido pelo admin; distinto do IP local do agente. */
+  /** IP alternativo (NAT/DNS externo) — somente admin; distinto do IP local do agente. */
   publicIpAddress?: string | null;
   /** Restringe reservas ao disco principal (`mainDisk`). */
   onlyMainDisk?: boolean;

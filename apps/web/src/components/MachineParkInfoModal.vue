@@ -80,15 +80,15 @@ function fmtGb(val: number | null | undefined): string {
               <dd>{{ machine.totalRamGb }} GB</dd>
             </template>
             <template v-if="displayTotalDiskGb(machine)">
-              <dt>Capacidade total em disco</dt>
-              <dd>{{ displayTotalDiskGb(machine) }} GB (soma das partições)</dd>
+              <dt>Disco</dt>
+              <dd>{{ displayTotalDiskGb(machine) }} GB</dd>
             </template>
             <template v-if="machine.group">
               <dt>Grupo</dt>
               <dd>{{ machine.group.title }}</dd>
             </template>
             <template v-if="machine.ipAddress">
-              <dt>Endereço IP</dt>
+              <dt>IP local</dt>
               <dd><code>{{ machine.ipAddress }}</code></dd>
             </template>
           </dl>
@@ -119,17 +119,17 @@ function fmtGb(val: number | null | undefined): string {
                     <div
                       class="park-bar-fill"
                       :style="{
-                        width: diskUsedPct(d.totalGb, d.freeGb) + '%',
+                        width: diskUsedPct(d.totalGb, d.freeGb, d.usagePct) + '%',
                         background:
-                          diskUsedPct(d.totalGb, d.freeGb) > 90
+                          diskUsedPct(d.totalGb, d.freeGb, d.usagePct) > 90
                             ? 'var(--danger)'
-                            : diskUsedPct(d.totalGb, d.freeGb) > 70
+                            : diskUsedPct(d.totalGb, d.freeGb, d.usagePct) > 70
                               ? 'var(--warning)'
                               : 'var(--success)',
                       }"
                     />
                   </div>
-                  <span>{{ diskUsedPct(d.totalGb, d.freeGb) }}%</span>
+                  <span>{{ diskUsedPct(d.totalGb, d.freeGb, d.usagePct) }}%</span>
                 </span>
               </div>
             </div>
