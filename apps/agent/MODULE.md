@@ -374,8 +374,8 @@ Quando `telemetrySet.processCapture` está ativo, o agente envia o Top X a cada 
 
 | `userScope` | Comportamento |
 |-------------|---------------|
-| `session` | Apenas processos cujo `username` é um `lab.*` com sessão TTY/SSH ativa (`psutil.users()`) |
-| `all` | Todos os processos do host (qualquer usuário POSIX) |
+| `session` | Apenas processos de `lab.*` com sessão TTY/SSH ativa (`psutil.users()`). **Sem sessão lab. conectada, a amostra não inclui `processes`** (lista vazia no agente → omitida na API → front sem linhas). |
+| `all` | Top X de todo o host (qualquer usuário POSIX) |
 
 Gatilho on-demand (`POST /machines/:id/request-processes`) dispara 5 batches extras com `compareMetric`, `topX` e `userScope`.
 

@@ -94,7 +94,7 @@ _ECO_TELEMETRY_OFFLINE = {
     "processCaptureConfig": {
         "compareMetric": "cpuPercent",
         "topX": 10,
-        "userScope": "session",
+        "userScope": "all",
     },
 }
 
@@ -1104,7 +1104,7 @@ def _resolve_on_demand_process_params(on_demand: dict) -> tuple[str, int, str]:
     """
     compare_metric = on_demand.get("compareMetric", "cpuPercent")
     top_x = on_demand.get("topX", 10)
-    user_scope = on_demand.get("userScope", "session")
+    user_scope = on_demand.get("userScope", "all")
 
     if on_demand.get("compareMetric") is not None:
         return compare_metric, top_x, user_scope
@@ -1212,7 +1212,7 @@ def collect_telemetry() -> dict:
         p_cfg = AGENT_CONFIG["telemetry"].get("processCaptureConfig") or {
             "compareMetric": "cpuPercent",
             "topX": 10,
-            "userScope": "session",
+            "userScope": "all",
         }
         t_set = AGENT_CONFIG["telemetry"].get("telemetrySet", {
             "cpu": True, "gpu": True, "ramAndSwap": True,
@@ -1226,7 +1226,7 @@ def collect_telemetry() -> dict:
         processes = _get_top_processes(
             p_cfg.get("compareMetric", "cpuPercent"),
             p_cfg.get("topX", 10),
-            p_cfg.get("userScope", "session"),
+            p_cfg.get("userScope", "all"),
         )
     elif PROCESS_BATCHES_REMAINING > 0:
         compare_metric, top_x, user_scope = _resolve_on_demand_process_params(on_demand)

@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { ref, reactive, computed, onMounted, watch } from "vue";
 import { useRoute, useRouter } from "vue-router";
+import { isAxiosError } from "axios";
 import { useMachinesStore } from "@/stores/machines";
 import { useMachineGroupsStore } from "@/stores/machineGroups";
 import MachineTelemetryPanel from "@/components/MachineTelemetryPanel.vue";
@@ -19,6 +20,7 @@ const machine = ref<Machine | null>(null);
 const loading = ref(true);
 const saving = ref(false);
 const error = ref("");
+const saved = ref(false);
 
 const activeTab = ref("infos");
 const editTabs = [
@@ -136,6 +138,7 @@ watch(activeTab, (tab) => {
 async function handleSave() {
   if (!machine.value) return;
   error.value = "";
+  saved.value = false;
   if (!form.name.trim()) {
     error.value = "Nome é obrigatório.";
     return;
@@ -161,8 +164,18 @@ async function handleSave() {
     const updated = await machinesStore.updateMachine(machine.value.id, payload);
     machine.value = updated;
     loadForm(updated);
-  } catch {
-    error.value = "Erro ao salvar máquina.";
+    saved.value = true;
+  } catch (err) {
+    if (isAxiosError(err) && err.response?.status === 422) {
+      const body = err.response.data as { message?: string; errors?: unknown };
+      error.value =
+        body.message ||
+        (Array.isArray(body.errors)
+          ? body.errors.map((e) => String(e)).join(" · ")
+          : "Dados inválidos. Verifique RAM, VRAM e disco (GB).");
+    } else {
+      error.value = "Erro ao salvar máquina.";
+    }
   } finally {
     saving.value = false;
   }
@@ -336,8 +349,6 @@ function copyToken() {
                 </select>
               </div>
 
-              <p v-if="error" class="form-error">{{ error }}</p>
-
               <div class="form-actions">
                 <button type="submit" class="btn btn-primary" :disabled="saving">
                   {{ saving ? "Salvando…" : "Salvar informações" }}
@@ -349,6 +360,8 @@ function copyToken() {
                 >
                   Regenerar token do agente
                 </button>
+                <span v-if="saved" class="form-ok">Informações salvas com sucesso.</span>
+                <span v-if="error" class="form-error">{{ error }}</span>
               </div>
             </form>
 
@@ -474,11 +487,18 @@ function copyToken() {
 .form-actions {
   display: flex;
   flex-wrap: wrap;
+  align-items: center;
   gap: 0.75rem;
 }
 
 .form-error {
   color: var(--danger);
+  font-size: 0.88rem;
+}
+
+.form-ok {
+  color: var(--success);
+  font-size: 0.88rem;
 }
 
 .modal-overlay {

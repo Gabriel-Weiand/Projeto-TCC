@@ -41,9 +41,10 @@ export const updateMachineValidator = vine.compile(
 
     cpuModel: vine.string().trim().maxLength(100).nullable().optional(),
     gpuModel: vine.string().trim().maxLength(100).nullable().optional(),
-    totalVramGb: vine.number().withoutDecimals().min(0).max(10240).nullable().optional(),
-    totalRamGb: vine.number().withoutDecimals().min(1).max(10240).nullable().optional(),
-    totalDiskGb: vine.number().withoutDecimals().min(1).max(10240).nullable().optional(),
+    /** GB decimal (API/front); convertido para wire GB×10 em normalizeAdminMachineWireFields */
+    totalVramGb: vine.number().min(0).max(10240).nullable().optional(),
+    totalRamGb: vine.number().min(1).max(10240).nullable().optional(),
+    totalDiskGb: vine.number().min(1).max(10240).nullable().optional(),
 
     ipAddress: vine.string().trim().maxLength(45).nullable().optional(),
     publicIpAddress: vine.string().trim().maxLength(45).nullable().optional(),

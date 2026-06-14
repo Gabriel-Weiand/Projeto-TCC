@@ -33,7 +33,7 @@ const isAdmin = computed(() => auth.user?.role === "admin");
 const {
   current: telemetry,
   latestProcesses,
-  latestProcessBatchTimestamp,
+  latestBatchTimestamp,
   start: startPlayback,
   stop: stopPlayback,
 } = useTelemetryPlayback(machineId);
@@ -80,9 +80,6 @@ const liveData = computed(() =>
 
 const displayProcesses = computed(
   () => latestProcesses.value ?? liveData.value?.processes ?? null,
-);
-const displayProcessTimestamp = computed(
-  () => latestProcessBatchTimestamp.value ?? liveData.value?.timestamp ?? null,
 );
 
 const showLiveSections = computed(
@@ -338,15 +335,11 @@ const displayDiskGb = computed(() =>
         :show-charts="isAdmin"
         :show-processes="isAdmin"
         :latest-processes="displayProcesses"
-        :latest-process-batch-timestamp="displayProcessTimestamp"
+        :latest-batch-timestamp="latestBatchTimestamp"
       />
 
       <template v-if="isAdmin">
         <CollapsibleSection v-model:collapsed="usersCollapsed" title="Usuários">
-          <p class="section-hint">
-            Sessões ativas reportadas pelo agente e atualizadas a cada 30 segundos.
-          </p>
-
           <div v-if="activeUserRows.length" class="table-wrap users-table-wrap">
           <table>
             <thead>
@@ -468,13 +461,6 @@ const displayDiskGb = computed(() =>
 
 .section-spaced {
   margin-top: 2rem;
-}
-
-.section-hint {
-  font-size: 0.85rem;
-  color: var(--text-secondary);
-  margin: -0.5rem 0 1rem;
-  line-height: 1.45;
 }
 
 .users-table-wrap {

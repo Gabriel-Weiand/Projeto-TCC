@@ -15,7 +15,6 @@ import {
 
 const props = defineProps<{
   processes: TelemetryProcessSnapshot[] | null;
-  batchTimestamp: string | null;
 }>();
 
 const collapsed = ref(false);
@@ -32,33 +31,14 @@ const sortedProcesses = computed(() => {
   if (!filteredProcesses.value.length) return [];
   return sortProcessSnapshots(filteredProcesses.value, sortKey.value, sortDir.value);
 });
-
-function formatBatchTime(iso: string | null): string {
-  if (!iso) return "—";
-  try {
-    return new Intl.DateTimeFormat("pt-BR", {
-      day: "2-digit",
-      month: "2-digit",
-      hour: "2-digit",
-      minute: "2-digit",
-      second: "2-digit",
-      hour12: false,
-    }).format(new Date(iso));
-  } catch {
-    return iso;
-  }
-}
 </script>
 
 <template>
   <CollapsibleSection v-model:collapsed="collapsed" title="Processos">
     <div class="process-toolbar">
-      <p class="process-meta text-secondary">
-        Último lote · {{ formatBatchTime(batchTimestamp) }}
-        <span v-if="processes?.length">
-          · {{ sortedProcesses.length }} processo(s)
-          <template v-if="userScope !== 'all'"> (de {{ processes.length }})</template>
-        </span>
+      <p v-if="processes?.length" class="process-meta text-secondary">
+        {{ sortedProcesses.length }} processo(s)
+        <template v-if="userScope !== 'all'"> (de {{ processes.length }})</template>
       </p>
       <div class="process-controls">
         <label class="process-field">
@@ -104,7 +84,7 @@ function formatBatchTime(iso: string | null): string {
   display: flex;
   flex-wrap: wrap;
   align-items: flex-end;
-  justify-content: space-between;
+  justify-content: flex-end;
   gap: 0.85rem;
   margin-bottom: 0.75rem;
 }

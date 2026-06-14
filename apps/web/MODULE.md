@@ -120,15 +120,18 @@ Abas via `AdminMachine*Tab`:
 
 Visível para `role === 'admin'` (ou discos para todos quando existem partições):
 
-| Seção | Componente | Conteúdo |
-|-------|------------|----------|
-| Telemetria preset | `MachineTelemetryPanel` | Editar custom inline |
-| Gráficos ociosos 24 h | `MachineIdleHistoryChart` | Buffer idle da API |
-| Partições | `MachineLiveSections` | Merge telemetria + spec; uso % clampado 0–100 |
-| Processos | `MachineLiveProcessSection` | Top processos; filtros **Todos / Usuário lab. / Sistema**; ordenação |
-| Usuários | Collapsible | Sessões ativas (telemetria + heartbeat) |
+| Seção | Componente | Fonte de dados |
+|-------|------------|----------------|
+| Telemetria preset | `MachineTelemetryPanel` | PUT máquina (preset/custom) |
+| **Barras ao vivo** (CPU/GPU/RAM/rede/temp) | `MachineLiveSections` | `useTelemetryPlayback` → `GET …/telemetry/stream` (`telemetryBuffer`) |
+| **Gráfico 24 h ocioso** | `MachineIdleHistoryChart` | `GET …/telemetry` → `idleHistory.chartSeries` (`idleTelemetryBuffer`; congela em alocação) |
+| **Partições** | `MachineLiveSections` | Spec da máquina + `liveData.disksInfo` do stream |
+| **Processos** | `MachineLiveProcessSection` | Último lote com `processes` no stream (não vem do buffer 24 h) |
+| **Usuários** | Collapsible | `activeUsers` na amostra realtime + heartbeat |
 
-Playback: composable `useTelemetryPlayback` — polling/stream, diff de lotes (`telemetryBatchDiff`), processos do último lote.
+Playback: `useTelemetryPlayback` — polling a cada **3 s** em `/telemetry/stream`, diff de lotes (`telemetryBatchDiff`), reprodução suave entre timestamps. `liveData` = mais recente entre playback e `machine.latestTelemetry` (parque, refresh 30 s).
+
+Histórico ocioso: `useMachineIdleHistory` — polling a cada **30 s** em `/telemetry` (`idleHistory`); só cresce com máquina **sem** alocação ativa na API.
 
 ### Manutenção (`AdminMaintenanceView`)
 
@@ -165,7 +168,8 @@ Wire GB×10 fica só na API/DB; HTTP e inputs admin usam **GB decimal** (1 casa)
 
 `MachineLiveProcessSection` + `ProcessTelemetryTable`:
 
-- Filtro **Usuário:** `Todos` | `Usuário lab.` (`username` começa com `lab.`) | `Sistema` (demais contas).
+- **Captura no agente:** `processCaptureConfig.userScope` em preset/custom. Com **`session`**, o agente só inclui processos de usuários `lab.*` conectados; sem sessão lab., nada é enviado (`processes` omitido) — a tabela fica vazia mesmo com captura ligada. Use **`all`** para monitorar o host ocioso.
+- Filtro **Usuário** (só exibição): `Todos` | `Usuário lab.` (`username` começa com `lab.`) | `Sistema` (demais contas).
 - Ordenação por métrica (CPU, RAM, VRAM, GPU, I/O).
 - `cpuPercent` exibido como % do **host** (agente já normaliza psutil ÷ CPUs lógicas).
 
@@ -189,11 +193,27 @@ Sincronização de relógio: `src/services/timeSync.ts` — `startTimeSync()` + 
 
 ## Telemetria no front
 
+### Três caminhos de dados
+
+| Caminho | Endpoint / store | Quando | UI |
+|---------|-------------------|--------|-----|
+| **Ao vivo** | `GET /machines/:id/telemetry/stream` via `useTelemetryPlayback` | Admin no detalhe da máquina | Barras, discos, processos, usuários ativos |
+| **Parque / fallback** | `GET /machines` → `latestTelemetry` | Listagem e refresh 30 s | Cards do dashboard admin |
+| **Gráfico 24 h ocioso** | `GET /machines/:id/telemetry` → `idleHistory` via `useMachineIdleHistory` | Admin, seção gráficos | `MachineIdleHistoryChart` |
+| **Resumo de sessão** | `GET /allocations/:id/summary` | Após admin gerar resumo | `AllocationUsageStatsModal` |
+
+Durante **alocação ativa**, barras/processos/discos usam o buffer runtime (stream). O gráfico 24 h continua exibindo o buffer ocioso **sem novos pontos** até a sessão terminar. Bruto da sessão fica no SQLite até o resumo — o front **não** consulta `history.data` para monitoramento.
+
+**Memória (ocioso):** ao vivo = ring ~15 amostras completas em `telemetryBuffer`; histórico do gráfico = tiers **1 min + 10 min** em `idleTelemetryBuffer` (~198 entradas máx.); série **15 min** = calculada na API, não guardada.
+
 | Arquivo | Papel |
 |---------|--------|
+| `composables/useTelemetryPlayback.ts` | Poll stream 3 s; playback; `latestProcesses` |
+| `composables/useMachineIdleHistory.ts` | Poll idle 30 s; `chartSeries` 24 h |
+| `utils/telemetryBatchDiff.ts` | Diff de lotes, ordenação por timestamp |
+| `utils/processTelemetry.ts` | Filtro lab/sistema, sort da tabela |
 | `telemetryPresets.ts` | Constantes, validação de intervalo/batch/processos |
-| `telemetryBatchDiff.ts` | Merge de lotes streaming, timestamps |
-| `telemetryChartConfig.ts` | Cores e definição de abas de gráfico |
+| `telemetryChartConfig.ts` | Cores e abas de gráfico |
 | `buildAllocationChartTabs.ts` | Séries para resumo de alocação |
 | `allocationMetricFormat.ts` | Formatação TWA para modal de estatísticas |
 

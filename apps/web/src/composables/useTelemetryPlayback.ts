@@ -195,11 +195,18 @@ export function useTelemetryPlayback(machineId: MaybeRefOrGetter<number>) {
     return null;
   });
 
+  const latestBatchTimestamp = computed<string | null>(() => {
+    const batch = latestBatch.value;
+    if (!batch.length) return null;
+    return batch[batch.length - 1]?.timestamp ?? null;
+  });
+
   return {
     current,
     latestBatch,
     latestProcesses,
     latestProcessBatchTimestamp,
+    latestBatchTimestamp,
     isActive,
     start,
     stop,

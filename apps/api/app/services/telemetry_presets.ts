@@ -55,7 +55,7 @@ export const MANDATORY_TELEMETRY_METRICS = ['cpu', 'ramAndSwap'] as const satisf
 export const DEFAULT_PROCESS_CAPTURE_CONFIG: ProcessCaptureConfig = {
   compareMetric: 'cpuPercent',
   topX: 10,
-  userScope: 'session',
+  userScope: 'all',
 }
 
 /** Limite máximo de processos retornados por amostra (preset ou personalizado). */
@@ -154,7 +154,7 @@ export function normalizeProcessCaptureConfig(
       ? Math.min(TELEMETRY_PROCESS_CAPTURE_TOP_X_MAX, Math.max(1, Math.round(config.topX)))
       : 10
   const userScope: ProcessCaptureUserScope =
-    config?.userScope === 'all' || config?.userScope === 'session' ? config.userScope : 'session'
+    config?.userScope === 'all' || config?.userScope === 'session' ? config.userScope : 'all'
   return {
     compareMetric: allowed.includes(compareMetric as ProcessCaptureCompareMetric)
       ? (compareMetric as ProcessCaptureCompareMetric)

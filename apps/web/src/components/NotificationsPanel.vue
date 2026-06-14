@@ -87,32 +87,30 @@ async function markAll() {
             class="notif-item"
             :class="{ 'notif-item--unread': !n.isRead }"
           >
-            <div class="notif-item-row">
-              <button
-                type="button"
-                class="btn btn-ghost btn-sm notif-item-mark"
-                :disabled="marking === n.id"
-                @click="toggleRead(n.id, n.isRead)"
-              >
-                {{ n.isRead ? "Marcar não lida" : "Marcar lida" }}
-              </button>
-
-              <div class="notif-item-body">
-                <div class="notif-item-top">
-                  <strong class="notif-item-title">{{ n.title }}</strong>
-                  <time class="notif-item-time">{{ fmt(n.createdAt) }}</time>
-                </div>
-                <p class="notif-item-msg">{{ displayNotificationMessage(n.message) }}</p>
+            <div class="notif-item-inner">
+              <div class="notif-item-top">
+                <strong class="notif-item-title">{{ n.title }}</strong>
+                <time class="notif-item-time">{{ fmt(n.createdAt) }}</time>
               </div>
-
-              <button
-                type="button"
-                class="btn btn-ghost btn-sm notif-item-delete"
-                :disabled="removing === n.id"
-                @click="remove(n.id)"
-              >
-                Excluir
-              </button>
+              <p class="notif-item-msg">{{ displayNotificationMessage(n.message) }}</p>
+              <div class="notif-item-actions">
+                <button
+                  type="button"
+                  class="btn btn-ghost btn-sm"
+                  :disabled="marking === n.id"
+                  @click="toggleRead(n.id, n.isRead)"
+                >
+                  {{ n.isRead ? "Marcar não lida" : "Marcar lida" }}
+                </button>
+                <button
+                  type="button"
+                  class="btn btn-ghost btn-sm notif-item-delete"
+                  :disabled="removing === n.id"
+                  @click="remove(n.id)"
+                >
+                  Excluir
+                </button>
+              </div>
             </div>
           </li>
         </ul>
@@ -184,7 +182,7 @@ async function markAll() {
 }
 
 .notif-item {
-  padding: 0.85rem 1rem;
+  padding: 1rem 1.35rem;
   border-bottom: 1px solid var(--border-subtle);
 }
 
@@ -193,26 +191,10 @@ async function markAll() {
   box-shadow: inset 3px 0 0 var(--accent);
 }
 
-.notif-item-row {
+.notif-item-inner {
   display: flex;
-  align-items: flex-start;
-  gap: 0.65rem;
-}
-
-.notif-item-mark,
-.notif-item-delete {
-  flex-shrink: 0;
-  align-self: center;
-  white-space: nowrap;
-}
-
-.notif-item-delete {
-  color: var(--danger, #e57373);
-}
-
-.notif-item-body {
-  flex: 1;
-  min-width: 0;
+  flex-direction: column;
+  gap: 0.5rem;
 }
 
 .notif-item-top {
@@ -233,9 +215,24 @@ async function markAll() {
 }
 
 .notif-item-msg {
-  margin: 0.45rem 0 0;
+  margin: 0;
   font-size: 0.86rem;
   color: var(--text-secondary);
   line-height: 1.45;
+}
+
+.notif-item-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+  margin-top: 0.35rem;
+  padding-top: 0.65rem;
+  border-top: 1px solid var(--border-subtle);
+}
+
+.notif-item-delete {
+  color: var(--danger, #e57373);
 }
 </style>

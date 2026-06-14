@@ -166,24 +166,42 @@ pending → approved → [prepare] → active (full_shell) → grace → sftp_on
 
 - **Presets** fast/eco em `/admin/maintenance?tab=telemetria` (redirect legado de `/admin/lab-telemetry`).
 - **Custom por máquina** em `AdminMachineEditView` / `MachineTelemetryPanel` (intervalo, batch, toggles de métricas, captura de processos).
-- **Snapshot de processos:** `POST /machines/:id/request-processes` → 5 lotes extras no agente.
 - **Políticas** grace, SFTP pós-sessão, dias até `userdel`, aprovação obrigatória — `.env` + overrides runtime.
 
 ---
 
 ## Telemetria e métricas
 
-| Contexto | Onde fica | Uso |
-|----------|-----------|-----|
-| Máquina ociosa | Buffer memória 24 h | Gráfico ocioso no admin; downsample 15 min |
-| Alocação ativa | Tabela `telemetries` | Bruto até gerar resumo |
-| Após resumo | `allocation_metrics` + `chart_series` | Gráficos do usuário e admin |
+### Onde ficam os dados
+
+| Contexto | Armazenamento | Uso principal |
+|----------|---------------|---------------|
+| **Tempo real** (CPU, RAM, GPU, discos, processos) | RAM — `telemetryBuffer` | Painel admin, parque, stream; **sempre** atualizado pelo agente |
+| **Gráfico 24 h ocioso** | RAM — `idleTelemetryBuffer` | Só enquanto **sem** alocação ativa; ~96 pts @ 15 min |
+| **Sessão em curso** | SQLite — `telemetries` | Flush a cada 60 s; base para resumo TWA; **não** alimenta UI ao vivo |
+| **Após resumo** | `allocation_metrics.chart_series` | Modal de estatísticas do usuário/admin |
+
+### Durante alocação vs ocioso
+
+- **Monitoramento ao vivo** (barras, processos, partições): lê **`GET /machines/:id/telemetry/stream`** → buffer runtime (`telemetryBuffer`), **não** o banco.
+- **Gráfico 24 h** no detalhe admin: lê **`idleHistory.chartSeries`** → calculado na hora a partir do buffer **1 min + 10 min** (não há array de 15 min persistido em RAM).
+- **Persistência da sessão** corre em paralelo (`telemetries`) para `POST /allocations/:id/summary` e purge posterior.
+
+### Memória por máquina ociosa (resumo)
+
+| Camada | O quê guarda |
+|--------|----------------|
+| `telemetryBuffer` | ~15 amostras **completas** (live + stream + processos/discos) |
+| `idleTelemetryBuffer` | até ~**60** pontos @ 1 min (última hora) + ~**138** @ 10 min (1 h–24 h); pontos &gt; 1 h viram 10 min e os de 1 min são **descartados**; &gt; 24 h **descartados** |
+| Gráfico 15 min | **Não armazenado** — derivado na resposta de `GET …/telemetry` |
+
+Ou seja: não é “só ring + buckets de 15 min”; há um buffer ocioso em **dois níveis** além do ring realtime.
 
 **Métricas desligadas no preset** → campo `null` na amostra (não confundir com 0). UI exibe `—`.
 
-**Processos:** `cpuPercent` no wire = % da **capacidade total do host** (psutil normalizado ÷ CPUs lógicas). Filtro no front admin: contas `lab.*` vs sistema.
+**Processos:** `cpuPercent` no wire = % da **capacidade total do host** (psutil normalizado ÷ CPUs lógicas). Filtro no front admin: contas `lab.*` vs sistema. Com `processCaptureConfig.userScope: session` (preset ou custom), o agente **só** envia processos enquanto houver `lab.*` conectado; máquina ociosa ou só contas de sistema → amostra sem `processes` (tabela vazia no admin).
 
-Consolidação TWA, buckets adaptativos e buffers: ver [`apps/api/MODULE.md`](apps/api/MODULE.md#consolidação-de-telemetria).
+Detalhes de buffers, roteamento no agente e endpoints: [`apps/api/MODULE.md`](apps/api/MODULE.md#retenção-e-buffers).
 
 ---
 

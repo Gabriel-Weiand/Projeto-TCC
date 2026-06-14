@@ -216,6 +216,48 @@ test.group('Machines', (group) => {
     assert.equal(machine.totalDiskGb, 24800)
   })
 
+  test('admin pode salvar specs após round-trip com GB decimal (wire ÷10)', async ({
+    client,
+    assert,
+  }) => {
+    const admin = await User.create({
+      fullName: 'Admin Roundtrip',
+      email: 'admin-roundtrip@teste.com',
+      password: 'senha123',
+      role: 'admin',
+    })
+
+    const machine = await Machine.create({
+      name: 'Notebook-server',
+      description: 'Notebook',
+      status: 'available',
+      gpuModel:
+        'Advanced Micro Devices, Inc. [AMD/ATI] Navi 33 [Radeon RX 7700S/7600/7600S/7600M XT/PRO W7600]',
+      totalRamGb: 155,
+      totalVramGb: 80,
+      totalDiskGb: 1902,
+    })
+
+    const show = await client.get(`/api/v1/machines/${machine.id}`).loginAs(admin)
+    show.assertStatus(200)
+    assert.equal(show.body().totalRamGb, 15.5)
+    assert.equal(show.body().totalDiskGb, 190.2)
+
+    const response = await client.put(`/api/v1/machines/${machine.id}`).loginAs(admin).json({
+      gpuModel: 'AMD Radeon RX 7600M XT',
+      totalRamGb: show.body().totalRamGb,
+      totalVramGb: show.body().totalVramGb,
+      totalDiskGb: show.body().totalDiskGb,
+    })
+
+    response.assertStatus(200)
+    response.assertBodyContains({ gpuModel: 'AMD Radeon RX 7600M XT' })
+    await machine.refresh()
+    assert.equal(machine.gpuModel, 'AMD Radeon RX 7600M XT')
+    assert.equal(machine.totalRamGb, 155)
+    assert.equal(machine.totalDiskGb, 1902)
+  })
+
   test('admin pode limpar cpuModel para permitir novo sync', async ({ client, assert }) => {
     const admin = await User.create({
       fullName: 'Admin Clear',

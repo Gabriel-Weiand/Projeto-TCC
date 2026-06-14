@@ -24,8 +24,9 @@ const props = withDefaults(
     showCharts?: boolean;
     /** Lista de processos do último lote (somente admin). */
     showProcesses?: boolean;
+    /** Timestamp da amostra mais recente do lote (stream). */
+    latestBatchTimestamp?: string | null;
     latestProcesses?: TelemetryProcessSnapshot[] | null;
-    latestProcessBatchTimestamp?: string | null;
   }>(),
   { showTelemetry: true, showCharts: false, showProcesses: false },
 );
@@ -120,6 +121,22 @@ function fmtTempLine(val: number | null | undefined): string {
 function diskUsedPct(total: number | null, free: number | null, usagePct?: number | null): number {
   return diskUsedPctUtil(total, free, usagePct);
 }
+
+function formatBatchTime(iso: string | null | undefined): string {
+  if (!iso) return "—";
+  try {
+    return new Intl.DateTimeFormat("pt-BR", {
+      day: "2-digit",
+      month: "2-digit",
+      hour: "2-digit",
+      minute: "2-digit",
+      second: "2-digit",
+      hour12: false,
+    }).format(new Date(iso));
+  } catch {
+    return iso;
+  }
+}
 </script>
 
 <template>
@@ -129,6 +146,9 @@ function diskUsedPct(total: number | null, free: number | null, usagePct?: numbe
       v-model:collapsed="telemetryCollapsed"
       title="Telemetria"
     >
+      <template v-if="latestBatchTimestamp" #header-extra>
+        Último lote · {{ formatBatchTime(latestBatchTimestamp) }}
+      </template>
       <div v-if="liveData" class="telemetry-grid">
         <div class="tele-card">
           <div class="tele-label-row">
@@ -290,7 +310,6 @@ function diskUsedPct(total: number | null, free: number | null, usagePct?: numbe
     <MachineLiveProcessSection
       v-if="showProcesses"
       :processes="latestProcesses ?? null"
-      :batch-timestamp="latestProcessBatchTimestamp ?? null"
     />
 
     <CollapsibleSection

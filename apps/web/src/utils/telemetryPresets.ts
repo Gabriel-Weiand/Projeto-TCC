@@ -52,11 +52,11 @@ export type LabTelemetryPresets = {
 export const DEFAULT_PROCESS_CAPTURE_CONFIG: ProcessCaptureConfig = {
   compareMetric: "cpuPercent",
   topX: 10,
-  userScope: "session",
+  userScope: "all",
 };
 
 export const PROCESS_CAPTURE_USER_SCOPE_OPTIONS = [
-  { value: "session", label: "Usuários da sessão" },
+  { value: "session", label: "Usuários da sessão (vazio se nenhum lab.* conectado)" },
   { value: "all", label: "Todos os usuários" },
 ] as const;
 

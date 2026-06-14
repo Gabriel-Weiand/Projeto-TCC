@@ -20,6 +20,9 @@ function toggle() {
       @click="toggle"
     >
       <h2 class="collapse-title">{{ title }}</h2>
+      <div v-if="$slots['header-extra']" class="collapse-header-extra">
+        <slot name="header-extra" />
+      </div>
       <span
         class="collapse-chevron"
         :class="{ 'is-collapsed': collapsed }"
@@ -93,6 +96,15 @@ function toggle() {
   font-size: 1.1rem;
   font-weight: 600;
   color: var(--text-primary);
+}
+
+.collapse-header-extra {
+  margin-left: auto;
+  margin-right: 0.35rem;
+  font-size: 0.82rem;
+  font-weight: 400;
+  color: var(--text-secondary);
+  white-space: nowrap;
 }
 
 .collapse-chevron {
