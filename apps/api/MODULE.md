@@ -1660,13 +1660,13 @@ apps/api/
 │   ├── services/               # Regras de negócio por domínio
 │   │   ├── shared/
 │   │   │   └── domain_error.ts
-│   │   ├── allocation/         # Reservas (schedule, conflict, lifecycle, summarizer…)
-│   │   ├── agent/              # Heartbeat do agente
+│   │   ├── allocation/         # Reservas (schedule, conflict, lifecycle, allocation_service…)
+│   │   ├── agent/              # Heartbeat, sync-specs, ingestão de telemetria
 │   │   ├── auth/               # Login, logout, sessão
 │   │   ├── user/               # CRUD e perfil de usuários
 │   │   ├── audit/              # Tentativas SSH (listagem)
 │   │   ├── lab/                # Config, manutenção, runtime settings
-│   │   ├── machine/            # Cache, discos, specs, decommission…
+│   │   ├── machine/            # Cache, discos, specs, api_format, machine_service…
 │   │   ├── machine_group/      # CRUD de grupos de máquinas
 │   │   ├── notification/       # Envio (notification_service) + caixa (inbox_service)
 │   │   ├── system/             # Manutenção admin, prune, hard deletes

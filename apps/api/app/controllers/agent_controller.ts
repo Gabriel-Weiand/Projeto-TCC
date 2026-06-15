@@ -1,109 +1,31 @@
 import type { HttpContext } from '@adonisjs/core/http'
-import { DateTime } from 'luxon'
 import { telemetryReportValidator } from '#validators/telemetry'
 import { heartbeatValidator, syncSpecsValidator } from '#validators/agent'
-import { telemetryBuffer } from '#services/telemetry/buffer'
-import { idleTelemetryBuffer } from '#services/telemetry/idle_buffer'
-import { resolveMachineIntervalSeconds } from '#services/telemetry/presets'
-import { machineCache } from '#services/machine/cache'
-import HeartbeatService from '#services/agent/heartbeat_service'
-import Allocation from '#models/allocation'
-import { mergeDiskPartitionsFromTelemetry } from '#services/machine/disk_partitions'
-import { applySyncSpecsIfEmpty } from '#services/machine/specs_merge'
+import { AgentHeartbeatService } from '#services/agent/agent_heartbeat'
+import { SyncSpecsService } from '#services/agent/sync_specs_service'
+import { TelemetryIngestService } from '#services/agent/telemetry_ingest'
 
 export default class AgentController {
   async heartbeat({ authenticatedMachine, request, response }: HttpContext) {
-    const machine = authenticatedMachine!
     const payload = await request.validateUsing(heartbeatValidator)
-
-    // Instancia o serviço inteligente
-    const heartbeatService = new HeartbeatService()
-    const responseData = await heartbeatService.processHeartbeat(machine, payload)
-
-    // Atualiza presença do agente; status efetivo é calculado na leitura (alocações + heartbeat).
-    machine.lastSeenAt = DateTime.now()
-    machine.currentSessions = payload.connectedUsers || []
-    await machine.save()
-    machineCache.invalidate(machine.token)
-
-    return response.ok(responseData)
+    const result = await AgentHeartbeatService.run(authenticatedMachine!, payload)
+    return response.ok(result)
   }
 
   async syncSpecs({ authenticatedMachine, request, response }: HttpContext) {
-    const machine = authenticatedMachine!
     const data = await request.validateUsing(syncSpecsValidator)
-
-    applySyncSpecsIfEmpty(machine, data)
-
-    await machine.save()
-    machineCache.invalidate(machine.token)
-
-    return response.ok({
-      synced: true,
-      machine: {
-        id: machine.id,
-        name: machine.name,
-        cpuModel: machine.cpuModel,
-        gpuModel: machine.gpuModel,
-        totalVramGb: machine.totalVramGb,
-        totalRamGb: machine.totalRamGb,
-        totalDiskGb: machine.totalDiskGb,
-      },
-    })
+    const result = await SyncSpecsService.apply(authenticatedMachine!, data)
+    return response.ok(result)
   }
 
   async telemetry({ authenticatedMachine, request, response }: HttpContext) {
-    const machine = authenticatedMachine!
-    const body = request.body() as { data?: Record<string, unknown>[] }
-    if (Array.isArray(body?.data)) {
-      body.data = body.data.map((item) => ({
-        ...item,
-        disksInfo: item.disksInfo ?? item.disks ?? null,
-      }))
-    }
+    const body = TelemetryIngestService.normalizeRequestBody(
+      request.body() as { data?: Record<string, unknown>[] }
+    )
     const { data } = await telemetryReportValidator.validate(body)
 
-    if (data.length === 0) return response.noContent()
-
-    // 1. Procura se existe alguma alocação rodando neste exato segundo
-    const nowMs = DateTime.now().toMillis()
-    const activeAllocations = await Allocation.query()
-      .where('machineId', machine.id)
-      .whereIn('status', ['approved'])
-
-    const activeAlloc = activeAllocations.find(
-      (a) => a.startTime.toMillis() <= nowMs && a.endTime.toMillis() >= nowMs
-    )
-
-    // 2. Roteamento Inteligente da Telemetria
-    const batchPayload = data.map((item) =>
-      activeAlloc
-        ? { allocationId: activeAlloc.id, ...item }
-        : { allocationId: 0, ...item }
-    )
-
-    for (const item of batchPayload) {
-      if (activeAlloc) {
-        telemetryBuffer.add(machine.id, item)
-      } else {
-        telemetryBuffer.updateRealtime(machine.id, item)
-        const intervalSeconds = resolveMachineIntervalSeconds(machine, false)
-        idleTelemetryBuffer.ingest(machine.id, item, intervalSeconds)
-      }
-    }
-
-    telemetryBuffer.recordBatch(machine.id, batchPayload)
-
-    // 3. Atualiza presença e capacidade de partições (última amostra do lote com disksInfo)
-    machine.lastSeenAt = DateTime.now()
-    const latestDisksSample = [...batchPayload]
-      .reverse()
-      .find((item) => Array.isArray(item.disksInfo) && item.disksInfo.length > 0)
-    if (latestDisksSample?.disksInfo) {
-      machine.disks = mergeDiskPartitionsFromTelemetry(latestDisksSample.disksInfo, machine.disks)
-    }
-    await machine.save()
-    machineCache.invalidate(machine.token)
+    const result = await TelemetryIngestService.ingestBatch(authenticatedMachine!, data)
+    if (result.empty) return response.noContent()
 
     return response.noContent()
   }
