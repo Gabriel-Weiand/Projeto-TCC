@@ -7,13 +7,13 @@
 
 import cron from 'node-cron'
 import logger from '@adonisjs/core/services/logger'
-import { autoFinalizeExpired } from '#services/allocation_summarizer'
-import { labConfig } from '#services/lab_config'
-import { runLabMaintenance } from '#services/lab_maintenance'
+import { autoFinalizeExpired } from '#services/allocation/summarizer'
+import { labConfig } from '#services/lab/config'
+import { runLabMaintenance } from '#services/lab/maintenance'
 import {
   runScheduledAllocationReminders,
   notifyOfflineAgents,
-} from '#services/notification_service'
+} from '#services/notification/notification_service'
 
 /**
  * Manutenção sistemática: tokens, resumo TWA, prune de alocações/notificações/SSH.

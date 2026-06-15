@@ -1,6 +1,6 @@
 import type { HttpContext } from '@adonisjs/core/http'
 import type { NextFn } from '@adonisjs/core/types/http'
-import { machineCache } from '#services/machine_cache'
+import { machineCache } from '#services/machine/cache'
 
 export default class MachineAuthMiddleware {
   async handle(ctx: HttpContext, next: NextFn) {

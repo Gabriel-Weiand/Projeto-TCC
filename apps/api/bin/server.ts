@@ -40,7 +40,7 @@ new Ignitor(APP_ROOT, { importer: IMPORTER })
       const { initScheduler } = await import('#start/scheduler')
       initScheduler()
 
-      const { applyLiveTelemetrySeedIfPresent } = await import('#services/dev_live_telemetry_seed')
+      const { applyLiveTelemetrySeedIfPresent } = await import('#services/dev/live_telemetry_seed')
       applyLiveTelemetrySeedIfPresent()
     })
     
@@ -49,7 +49,7 @@ new Ignitor(APP_ROOT, { importer: IMPORTER })
 
     // Flush do buffer de telemetria antes de encerrar
     app.terminating(async () => {
-      const { telemetryBuffer } = await import('#services/telemetry_buffer')
+      const { telemetryBuffer } = await import('#services/telemetry/buffer')
       await telemetryBuffer.shutdown()
     })
   })

@@ -4,7 +4,7 @@ import {
   normalizeLabTelemetryPresets,
   saveLabTelemetryPresets,
   type LabTelemetryPresets,
-} from '#services/telemetry_presets'
+} from '#services/telemetry/presets'
 import { updateLabTelemetryPresetsValidator } from '#validators/lab_telemetry'
 
 export default class LabTelemetryController {

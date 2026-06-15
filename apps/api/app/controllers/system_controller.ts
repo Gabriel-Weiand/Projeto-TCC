@@ -1,18 +1,9 @@
 import type { HttpContext } from '@adonisjs/core/http'
-import Allocation from '#models/allocation'
-import Notification from '#models/notification'
-import SshConnectionAttempt from '#models/ssh_connection_attempt'
-import { DateTime } from 'luxon'
 import {
   pruneNotificationsValidator,
   pruneSshAttemptsValidator,
 } from '#validators/system'
-import { labConfig } from '#services/lab_config'
-import {
-  pruneNotifications,
-  pruneSshAttempts,
-  runLabMaintenance,
-} from '#services/lab_maintenance'
+import { SystemService } from '#services/system/system_service'
 
 export default class SystemController {
   /**
@@ -21,12 +12,8 @@ export default class SystemController {
    * POST /api/v1/system/maintenance/run
    */
   async runMaintenance({ response }: HttpContext) {
-    const result = await runLabMaintenance()
-
-    return response.ok({
-      message: 'Manutenção executada com sucesso.',
-      ...result,
-    })
+    const result = await SystemService.runMaintenance()
+    return response.ok(result)
   }
 
   /**
@@ -36,18 +23,8 @@ export default class SystemController {
    */
   async pruneNotifications({ request, response }: HttpContext) {
     const payload = await request.validateUsing(pruneNotificationsValidator)
-
-    const before = payload.before ? DateTime.fromJSDate(payload.before) : undefined
-
-    const deleted = await pruneNotifications({
-      before,
-      userId: payload.userId,
-    })
-
-    return response.ok({
-      message: 'Notificações removidas com sucesso.',
-      deleted,
-    })
+    const result = await SystemService.pruneNotifications(payload)
+    return response.ok(result)
   }
 
   /**
@@ -57,17 +34,8 @@ export default class SystemController {
    */
   async pruneSshAttempts({ request, response }: HttpContext) {
     const payload = await request.validateUsing(pruneSshAttemptsValidator)
-
-    const deleted = await pruneSshAttempts({
-      keepDays: payload.keepDays,
-      machineId: payload.machineId,
-    })
-
-    return response.ok({
-      message: 'Tentativas SSH removidas com sucesso.',
-      deleted,
-      keepDays: payload.keepDays ?? labConfig.maintenance.pruneSshAttemptsDays,
-    })
+    const result = await SystemService.pruneSshAttempts(payload)
+    return response.ok(result)
   }
 
   /**
@@ -76,8 +44,7 @@ export default class SystemController {
    * DELETE /api/v1/system/allocations/:id
    */
   async destroyAllocation({ params, response }: HttpContext) {
-    const allocation = await Allocation.findOrFail(params.id)
-    await allocation.delete()
+    await SystemService.hardDeleteAllocation(Number(params.id))
     return response.noContent()
   }
 
@@ -87,8 +54,7 @@ export default class SystemController {
    * DELETE /api/v1/system/notifications/:id
    */
   async destroyNotification({ params, response }: HttpContext) {
-    const notification = await Notification.findOrFail(params.id)
-    await notification.delete()
+    await SystemService.hardDeleteNotification(Number(params.id))
     return response.noContent()
   }
 
@@ -98,9 +64,7 @@ export default class SystemController {
    * DELETE /api/v1/system/ssh-attempts/:id
    */
   async destroySshAttempt({ params, response }: HttpContext) {
-    const attempt = await SshConnectionAttempt.findOrFail(params.id)
-    await attempt.delete()
+    await SystemService.hardDeleteSshAttempt(Number(params.id))
     return response.noContent()
   }
-
 }

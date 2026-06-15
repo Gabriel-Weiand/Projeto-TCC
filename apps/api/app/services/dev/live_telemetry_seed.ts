@@ -1,12 +1,12 @@
 import { readFileSync, writeFileSync, mkdirSync, existsSync } from 'node:fs'
 import { join } from 'node:path'
 import app from '@adonisjs/core/services/app'
-import { telemetryBuffer } from '#services/telemetry_buffer'
-import { idleTelemetryBuffer } from '#services/telemetry_idle_buffer'
+import { telemetryBuffer } from '#services/telemetry/buffer'
+import { idleTelemetryBuffer } from '#services/telemetry/idle_buffer'
 import {
   generateRawTelemetriesWire,
   type UsageProfile,
-} from '#services/seed_chart_series'
+} from '#services/dev/seed_chart_series'
 import logger from '@adonisjs/core/services/logger'
 
 export type LiveTelemetrySeedEntry = {

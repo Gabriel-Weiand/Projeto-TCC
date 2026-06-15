@@ -9,7 +9,7 @@ import db from '@adonisjs/lucid/services/db'
 import Allocation from '#models/allocation'
 import Machine from '#models/machine'
 import Notification from '#models/notification'
-import { labConfig } from '#services/lab_config'
+import { labConfig } from '#services/lab/config'
 
 const AuthFinder = withAuthFinder(() => hash.use('scrypt'), {
   uids: ['email'],

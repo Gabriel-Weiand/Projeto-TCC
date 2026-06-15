@@ -3,8 +3,8 @@ import AllocationMetric from '#models/allocation_metric'
 import Telemetry from '#models/telemetry'
 import logger from '@adonisjs/core/services/logger'
 import { DateTime } from 'luxon'
-import { notifyAllocationAutoFinished } from '#services/notification_service'
-import { sftpEndsAt } from '#services/allocation_access'
+import { notifyAllocationAutoFinished } from '#services/notification/notification_service'
+import { sftpEndsAt } from '#services/allocation/access'
 import {
   downsampleToBuckets,
   parseTimestampMs,
@@ -12,8 +12,8 @@ import {
   chartBucketMinutes,
   type ChartSeriesPoint,
   type TelemetrySample,
-} from '#services/telemetry_downsample'
-import { buildProcessSummary } from '#services/process_summary'
+} from '#services/telemetry/downsample'
+import { buildProcessSummary } from '#services/telemetry/process_summary'
 
 function telemetryToSample(row: Telemetry): TelemetrySample {
   return {

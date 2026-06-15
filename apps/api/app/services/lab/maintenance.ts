@@ -3,8 +3,8 @@ import { DateTime } from 'luxon'
 import Allocation from '#models/allocation'
 import Notification from '#models/notification'
 import SshConnectionAttempt from '#models/ssh_connection_attempt'
-import { labConfig, labNow } from '#services/lab_config'
-import { summarizeAllocation } from '#services/allocation_summarizer'
+import { labConfig, labNow } from '#services/lab/config'
+import { summarizeAllocation } from '#services/allocation/summarizer'
 /** Statuses de alocações que não ocorrerão — elegíveis para prune por endTime. */
 export const TERMINAL_ALLOCATION_STATUSES = ['finished', 'cancelled', 'denied'] as const
 

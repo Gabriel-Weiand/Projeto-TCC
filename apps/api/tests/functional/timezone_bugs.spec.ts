@@ -4,8 +4,8 @@ import User from '#models/user'
 import Allocation from '#models/allocation'
 import testUtils from '@adonisjs/core/services/test_utils'
 import { DateTime } from 'luxon'
-import { autoFinalizeExpired } from '#services/allocation_summarizer'
-import { pruneAllocations, pruneExpiredTokens } from '#services/lab_maintenance'
+import { autoFinalizeExpired } from '#services/allocation/summarizer'
+import { pruneAllocations, pruneExpiredTokens } from '#services/lab/maintenance'
 import { createTestMachine } from '../helpers/test_machine.js'
 
 /**

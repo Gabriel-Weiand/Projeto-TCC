@@ -6,8 +6,8 @@ import {
   formatTelemetryStorageTable,
   telemetrySampleCount,
   FIVE_MINUTE_INTERVAL_SECONDS,
-} from '#services/telemetry_storage_estimate'
-import { TELEMETRY_PROCESS_CAPTURE_TOP_X_MAX } from '#services/telemetry_presets'
+} from '#services/telemetry/storage_estimate'
+import { TELEMETRY_PROCESS_CAPTURE_TOP_X_MAX } from '#services/telemetry/presets'
 
 test.group('telemetry_storage_estimate', () => {
   test('24h @ 2s produz 43201 amostras', ({ assert }) => {

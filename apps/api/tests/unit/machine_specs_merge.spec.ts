@@ -4,8 +4,8 @@ import {
   applySyncSpecsIfEmpty,
   apiGbToWire,
   normalizeAdminMachineWireFields,
-} from '#services/machine_specs_merge'
-import { mergeDiskPartitionsFromAgent } from '#services/disk_partitions'
+} from '#services/machine/specs_merge'
+import { mergeDiskPartitionsFromAgent } from '#services/machine/disk_partitions'
 
 test.group('machine_specs_merge', () => {
   test('applySyncSpecsIfEmpty preenche campos vazios', ({ assert }) => {

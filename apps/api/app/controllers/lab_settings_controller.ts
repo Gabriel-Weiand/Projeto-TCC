@@ -2,7 +2,7 @@ import type { HttpContext } from '@adonisjs/core/http'
 import {
   getLabRuntimeSettingsResponse,
   saveLabRuntimeSettings,
-} from '#services/lab_runtime_settings'
+} from '#services/lab/runtime_settings'
 import { updateLabSettingsValidator } from '#validators/lab_settings'
 
 export default class LabSettingsController {

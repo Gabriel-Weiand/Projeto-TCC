@@ -4,11 +4,11 @@ import Allocation from '#models/allocation'
 import MachineUser from '#models/machine_user'
 import SshConnectionAttempt from '#models/ssh_connection_attempt'
 import logger from '@adonisjs/core/services/logger'
-import { buildAgentTelemetryConfig } from '#services/telemetry_presets'
+import { buildAgentTelemetryConfig } from '#services/telemetry/presets'
 import {
   checkSshFailureFlood,
   maybeNotifyMissingSshKeyAtSessionStart,
-} from '#services/notification_service'
+} from '#services/notification/notification_service'
 import {
   graceEndsAt,
   machineHasAllocationTelemetry,
@@ -17,13 +17,13 @@ import {
   allowHomeMigrationForUser,
   sftpEndsAt,
   type AccessPhase,
-} from '#services/allocation_access'
+} from '#services/allocation/access'
 import {
   buildProvisioningFromAccessType,
   type AccessType,
-} from '#services/machine_provisioned_users'
-import { getLabAccessConfig } from '#services/lab_config'
-import { resolveHomeDirectory } from '#services/disk_partitions'
+} from '#services/machine/provisioned_users'
+import { getLabAccessConfig } from '#services/lab/config'
+import { resolveHomeDirectory } from '#services/machine/disk_partitions'
 
 export default class HeartbeatService {
   /**

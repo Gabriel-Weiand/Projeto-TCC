@@ -1,8 +1,8 @@
 /**
  * Gera chart_series e telemetrias brutas para seed — perfis em degraus (sem senoides).
  */
-import type { ProcessWireSnapshot } from '#services/process_summary'
-import type { TelemetrySetConfig } from '#services/telemetry_presets'
+import type { ProcessWireSnapshot } from '#services/telemetry/process_summary'
+import type { TelemetrySetConfig } from '#services/telemetry/presets'
 
 export type UsageProfile =
   | 'training_burst'

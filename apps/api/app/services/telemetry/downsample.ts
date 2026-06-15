@@ -1,5 +1,5 @@
-import type { TelemetryPayload } from '#services/telemetry_buffer'
-import { TELEMETRY_INTERVAL_MAX } from '#services/telemetry_presets'
+import type { TelemetryPayload } from '#services/telemetry/buffer'
+import { TELEMETRY_INTERVAL_MAX } from '#services/telemetry/presets'
 
 /** Métricas numéricas agregáveis por TWA (wire format ×10). */
 export const TELEMETRY_NUMERIC_KEYS = [

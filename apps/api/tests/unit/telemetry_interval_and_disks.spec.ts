@@ -1,7 +1,7 @@
 import { test } from '@japa/runner'
 import Machine from '#models/machine'
-import { buildAgentTelemetryConfig } from '#services/telemetry_presets'
-import { normalizeRealtimeTelemetry } from '#services/telemetry_normalize'
+import { buildAgentTelemetryConfig } from '#services/telemetry/presets'
+import { normalizeRealtimeTelemetry } from '#services/telemetry/normalize'
 import {
   applyMainDiskDefaults,
   classifyDiskPartitionRole,
@@ -14,8 +14,8 @@ import {
   normalizeAllocationHomeMount,
   resolveDefaultAllocationHomeMount,
   resolveMainDiskMountpoint,
-} from '#services/disk_partitions'
-import { canChangeAllocationHomeMount } from '#services/allocation_home_mount'
+} from '#services/machine/disk_partitions'
+import { canChangeAllocationHomeMount } from '#services/allocation/home_mount'
 import Allocation from '#models/allocation'
 import { DateTime } from 'luxon'
 

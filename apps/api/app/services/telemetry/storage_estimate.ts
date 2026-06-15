@@ -3,7 +3,7 @@ import {
   FULL_TELEMETRY_SET,
   TELEMETRY_PROCESS_CAPTURE_TOP_X_MAX,
   type TelemetrySetConfig,
-} from '#services/telemetry_presets'
+} from '#services/telemetry/presets'
 import {
   applyTelemetrySetToSeedRow,
   generateProcessSnapshotsWire,
@@ -11,15 +11,15 @@ import {
   seedActiveUsersWire,
   seedDisksInfoWire,
   type RawTelemetrySeed,
-} from '#services/seed_chart_series'
-import { buildProcessSummary } from '#services/process_summary'
+} from '#services/dev/seed_chart_series'
+import { buildProcessSummary } from '#services/telemetry/process_summary'
 import {
   buildAllocationChartSeries,
-} from '#services/allocation_summarizer'
+} from '#services/allocation/summarizer'
 import {
   chartBucketMinutes,
   resolveChartBucketMs,
-} from '#services/telemetry_downsample'
+} from '#services/telemetry/downsample'
 import type Allocation from '#models/allocation'
 import type Telemetry from '#models/telemetry'
 import { DateTime } from 'luxon'

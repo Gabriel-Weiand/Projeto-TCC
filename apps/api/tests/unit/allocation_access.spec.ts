@@ -6,8 +6,8 @@ import {
   allocationNeedsProvisioning,
   resolveAccessPhase,
   type LabAccessConfig,
-} from '#services/allocation_access'
-import { getLabAccessConfig } from '#services/lab_config'
+} from '#services/allocation/access'
+import { getLabAccessConfig } from '#services/lab/config'
 
 function alloc(
   id: number,

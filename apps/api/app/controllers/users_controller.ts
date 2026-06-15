@@ -1,8 +1,7 @@
 import type { HttpContext } from '@adonisjs/core/http'
-import User from '#models/user'
 import { registerValidator } from '#validators/auth_user'
 import { updateUserValidator, updateSshKeyValidator } from '#validators/user'
-import { notifySshKeyRequired } from '#services/notification_service'
+import { UserService } from '#services/user/user_service'
 
 export default class UsersController {
   /**
@@ -11,7 +10,7 @@ export default class UsersController {
    * GET /api/v1/users
    */
   async index({ response }: HttpContext) {
-    const users = await User.query().orderBy('fullName', 'asc')
+    const users = await UserService.listUsers()
     return response.ok(users)
   }
 
@@ -22,59 +21,35 @@ export default class UsersController {
    */
   async store({ request, response }: HttpContext) {
     const payload = await request.validateUsing(registerValidator)
-    const user = await User.create(payload)
-    await notifySshKeyRequired(user.id)
-
+    const user = await UserService.createUser(payload)
     return response.created(user)
   }
 
   /**
    * Atualiza um usuário (Exclusivo para ADMIN).
-   * * PUT /api/v1/users/:id
+   *
+   * PUT /api/v1/users/:id
    */
   async update({ params, request, response }: HttpContext) {
-    const targetUser = await User.findOrFail(params.id)
-
     const data = await request.validateUsing(updateUserValidator, {
-      meta: { userId: targetUser.id },
+      meta: { userId: Number(params.id) },
     })
-
-    const patch: Pick<typeof data, 'password' | 'role'> = {}
-    if (data.password) patch.password = data.password
-    if (data.role !== undefined) patch.role = data.role
-
-    targetUser.merge(patch)
-    await targetUser.save()
-
-    return response.ok(targetUser)
+    const user = await UserService.updateUserByAdmin(Number(params.id), data)
+    return response.ok(user)
   }
 
   async updateMe({ auth, request, response }: HttpContext) {
     const user = auth.user!
-
-    // Passa o userId no meta para a validação de unicidade do email ignorar o próprio utilizador
     const data = await request.validateUsing(updateUserValidator, {
       meta: { userId: user.id },
     })
-
-    // Garante que o utilizador normal nunca consegue injetar a role 'admin'
-    if (data.role && data.role !== user.role) {
-      delete data.role
-    }
-
-    user.merge(data)
-    await user.save()
-
-    return response.ok(user)
+    const updated = await UserService.updateOwnProfile(user, data)
+    return response.ok(updated)
   }
 
   async updateSshKey({ auth, request, response }: HttpContext) {
-    const user = auth.user!
     const { sshPublicKey } = await request.validateUsing(updateSshKeyValidator)
-
-    user.sshPublicKey = sshPublicKey
-    await user.save()
-
+    const user = await UserService.updateSshKey(auth.user!, sshPublicKey)
     return response.ok(user)
   }
 
@@ -84,9 +59,7 @@ export default class UsersController {
    * DELETE /api/v1/users/:id
    */
   async destroy({ params, response }: HttpContext) {
-    const user = await User.findOrFail(params.id)
-    await user.delete()
-
+    await UserService.deleteUser(Number(params.id))
     return response.noContent()
   }
 }

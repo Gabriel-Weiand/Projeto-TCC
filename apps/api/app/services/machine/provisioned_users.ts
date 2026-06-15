@@ -6,8 +6,8 @@ import MachineUser from '#models/machine_user'
 import {
   resolveDominantAccessForUser,
   type AccessPhase,
-} from '#services/allocation_access'
-import { getLabAccessConfig } from '#services/lab_config'
+} from '#services/allocation/access'
+import { getLabAccessConfig } from '#services/lab/config'
 
 export type AccessType = 'auto' | 'shell' | 'sftp' | 'revoked'
 

@@ -65,7 +65,7 @@ node ace test
 
 ## Specs, discos e sobreposição admin ↔ agente
 
-Hardware estável e política de volumes seguem regras distintas. Serviços: `#services/machine_specs_merge.ts`, `#services/disk_partitions.ts`.
+Hardware estável e política de volumes seguem regras distintas. Serviços: `#services/machine/specs_merge`, `#services/machine/disk_partitions`.
 
 ### Merge de specs no `sync-specs` (`applySyncSpecsIfEmpty`)
 
@@ -113,7 +113,7 @@ $TWA = \frac{\sum (v_i \cdot \Delta t_i)}{T_{total}}$
 
 A API mantém **dois buffers distintos em RAM** (singleton por processo), além da persistência em SQLite durante alocações.
 
-#### 1. `telemetryBuffer` (`#services/telemetry_buffer.ts`) — tempo real + fila de persistência
+#### 1. `telemetryBuffer` (`#services/telemetry/buffer`) — tempo real + fila de persistência
 
 | Estrutura | Capacidade | Função |
 |-----------|------------|--------|
@@ -128,7 +128,7 @@ A API mantém **dois buffers distintos em RAM** (singleton por processo), além 
 
 `recordBatch()` guarda sempre o último lote (≤ 15) para diff/playback no front.
 
-#### 2. `idleTelemetryBuffer` (`#services/telemetry_idle_buffer.ts`) — gráfico ocioso 24 h
+#### 2. `idleTelemetryBuffer` (`#services/telemetry/idle_buffer`) — gráfico ocioso 24 h
 
 | Estrutura | Capacidade | Função |
 |-----------|------------|--------|
@@ -215,7 +215,7 @@ Sempre: telemetryBuffer.recordBatch(lote completo)
 
 ## Notificações (`notification_service`)
 
-Política central em `#services/notification_service.ts`. Disparos por controller, heartbeat ou scheduler (`start/scheduler.ts`, mesmo cron do auto-finalize). Variáveis: `LAB_NOTIF_*` em `.env.example`.
+Política central em `#services/notification/notification_service`. Disparos por controller, heartbeat ou scheduler (`start/scheduler.ts`, mesmo cron do auto-finalize). Variáveis: `LAB_NOTIF_*` em `.env.example`.
 
 ### Usuário
 
@@ -1615,12 +1615,36 @@ O provisionamento é **declarativo e sem fila**: a API **não armazena ordens pe
 
 ---
 
+## Camadas (controllers × services)
+
+```
+Request HTTP
+  → Middleware     (auth, admin, machine token)
+  → Controller     (validação VineJS, chama service, mapeia erro → HTTP)
+      → Service(s) (regras de negócio, orquestração, persistência via models)
+      → Model      (entidade Lucid)
+  → Response JSON
+```
+
+| Camada | Responsabilidade | Não deve |
+|--------|------------------|----------|
+| **Controller** | Validar input, autorizar rota, chamar service, serializar resposta | Conter regras de negócio, queries complexas, transações |
+| **Service** | Regras de domínio, orquestração, side effects | Importar `HttpContext` ou retornar status HTTP |
+| **Validator** | Schema de entrada (formato, tipos) | Regras de negócio (conflito, fase, ownership) |
+| **Model** | Entidade, relações, queries básicas | Orquestração de fluxos multi-entidade |
+
+**Erros de domínio:** services lançam `DomainError` (`#services/shared/domain_error`); controllers traduzem via `handleDomainError` (`#controllers/shared/handle_domain_error`).
+
+**Imports:** alias `#services/{domínio}/{módulo}` — ex.: `#services/allocation/schedule`, `#services/telemetry/buffer`.
+
 ## Estrutura interna da API
 
 ```
 apps/api/
 ├── app/
-│   ├── controllers/      # Lógica de requisições HTTP
+│   ├── controllers/          # Entrada HTTP (validação + resposta)
+│   │   ├── shared/
+│   │   │   └── handle_domain_error.ts
 │   │   ├── agent_controller.ts
 │   │   ├── allocations_controller.ts
 │   │   ├── auth_controller.ts
@@ -1631,31 +1655,32 @@ apps/api/
 │   │   ├── system_controller.ts
 │   │   ├── utils_controller.ts
 │   │   └── users_controller.ts
-│   ├── middleware/       # Interceptadores de requisição
-│   │   ├── auth_middleware.ts
-│   │   ├── machine_auth_middleware.ts
-│   │   └── is_admin_middleware.ts
-│   ├── models/           # Entidades do banco de dados
-│   │   ├── user.ts
-│   │   ├── machine.ts
-│   │   ├── allocation.ts
-│   │   └── telemetry.ts
-│   ├── services/         # Serviços auxiliares
-│   │   ├── lab_config.ts
-│   │   ├── heartbeat_service.ts
-│   │   ├── allocation_summarizer.ts
-│   │   ├── machine_cache.ts
-│   │   ├── telemetry_buffer.ts
-│   │   └── telemetry_idle_buffer.ts
-│   └── validators/       # Esquemas de validação
-├── config/               # Configurações do framework
+│   ├── middleware/           # Interceptadores de requisição
+│   ├── models/                 # Entidades do banco de dados
+│   ├── services/               # Regras de negócio por domínio
+│   │   ├── shared/
+│   │   │   └── domain_error.ts
+│   │   ├── allocation/         # Reservas (schedule, conflict, lifecycle, summarizer…)
+│   │   ├── agent/              # Heartbeat do agente
+│   │   ├── auth/               # Login, logout, sessão
+│   │   ├── user/               # CRUD e perfil de usuários
+│   │   ├── audit/              # Tentativas SSH (listagem)
+│   │   ├── lab/                # Config, manutenção, runtime settings
+│   │   ├── machine/            # Cache, discos, specs, decommission…
+│   │   ├── machine_group/      # CRUD de grupos de máquinas
+│   │   ├── notification/       # Envio (notification_service) + caixa (inbox_service)
+│   │   ├── system/             # Manutenção admin, prune, hard deletes
+│   │   ├── telemetry/          # Buffers, presets, downsample, API format
+│   │   └── dev/                # Seeders e utilitários de desenvolvimento
+│   └── validators/             # Esquemas de validação (VineJS)
+├── config/
 ├── database/
-│   ├── migrations/       # Versionamento do schema
-│   └── seeders/          # Dados de teste
+│   ├── migrations/
+│   └── seeders/
 ├── start/
-│   ├── routes.ts         # Definição de rotas
-│   └── kernel.ts         # Middlewares globais
-└── tests/                # Testes automatizados
+│   ├── routes.ts
+│   └── scheduler.ts
+└── tests/
 ```
 
 ---

@@ -1,7 +1,7 @@
 import { test } from '@japa/runner'
 import { DateTime } from 'luxon'
 import Allocation from '#models/allocation'
-import { buildProcessSummary, mergeProcessSnapshotsInSample } from '#services/process_summary'
+import { buildProcessSummary, mergeProcessSnapshotsInSample } from '#services/telemetry/process_summary'
 
 test.group('process_summary', () => {
   test('mergeProcessSnapshotsInSample soma duplicatas pid+nome na mesma amostra', ({ assert }) => {

@@ -1,10 +1,10 @@
 import { DateTime } from 'luxon'
-import { labTelemetryPublicConfig } from '#services/telemetry_presets'
-import { LAB_ENV_LIMITS } from '#services/lab_env_limits'
+import { labTelemetryPublicConfig } from '#services/telemetry/presets'
+import { LAB_ENV_LIMITS } from '#services/lab/env_limits'
 import {
   isRuntimePublicNamesEnabled,
   isRuntimeRequireAdminApproval,
-} from '#services/lab_runtime_settings'
+} from '#services/lab/runtime_settings'
 
 function clampInt(n: number, min: number, max: number): number {
   return Math.min(max, Math.max(min, Math.round(n)))

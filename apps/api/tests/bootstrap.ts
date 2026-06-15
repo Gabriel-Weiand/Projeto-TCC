@@ -5,7 +5,7 @@ import type { Config } from '@japa/runner/types'
 import { pluginAdonisJS } from '@japa/plugin-adonisjs'
 import testUtils from '@adonisjs/core/services/test_utils'
 import { authApiClient } from '@adonisjs/auth/plugins/api_client'
-import { telemetryBuffer } from '#services/telemetry_buffer'
+import { telemetryBuffer } from '#services/telemetry/buffer'
 
 /**
  * This file is imported by the "bin/test.ts" entrypoint file

@@ -4,7 +4,7 @@ import Machine from '#models/machine'
 import {
   isHeartbeatStale,
   resolveEffectiveMachineStatus,
-} from '#services/machine_effective_status'
+} from '#services/machine/effective_status'
 
 test.group('machine_effective_status', () => {
   test('heartbeat stale após 25 h UTC', ({ assert }) => {

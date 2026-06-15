@@ -1,7 +1,7 @@
 import type { HttpContext } from '@adonisjs/core/http'
-import Notification from '#models/notification'
 import { markNotificationReadValidator } from '#validators/notification'
-import { DateTime } from 'luxon'
+import { NotificationInboxService } from '#services/notification/inbox_service'
+import { runWithDomainError } from '#controllers/shared/handle_domain_error'
 
 export default class NotificationsController {
   /**
@@ -9,13 +9,7 @@ export default class NotificationsController {
    * GET /api/v1/notifications
    */
   async index({ auth, response }: HttpContext) {
-    const user = auth.user!
-
-    const notifications = await Notification.query()
-      .where('userId', user.id)
-      .orderBy('createdAt', 'desc')
-      .limit(50) // Limite razoável para a caixa de entrada
-
+    const notifications = await NotificationInboxService.listForUser(auth.user!.id)
     return response.ok(notifications)
   }
 
@@ -24,23 +18,14 @@ export default class NotificationsController {
    * PATCH /api/v1/notifications/:id/read
    */
   async markAsRead({ auth, params, request, response }: HttpContext) {
-    const user = auth.user!
-    const notification = await Notification.findOrFail(params.id)
-
-    // Segurança: Garantir que o usuário só mexe nas próprias notificações
-    if (notification.userId !== user.id) {
-      return response.forbidden({
-        message: 'Você não tem permissão para alterar esta notificação.',
-      })
-    }
-
     const { isRead } = await request.validateUsing(markNotificationReadValidator)
 
-    notification.isRead = isRead
-    notification.readAt = isRead ? DateTime.now() : null
-    await notification.save()
-
-    return response.ok(notification)
+    return runWithDomainError(
+      response,
+      () =>
+        NotificationInboxService.markRead(auth.user!, Number(params.id), isRead),
+      (notification) => response.ok(notification)
+    )
   }
 
   /**
@@ -48,16 +33,10 @@ export default class NotificationsController {
    * DELETE /api/v1/notifications/:id
    */
   async destroy({ auth, params, response }: HttpContext) {
-    const user = auth.user!
-    const notification = await Notification.findOrFail(params.id)
-
-    if (notification.userId !== user.id) {
-      return response.forbidden({
-        message: 'Você não tem permissão para excluir esta notificação.',
-      })
-    }
-
-    await notification.delete()
-    return response.noContent()
+    return runWithDomainError(
+      response,
+      () => NotificationInboxService.deleteForUser(auth.user!, Number(params.id)),
+      () => response.noContent()
+    )
   }
 }

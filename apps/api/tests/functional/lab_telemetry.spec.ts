@@ -1,7 +1,7 @@
 import { test } from '@japa/runner'
 import User from '#models/user'
 import testUtils from '@adonisjs/core/services/test_utils'
-import { getLabTelemetryPresets } from '#services/telemetry_presets'
+import { getLabTelemetryPresets } from '#services/telemetry/presets'
 
 test.group('Lab telemetry presets', (group) => {
   group.each.setup(() => testUtils.db().withGlobalTransaction())

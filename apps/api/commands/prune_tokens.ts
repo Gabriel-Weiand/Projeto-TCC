@@ -1,6 +1,6 @@
 import { BaseCommand } from '@adonisjs/core/ace'
 import { CommandOptions } from '@adonisjs/core/types/ace'
-import { pruneExpiredTokens } from '#services/lab_maintenance'
+import { pruneExpiredTokens } from '#services/lab/maintenance'
 
 export default class PruneTokens extends BaseCommand {
   static commandName = 'prune:tokens'

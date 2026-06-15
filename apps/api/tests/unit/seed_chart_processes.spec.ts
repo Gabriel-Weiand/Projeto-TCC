@@ -2,7 +2,7 @@ import { test } from '@japa/runner'
 import {
   generateProcessSnapshotsWire,
   generateRawTelemetriesWire,
-} from '#services/seed_chart_series'
+} from '#services/dev/seed_chart_series'
 
 test.group('seed_chart_series processes', () => {
   test('generateProcessSnapshotsWire retorna top com métricas GPU em carga alta', ({ assert }) => {

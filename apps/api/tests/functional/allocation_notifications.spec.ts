@@ -4,7 +4,7 @@ import Allocation from '#models/allocation'
 import Notification from '#models/notification'
 import testUtils from '@adonisjs/core/services/test_utils'
 import { DateTime } from 'luxon'
-import { runScheduledAllocationReminders } from '#services/notification_service'
+import { runScheduledAllocationReminders } from '#services/notification/notification_service'
 import { createTestMachine } from '../helpers/test_machine.js'
 
 test.group('Allocation notifications', (group) => {

@@ -1,6 +1,6 @@
 import Allocation from '#models/allocation'
 import Telemetry from '#models/telemetry'
-import { parseTimestampMs } from '#services/telemetry_downsample'
+import { parseTimestampMs } from '#services/telemetry/downsample'
 
 export type ProcessWireSnapshot = {
   pid: number

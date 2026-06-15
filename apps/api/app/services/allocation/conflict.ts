@@ -1,6 +1,6 @@
 import { DateTime } from 'luxon'
 import Allocation from '#models/allocation'
-import { getLabAccessConfig } from '#services/lab_config'
+import { getLabAccessConfig } from '#services/lab/config'
 
 /** Fim do bloqueio de calendário: `endTime` + grace (reservas `approved`). */
 function calendarBlockEnd(allocation: Allocation, graceMinutes: number): DateTime {

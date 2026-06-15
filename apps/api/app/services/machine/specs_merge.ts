@@ -1,5 +1,5 @@
 import type Machine from '#models/machine'
-import { mergeDiskPartitionsFromAgent } from '#services/disk_partitions'
+import { mergeDiskPartitionsFromAgent } from '#services/machine/disk_partitions'
 
 export type SyncSpecsPayload = {
   cpuModel?: string | null

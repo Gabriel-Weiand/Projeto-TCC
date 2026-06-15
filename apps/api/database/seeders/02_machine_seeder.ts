@@ -2,7 +2,7 @@ import { BaseSeeder } from '@adonisjs/lucid/seeders'
 import { DateTime } from 'luxon'
 import Machine from '#models/machine'
 import MachineGroup from '#models/machine_group'
-import { enrichDiskPartitions, type DiskPartitionRecord } from '#services/disk_partitions'
+import { enrichDiskPartitions, type DiskPartitionRecord } from '#services/machine/disk_partitions'
 import {
   ANYDESK_DESCRIPTION,
   MOCK_LAB_MACHINES,

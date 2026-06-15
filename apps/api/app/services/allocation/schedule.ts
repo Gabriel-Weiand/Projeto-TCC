@@ -2,7 +2,7 @@ import { DateTime } from 'luxon'
 import {
   assertAllocationEndWithinLimit,
   assertAllocationMinDuration,
-} from '#services/lab_config'
+} from '#services/lab/config'
 
 export type ScheduleValidationError = {
   code: string

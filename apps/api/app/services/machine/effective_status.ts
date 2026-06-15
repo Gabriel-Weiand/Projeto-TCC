@@ -1,8 +1,8 @@
 import { DateTime } from 'luxon'
 import type Machine from '#models/machine'
 import Allocation from '#models/allocation'
-import { graceEndsAt, type LabAccessConfig } from '#services/allocation_access'
-import { getLabAccessConfig } from '#services/lab_config'
+import { graceEndsAt, type LabAccessConfig } from '#services/allocation/access'
+import { getLabAccessConfig } from '#services/lab/config'
 import { dateTimeFromSqlUtc } from '#utils/datetime'
 
 export type MachineOperationalMode = 'available' | 'offline' | 'maintenance'

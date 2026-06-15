@@ -6,7 +6,7 @@ import Allocation from '#models/allocation'
 import SshConnectionAttempt from '#models/ssh_connection_attempt'
 import type AllocationModel from '#models/allocation'
 import type MachineModel from '#models/machine'
-import { labConfig } from '#services/lab_config'
+import { labConfig } from '#services/lab/config'
 
 function formatAllocationRange(start: DateTime, end: DateTime): string {
   const tz = labConfig.timezone

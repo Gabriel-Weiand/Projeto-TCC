@@ -1,10 +1,10 @@
-import type { TelemetryPayload } from '#services/telemetry_buffer'
+import type { TelemetryPayload } from '#services/telemetry/buffer'
 import {
   downsampleToBuckets,
   parseTimestampMs,
   TELEMETRY_NUMERIC_KEYS,
   type ChartSeriesPoint,
-} from '#services/telemetry_downsample'
+} from '#services/telemetry/downsample'
 
 /** Série exibida no front — janela 24 h @ 15 min/ponto (~96 pts). */
 export const IDLE_CHART_BUCKET_MS = 900_000

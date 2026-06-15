@@ -5,7 +5,7 @@ import SshConnectionAttempt from '#models/ssh_connection_attempt'
 import Notification from '#models/notification'
 import testUtils from '@adonisjs/core/services/test_utils'
 import { DateTime } from 'luxon'
-import { checkSshFailureFlood, notifyOfflineAgents } from '#services/notification_service'
+import { checkSshFailureFlood, notifyOfflineAgents } from '#services/notification/notification_service'
 
 test.group('Admin notifications', (group) => {
   group.each.setup(() => testUtils.db().withGlobalTransaction())

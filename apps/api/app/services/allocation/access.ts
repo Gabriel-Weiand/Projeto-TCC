@@ -1,6 +1,6 @@
 import { DateTime } from 'luxon'
 import type Allocation from '#models/allocation'
-import { getLabAccessConfig } from '#services/lab_config'
+import { getLabAccessConfig } from '#services/lab/config'
 
 export type AccessPhase =
   | 'none'

@@ -12,24 +12,24 @@ import {
   createTelemetriesInChunks,
   aggregateWireMetricsFromChart,
   type UsageProfile,
-} from '#services/seed_chart_series'
-import { resolveChartBucketMs, chartBucketMinutes } from '#services/telemetry_downsample'
-import { buildProcessSummary } from '#services/process_summary'
+} from '#services/dev/seed_chart_series'
+import { resolveChartBucketMs, chartBucketMinutes } from '#services/telemetry/downsample'
+import { buildProcessSummary } from '#services/telemetry/process_summary'
 import {
   writeLiveTelemetrySeedFile,
   type LiveTelemetrySeedEntry,
-} from '#services/dev_live_telemetry_seed'
+} from '#services/dev/live_telemetry_seed'
 import {
   logTelemetryStorageReport,
   build24hTwoSecondScenarios,
   HOUR_MS,
   generateStorageScenarioSamples,
-} from '#services/telemetry_storage_estimate'
+} from '#services/telemetry/storage_estimate'
 import {
   DEFAULT_LAB_TELEMETRY_PRESETS,
   FULL_TELEMETRY_SET,
   TELEMETRY_PROCESS_CAPTURE_TOP_X_MAX,
-} from '#services/telemetry_presets'
+} from '#services/telemetry/presets'
 
 export default class extends BaseSeeder {
   async run() {
@@ -382,7 +382,7 @@ export default class extends BaseSeeder {
       label: string
       profile: UsageProfile
       processTopX?: number
-      telemetrySet?: import('#services/telemetry_presets').TelemetrySetConfig
+      telemetrySet?: import('#services/telemetry/presets').TelemetrySetConfig
     }[] = [
       {
         allocation: allocations[12],

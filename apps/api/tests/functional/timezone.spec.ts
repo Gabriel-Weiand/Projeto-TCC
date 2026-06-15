@@ -3,7 +3,7 @@ import User from '#models/user'
 import Allocation from '#models/allocation'
 import testUtils from '@adonisjs/core/services/test_utils'
 import { DateTime, Settings } from 'luxon'
-import { labConfig } from '#services/lab_config'
+import { labConfig } from '#services/lab/config'
 import { createTestMachine } from '../helpers/test_machine.js'
 
 test.group('Timezone — processo e persistência', (group) => {

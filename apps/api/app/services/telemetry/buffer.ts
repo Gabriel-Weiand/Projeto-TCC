@@ -1,5 +1,5 @@
 import Telemetry from '#models/telemetry'
-import { idleTelemetryBuffer } from '#services/telemetry_idle_buffer'
+import { idleTelemetryBuffer } from '#services/telemetry/idle_buffer'
 import logger from '@adonisjs/core/services/logger'
 
 /** * Payload unificado de telemetria enviado pelo agente (C2).

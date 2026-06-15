@@ -1,7 +1,7 @@
 import { DateTime } from 'luxon'
 import type Allocation from '#models/allocation'
 import type Machine from '#models/machine'
-import { normalizeAllocationHomeMount } from '#services/disk_partitions'
+import { normalizeAllocationHomeMount } from '#services/machine/disk_partitions'
 
 export function canChangeAllocationHomeMount(
   allocation: Allocation,

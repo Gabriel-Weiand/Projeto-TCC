@@ -1,5 +1,5 @@
 import vine from '@vinejs/vine'
-import { TELEMETRY_PROCESS_CPU_PERCENT_WIRE_MAX } from '#services/telemetry_presets'
+import { TELEMETRY_PROCESS_CPU_PERCENT_WIRE_MAX } from '#services/telemetry/presets'
 
 const processSchema = vine.object({
   pid: vine.number().positive(),

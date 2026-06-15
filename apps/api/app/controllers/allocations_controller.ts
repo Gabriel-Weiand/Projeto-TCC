@@ -3,8 +3,8 @@ import { DateTime } from 'luxon'
 import Allocation from '#models/allocation'
 import AllocationMetric from '#models/allocation_metric'
 import Machine from '#models/machine'
-import { summarizeAllocation } from '#services/allocation_summarizer'
-import { serializeAllocationMetric } from '#services/telemetry_api_format'
+import { summarizeAllocation } from '#services/allocation/summarizer'
+import { serializeAllocationMetric } from '#services/telemetry/api_format'
 import {
   createAllocationValidator,
   updateAllocationValidator,
@@ -14,31 +14,31 @@ import { extendAllocationValidator } from '#validators/allocation'
 import {
   canSeeAllocationOwnerNames,
   resolveInitialAllocationStatus,
-} from '#services/lab_config'
-import { validateAllocationSchedule } from '#services/allocation_schedule'
-import { resolveAccessPhase } from '#services/allocation_access'
-import { findAllocationConflict } from '#services/allocation_conflict'
+} from '#services/lab/config'
+import { validateAllocationSchedule } from '#services/allocation/schedule'
+import { resolveAccessPhase } from '#services/allocation/access'
+import { findAllocationConflict } from '#services/allocation/conflict'
 import {
   isLifecycleFilter,
   resolveLifecycleStatus,
   serializeAllocation,
   serializeAllocationPage,
-} from '#services/allocation_lifecycle'
+} from '#services/allocation/lifecycle'
 import {
   notifyAdminsPendingAllocation,
   notifyAllocationFinishedByUser,
   notifyAllocationStatusChange,
   notifySessionSummaryReady,
-} from '#services/notification_service'
+} from '#services/notification/notification_service'
 import { parseUtcFromIso } from '#utils/datetime'
 import {
   canChangeAllocationHomeMount,
   resolveAllocationHomeMountForCreate,
-} from '#services/allocation_home_mount'
+} from '#services/allocation/home_mount'
 import {
   buildOccupiedMachineIds,
   resolveEffectiveMachineStatus,
-} from '#services/machine_effective_status'
+} from '#services/machine/effective_status'
 
 export default class AllocationsController {
   /**

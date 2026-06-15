@@ -12,26 +12,26 @@ import {
   deleteMachineUser,
   listMachineProvisionedUsers,
   updateMachineUserAccessType,
-} from '#services/machine_provisioned_users'
-import { telemetryBuffer } from '#services/telemetry_buffer'
-import { idleTelemetryBuffer } from '#services/telemetry_idle_buffer'
-import { normalizeChartSeriesPoint } from '#services/telemetry_api_format'
-import { machineCache } from '#services/machine_cache'
-import { cancelAllocationsForMaintenance } from '#services/notification_service'
-import { normalizeCustomAgentConfig } from '#services/telemetry_presets'
-import { normalizeRealtimeTelemetry } from '#services/telemetry_normalize'
-import { enrichDiskPartitions, mergeAdminDiskPolicyUpdate, validateMachineDiskPolicy } from '#services/disk_partitions'
+} from '#services/machine/provisioned_users'
+import { telemetryBuffer } from '#services/telemetry/buffer'
+import { idleTelemetryBuffer } from '#services/telemetry/idle_buffer'
+import { normalizeChartSeriesPoint } from '#services/telemetry/api_format'
+import { machineCache } from '#services/machine/cache'
+import { cancelAllocationsForMaintenance } from '#services/notification/notification_service'
+import { normalizeCustomAgentConfig } from '#services/telemetry/presets'
+import { normalizeRealtimeTelemetry } from '#services/telemetry/normalize'
+import { enrichDiskPartitions, mergeAdminDiskPolicyUpdate, validateMachineDiskPolicy } from '#services/machine/disk_partitions'
 import {
   buildOccupiedMachineIds,
   normalizeOperationalMode,
   resolveEffectiveMachineStatus,
-} from '#services/machine_effective_status'
+} from '#services/machine/effective_status'
 import {
   finalizeMachineDeletion,
   isMachinePendingRemoval,
   prepareMachineDecommission,
-} from '#services/machine_decommission'
-import { normalizeAdminMachineWireFields } from '#services/machine_specs_merge'
+} from '#services/machine/decommission'
+import { normalizeAdminMachineWireFields } from '#services/machine/specs_merge'
 
 export default class MachinesController {
   /** Agente envia GB×10; respostas HTTP ao front em GB (1 decimal). */

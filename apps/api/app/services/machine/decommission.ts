@@ -1,9 +1,9 @@
 import Machine from '#models/machine'
 import MachineUser from '#models/machine_user'
-import { cancelAllocationsForMaintenance } from '#services/notification_service'
-import { telemetryBuffer } from '#services/telemetry_buffer'
-import { idleTelemetryBuffer } from '#services/telemetry_idle_buffer'
-import { machineCache } from '#services/machine_cache'
+import { cancelAllocationsForMaintenance } from '#services/notification/notification_service'
+import { telemetryBuffer } from '#services/telemetry/buffer'
+import { idleTelemetryBuffer } from '#services/telemetry/idle_buffer'
+import { machineCache } from '#services/machine/cache'
 
 type MachineCustomConfig = Record<string, unknown> & { pendingRemoval?: boolean }
 

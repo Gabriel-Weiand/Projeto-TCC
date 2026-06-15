@@ -1,22 +1,10 @@
 import type { HttpContext } from '@adonisjs/core/http'
-import db from '@adonisjs/lucid/services/db'
-import MachineGroup from '#models/machine_group'
 import {
   machineGroupValidator,
   updateMachineGroupValidator,
 } from '#validators/machine_group'
-import { findMissingMachineIds, syncGroupMachines } from '#services/machine_group_sync'
-
-function machinesNotFoundResponse(
-  response: HttpContext['response'],
-  missingIds: number[]
-) {
-  return response.badRequest({
-    code: 'MACHINES_NOT_FOUND',
-    message: 'Uma ou mais máquinas informadas não existem.',
-    missingIds,
-  })
-}
+import { MachineGroupService } from '#services/machine_group/machine_group_service'
+import { runWithDomainError } from '#controllers/shared/handle_domain_error'
 
 export default class MachineGroupsController {
   /**
@@ -24,7 +12,7 @@ export default class MachineGroupsController {
    * GET /api/v1/machine-groups
    */
   async index({ response }: HttpContext) {
-    const groups = await MachineGroup.query().preload('machines').orderBy('title', 'asc')
+    const groups = await MachineGroupService.listGroups()
     return response.ok(groups)
   }
 
@@ -33,27 +21,13 @@ export default class MachineGroupsController {
    * POST /api/v1/machine-groups
    */
   async store({ request, response }: HttpContext) {
-    const { machineIds, ...data } = await request.validateUsing(machineGroupValidator)
+    const data = await request.validateUsing(machineGroupValidator)
 
-    if (machineIds && machineIds.length > 0) {
-      const missingIds = await findMissingMachineIds(machineIds)
-      if (missingIds.length > 0) {
-        return machinesNotFoundResponse(response, missingIds)
-      }
-    }
-
-    const group = await db.transaction(async (trx) => {
-      const created = await MachineGroup.create(data, { client: trx })
-
-      if (machineIds && machineIds.length > 0) {
-        await syncGroupMachines(created.id, machineIds, trx)
-      }
-
-      return created
-    })
-
-    await group.load('machines')
-    return response.created(group)
+    return runWithDomainError(
+      response,
+      () => MachineGroupService.createGroup(data),
+      (group) => response.created(group)
+    )
   }
 
   /**
@@ -61,30 +35,13 @@ export default class MachineGroupsController {
    * PUT /api/v1/machine-groups/:id
    */
   async update({ params, request, response }: HttpContext) {
-    const group = await MachineGroup.findOrFail(params.id)
-    const { machineIds, ...data } = await request.validateUsing(updateMachineGroupValidator)
+    const data = await request.validateUsing(updateMachineGroupValidator)
 
-    if (machineIds !== undefined && machineIds.length > 0) {
-      const missingIds = await findMissingMachineIds(machineIds)
-      if (missingIds.length > 0) {
-        return machinesNotFoundResponse(response, missingIds)
-      }
-    }
-
-    await db.transaction(async (trx) => {
-      if (data.title !== undefined || data.description !== undefined) {
-        group.useTransaction(trx)
-        group.merge(data)
-        await group.save()
-      }
-
-      if (machineIds !== undefined) {
-        await syncGroupMachines(group.id, machineIds, trx)
-      }
-    })
-
-    await group.load('machines')
-    return response.ok(group)
+    return runWithDomainError(
+      response,
+      () => MachineGroupService.updateGroup(Number(params.id), data),
+      (group) => response.ok(group)
+    )
   }
 
   /**
@@ -92,8 +49,7 @@ export default class MachineGroupsController {
    * DELETE /api/v1/machine-groups/:id
    */
   async destroy({ params, response }: HttpContext) {
-    const group = await MachineGroup.findOrFail(params.id)
-    await group.delete()
+    await MachineGroupService.deleteGroup(Number(params.id))
     return response.noContent()
   }
 }

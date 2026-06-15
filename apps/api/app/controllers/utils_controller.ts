@@ -1,6 +1,6 @@
 import type { HttpContext } from '@adonisjs/core/http'
 import { DateTime } from 'luxon'
-import { labConfig, labNow, labPublicConfig } from '#services/lab_config'
+import { labConfig, labNow, labPublicConfig } from '#services/lab/config'
 
 export default class UtilsController {
   /**

@@ -1,6 +1,6 @@
 import { DateTime } from 'luxon'
 import type Allocation from '#models/allocation'
-import { resolveAccessPhase } from '#services/allocation_access'
+import { resolveAccessPhase } from '#services/allocation/access'
 
 /** Status exibido (API/front); `status` no banco permanece pending/approved/… */
 export type AllocationLifecycleStatus =
