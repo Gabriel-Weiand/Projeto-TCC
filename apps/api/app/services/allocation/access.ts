@@ -121,7 +121,7 @@ const PHASE_RANK: Record<AccessPhase, number> = {
 
 export function phaseToProvisioning(
   phase: AccessPhase,
-  allocation: Allocation,
+  _allocation: Allocation,
   userSshKey: string | null
 ): ProvisioningAccess | null {
   switch (phase) {

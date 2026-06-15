@@ -1,4 +1,5 @@
 import User from '#models/user'
+import type { HttpContext } from '@adonisjs/core/http'
 
 export type LoginResult = {
   type: 'bearer'
@@ -26,8 +27,8 @@ export const AuthService = {
     }
   },
 
-  async logout(user: User): Promise<{ message: string }> {
-    await User.accessTokens.delete(user, user.currentAccessToken.identifier)
+  async logout(auth: HttpContext['auth']): Promise<{ message: string }> {
+    await auth.use('api').invalidateToken()
     return { message: 'Logged out successfully' }
   },
 }

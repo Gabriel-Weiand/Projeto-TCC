@@ -40,10 +40,7 @@ test.group('Users', (group) => {
     assert.equal(notifications[0].title, 'Cadastre sua chave SSH')
   })
 
-  test('sistema deve resolver conflitos de system_username idênticos', async ({
-    client,
-    assert,
-  }) => {
+  test('sistema deve resolver conflitos de system_username idênticos', async ({ client }) => {
     const admin = await User.create({
       fullName: 'Admin',
       email: 'admin@teste.com',

@@ -1,6 +1,5 @@
 import { BaseModel, column, belongsTo } from '@adonisjs/lucid/orm'
 import type { BelongsTo } from '@adonisjs/lucid/types/relations'
-import { DateTime } from 'luxon' // <-- Adicionar no topo (junto com os outros imports)
 import Allocation from '#models/allocation'
 
 export default class Telemetry extends BaseModel {

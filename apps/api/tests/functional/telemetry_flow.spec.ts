@@ -146,7 +146,8 @@ test.group('Fluxo Completo de Telemetria', (group) => {
     const latest = telemetryBuffer.getLatest(machine.id)
     assert.isNotNull(latest)
     assert.equal(latest!.allocationId, allocation.id)
-    assert.isAbove(latest!.cpuUsage, 0)
+    assert.isNotNull(latest!.cpuUsage)
+    assert.isAbove(latest!.cpuUsage!, 0)
 
     // === 4. FLUSH MANUAL (simula o timer de 60s) ===
     const flushed = await telemetryBuffer.flush()
@@ -167,10 +168,12 @@ test.group('Fluxo Completo de Telemetria', (group) => {
 
     // Verificar range de valores (todos dentro da escala 0-1000)
     for (const t of dbTelemetries) {
-      assert.isAtLeast(t.cpuUsage, 0)
-      assert.isAtMost(t.cpuUsage, 1000)
-      assert.isAtLeast(t.cpuTemp, 0)
-      assert.isAtMost(t.cpuTemp, 1000)
+      assert.isNotNull(t.cpuUsage)
+      assert.isNotNull(t.cpuTemp)
+      assert.isAtLeast(t.cpuUsage!, 0)
+      assert.isAtMost(t.cpuUsage!, 1000)
+      assert.isAtLeast(t.cpuTemp!, 0)
+      assert.isAtMost(t.cpuTemp!, 1000)
       assert.equal(t.allocationId, allocation.id)
     }
 
@@ -1553,6 +1556,8 @@ test.group('Buffer ocioso 24h e chart series', (group) => {
         cpuTemp: 400,
         gpuUsage: 200,
         gpuTemp: 300,
+        vramTotalGb: 480,
+        vramUsedGb: 240,
       },
       {
         timestamp: new Date(startMs + 600_000).toISOString(),
@@ -1560,6 +1565,8 @@ test.group('Buffer ocioso 24h e chart series', (group) => {
         cpuTemp: 420,
         gpuUsage: 250,
         gpuTemp: 320,
+        vramTotalGb: 480,
+        vramUsedGb: 300,
       },
     ]
 

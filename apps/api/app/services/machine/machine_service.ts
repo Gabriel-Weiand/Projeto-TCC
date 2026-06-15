@@ -121,7 +121,9 @@ export const MachineService = {
       updateData.status = normalizeOperationalMode(updateData.status as string)
     }
     if (updateData.customAgentConfig !== undefined) {
-      updateData.customAgentConfig = normalizeCustomAgentConfig(updateData.customAgentConfig)
+      updateData.customAgentConfig = normalizeCustomAgentConfig(
+        updateData.customAgentConfig as Record<string, unknown> | null | undefined
+      )
     }
     if (updateData.disks !== undefined) {
       updateData.disks = mergeAdminDiskPolicyUpdate(updateData.disks, machine.disks)

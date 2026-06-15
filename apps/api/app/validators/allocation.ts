@@ -1,10 +1,6 @@
 import vine from '@vinejs/vine'
-import { DateTime } from 'luxon'
 import { parseUtcFromIso } from '#utils/datetime'
 
-/**
- * Transforma Date para DateTime do Luxon.
- */
 vine.messagesProvider
 
 /**

@@ -83,7 +83,7 @@ test.group('Machine Groups', (group) => {
       password: '123',
       role: 'admin',
     })
-    const group = await MachineGroup.create({ title: 'Lab Listagem' })
+    await MachineGroup.create({ title: 'Lab Listagem' })
 
     const response = await client.get('/api/v1/machine-groups').loginAs(admin)
 

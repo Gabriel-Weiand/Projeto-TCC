@@ -10,7 +10,7 @@ export default class AuthController {
   }
 
   async logout({ auth, response }: HttpContext) {
-    const result = await AuthService.logout(auth.user!)
+    const result = await AuthService.logout(auth)
     return response.ok(result)
   }
 

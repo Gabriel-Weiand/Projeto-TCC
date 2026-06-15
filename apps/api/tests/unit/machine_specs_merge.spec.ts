@@ -17,7 +17,7 @@ test.group('machine_specs_merge', () => {
       ipAddress: null,
       hostFingerprint: null,
       disks: [],
-    } as Machine
+    } as unknown as Machine
 
     applySyncSpecsIfEmpty(machine, {
       cpuModel: 'Intel i7',
@@ -45,7 +45,7 @@ test.group('machine_specs_merge', () => {
       ipAddress: '192.168.1.10',
       hostFingerprint: 'SHA256:old',
       disks: [],
-    } as Machine
+    } as unknown as Machine
 
     applySyncSpecsIfEmpty(machine, {
       cpuModel: 'Agent CPU',
@@ -73,7 +73,7 @@ test.group('machine_specs_merge', () => {
       totalRamGb: 0,
       totalVramGb: null,
       disks: [],
-    } as Machine
+    } as unknown as Machine
 
     applySyncSpecsIfEmpty(machine, {
       cpuModel: 'Detected CPU',
@@ -91,7 +91,7 @@ test.group('machine_specs_merge', () => {
   })
 
   test('applySyncSpecsIfEmpty preenche totalDiskGb vazio', ({ assert }) => {
-    const machine = { totalDiskGb: null, disks: [] } as Machine
+    const machine = { totalDiskGb: null, disks: [] } as unknown as Machine
     applySyncSpecsIfEmpty(machine, { totalDiskGb: 24800 })
     assert.equal(machine.totalDiskGb, 24800)
   })

@@ -73,17 +73,6 @@ function finalizeTwa(acc: MetricAccumulators): Partial<Record<TelemetryNumericKe
   return out
 }
 
-function mergeTwaAccumulators(target: MetricAccumulators, source: MetricAccumulators): void {
-  for (const key of TELEMETRY_NUMERIC_KEYS) {
-    const src = source[key]
-    if (!src) continue
-    const dst = target[key] ?? { weightedSum: 0, totalWeight: 0 }
-    dst.weightedSum += src.weightedSum
-    dst.totalWeight += src.totalWeight
-    target[key] = dst
-  }
-}
-
 /**
  * Agrega amostras em buckets fixos usando TWA.
  * Buckets sem cobertura são omitidos (evita pontos 0/null espúrios).

@@ -12,7 +12,7 @@ test.group('Allocations', (group) => {
   // CRIAÇÃO E REGRAS DE NEGÓCIO (store)
   // =========================================================================
 
-  test('usuário deve criar uma alocação e auto-aprovar', async ({ client, assert }) => {
+  test('usuário deve criar uma alocação e auto-aprovar', async ({ client }) => {
     const user = await User.create({
       fullName: 'Teste User',
       email: 'teste@teste.com',

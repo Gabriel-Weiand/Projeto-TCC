@@ -69,7 +69,7 @@ async function paginateWithLifecycleFilter(
   page: number,
   limit: number
 ) {
-  const rows = await query
+  const rows = (await query) as Allocation[]
   const filtered = rows.filter((a) => resolveLifecycleStatus(a) === lifecycleStatus)
   const start = (page - 1) * limit
   const slice = filtered.slice(start, start + limit)
@@ -198,7 +198,7 @@ export const AllocationService = {
     return serializeAllocation(allocation)
   },
 
-  async extendAllocation(user: User, allocationId: number, payload: ExtendAllocationPayload) {
+  async extendAllocation(_user: User, allocationId: number, payload: ExtendAllocationPayload) {
     const allocation = await Allocation.findOrFail(allocationId)
     const { additionalMinutes, endTime } = payload
 
@@ -272,7 +272,7 @@ export const AllocationService = {
     return serializeAllocation(allocation)
   },
 
-  async finishAllocation(user: User, allocationId: number) {
+  async finishAllocation(_user: User, allocationId: number) {
     const allocation = await Allocation.findOrFail(allocationId)
 
     if (allocation.status !== 'approved') {
@@ -416,7 +416,7 @@ export const AllocationService = {
     return serializeAllocation(allocation)
   },
 
-  async softDeleteAllocation(user: User, allocationId: number) {
+  async softDeleteAllocation(_user: User, allocationId: number) {
     const allocation = await Allocation.findOrFail(allocationId)
 
     const now = Date.now()

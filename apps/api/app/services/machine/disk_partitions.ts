@@ -48,9 +48,9 @@ export function applyMainDiskDefaults(disks: DiskPartitionRecord[]): DiskPartiti
     return withRoles.map((d) => ({ ...d, mainDisk: false }))
   }
 
-  let mainMount = userDisks.find((d) => d.mainDisk)?.mountpoint
+  let mainMount: string | undefined = userDisks.find((d) => d.mainDisk)?.mountpoint
   if (!mainMount) {
-    mainMount = pickDefaultMainUserDisk(withRoles)?.mountpoint ?? null
+    mainMount = pickDefaultMainUserDisk(withRoles)?.mountpoint
   }
 
   return withRoles.map((d) => ({

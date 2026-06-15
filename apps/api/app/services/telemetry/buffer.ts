@@ -16,8 +16,9 @@ export interface TelemetryPayload {
   gpuUsage?: number | null
   gpuTemp?: number | null
   gpuPowerWatts?: number | null
-  vramTotalMb?: number | null
-  vramUsedMb?: number | null
+  /** VRAM total/usada (GB ×10, 1 casa decimal — wire format do agente). */
+  vramTotalGb?: number | null
+  vramUsedGb?: number | null
 
   // Memória e Swap
   ramTotalGb?: number | null

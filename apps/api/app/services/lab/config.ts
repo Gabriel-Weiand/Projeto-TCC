@@ -32,12 +32,6 @@ function envString(key: string, fallback: string): string {
   return raw && raw.length > 0 ? raw : fallback
 }
 
-function envBool(key: string, fallback: boolean): boolean {
-  const raw = process.env[key]?.trim().toLowerCase()
-  if (!raw) return fallback
-  return ['1', 'true', 'yes', 'on'].includes(raw)
-}
-
 /** Nomes dos responsáveis visíveis no calendário para usuários não-admin. */
 export function isAllocationPublicNamesEnabled(): boolean {
   return isRuntimePublicNamesEnabled()
