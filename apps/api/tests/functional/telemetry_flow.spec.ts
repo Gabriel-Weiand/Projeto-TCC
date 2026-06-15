@@ -933,8 +933,8 @@ test.group('Fluxo End-to-End via API do Agente', (group) => {
     const flushed = await telemetryBuffer.flush()
     assert.equal(flushed, 0)
 
-    const idleHistory = idleTelemetryBuffer.getHistory(machine.id)
-    assert.equal(idleHistory.length, 1)
+    const idleHistory = idleTelemetryBuffer.getChartSeries(machine.id)
+    assert.isAtLeast(idleHistory.length, 1)
 
     await machine.refresh()
     assert.equal(machine.status, 'offline')
@@ -1353,7 +1353,7 @@ test.group('Buffer ocioso 24h e chart series', (group) => {
     return testUtils.db().withGlobalTransaction()
   })
 
-  test('ingest @ 30s agrega 2 amostras/min em bucket TWA', async ({ assert }) => {
+  test('ingest @ 30s agrega amostras na janela 15 min (preview TWA)', async ({ assert }) => {
     idleTelemetryBuffer.reset()
     const machineId = -1001
     const base = DateTime.now().startOf('minute')
@@ -1361,42 +1361,52 @@ test.group('Buffer ocioso 24h e chart series', (group) => {
     idleTelemetryBuffer.ingest(machineId, idleSample(base, 100), 30)
     idleTelemetryBuffer.ingest(machineId, idleSample(base.plus({ seconds: 30 }), 300), 30)
 
-    const history = idleTelemetryBuffer.getHistory(machineId)
-    assert.equal(history.length, 1)
-    assert.equal(history[0].sampleCount, 2)
-    assert.equal(history[0].metrics.cpuUsage, 200)
+    const preview = idleTelemetryBuffer.getChartSeries(machineId)
+    assert.equal(idleTelemetryBuffer.getHistory(machineId).length, 0)
+    assert.equal(preview.length, 1)
+    assert.equal(preview[0].cpuUsage, 200)
   })
 
-  test('ingest @ 60s preserva amostras como capturadas', async ({ assert }) => {
+  test('ingest fecha bucket 15 min ao cruzar janela', async ({ assert }) => {
     idleTelemetryBuffer.reset()
     const machineId = -1002
-    const base = DateTime.now().startOf('minute')
+    const bucketStartMs = Math.floor(DateTime.utc().toMillis() / 900_000) * 900_000
+    const base = DateTime.fromMillis(bucketStartMs, { zone: 'utc' })
 
     idleTelemetryBuffer.ingest(machineId, idleSample(base, 100), 60)
     idleTelemetryBuffer.ingest(machineId, idleSample(base.plus({ minutes: 1 }), 400), 60)
+    idleTelemetryBuffer.ingest(
+      machineId,
+      idleSample(base.plus({ minutes: 15 }), 500),
+      60
+    )
 
-    const history = idleTelemetryBuffer.getHistory(machineId)
-    assert.equal(history.length, 2)
-    assert.equal(history[0].metrics.cpuUsage, 100)
-    assert.equal(history[1].metrics.cpuUsage, 400)
+    const closed = idleTelemetryBuffer.getHistory(machineId)
+    assert.equal(closed.length, 1)
+    assert.equal(closed[0].sampleCount, 2)
+    assert.equal(closed[0].metrics.cpuUsage, 380)
+    assert.equal(closed[0].resolutionMs, 900_000)
   })
 
-  test('compactação move dados > 1h para buckets de 10 min', async ({ assert }) => {
+  test('purge remove pontos do gráfico com mais de 24 h', async ({ assert }) => {
     idleTelemetryBuffer.reset()
     const machineId = -1003
     const now = DateTime.utc()
-    const old = now.minus({ hours: 2 })
+    const old = now.minus({ hours: 25 })
 
     idleTelemetryBuffer.ingest(machineId, idleSample(old, 500), 60)
-    idleTelemetryBuffer.ingest(machineId, idleSample(old.plus({ minutes: 5 }), 600), 60)
+    idleTelemetryBuffer.ingest(
+      machineId,
+      idleSample(old.plus({ minutes: 15 }), 600),
+      60
+    )
     idleTelemetryBuffer.ingest(machineId, idleSample(now.minus({ minutes: 10 }), 700), 60)
 
-    const history = idleTelemetryBuffer.getHistory(machineId)
-    const lowRes = history.filter((e) => e.resolutionMs === 600_000)
-    const highRes = history.filter((e) => e.resolutionMs === 60_000)
-
-    assert.isAtLeast(lowRes.length, 1)
-    assert.isAtLeast(highRes.length, 1)
+    const closed = idleTelemetryBuffer.getClosedChartSeries(machineId)
+    for (const point of closed) {
+      const ageMs = now.toMillis() - new Date(point.timestamp).getTime()
+      assert.isBelow(ageMs, 25 * 60 * 60 * 1000)
+    }
   })
 
   test('buffer ocioso não recebe amostras durante alocação ativa', async ({ client, assert }) => {

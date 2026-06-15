@@ -1,34 +1,47 @@
 import type { TelemetryPayload } from '#services/telemetry_buffer'
 import {
-  aggregateSamplesToMinuteBucket,
-  compressPointsToBuckets,
   downsampleToBuckets,
   parseTimestampMs,
+  TELEMETRY_NUMERIC_KEYS,
   type ChartSeriesPoint,
 } from '#services/telemetry_downsample'
 
-const ONE_MINUTE_MS = 60_000
-const TEN_MINUTES_MS = 600_000
 /** Série exibida no front — janela 24 h @ 15 min/ponto (~96 pts). */
 export const IDLE_CHART_BUCKET_MS = 900_000
-const ONE_HOUR_MS = 60 * 60 * 1000
-const TWENTY_FOUR_HOURS_MS = 24 * ONE_HOUR_MS
+const TWENTY_FOUR_HOURS_MS = 24 * 60 * 60 * 1000
 
 export interface IdleBufferEntry {
   timestamp: string
-  resolutionMs: typeof ONE_MINUTE_MS | typeof TEN_MINUTES_MS
+  resolutionMs: typeof IDLE_CHART_BUCKET_MS
   metrics: TelemetryPayload
   sampleCount: number
 }
 
+interface StoredChartPoint {
+  point: ChartSeriesPoint
+  sampleCount: number
+}
+
 interface MachineIdleState {
-  /** Última hora — buckets de 1 min ou amostras nativas (≥ 60s). */
-  highRes: IdleBufferEntry[]
-  /** 1h–24h — buckets de 10 min. */
-  lowRes: IdleBufferEntry[]
-  /** Acumulador para intervalo < 60s dentro do minuto corrente. */
-  pendingMinuteSamples: ChartSeriesPoint[]
-  pendingMinuteKey: number | null
+  /** Início da janela de 15 min aberta (ms UTC). */
+  pendingBucketStartMs: number | null
+  /** Amostras na precisão do agente dentro da janela aberta. */
+  pendingSamples: ChartSeriesPoint[]
+  /** Intervalo do agente (s) — usado no preview TWA da janela aberta. */
+  pendingIntervalSeconds: number
+  /** Pontos @ 15 min já fechados (TWA). */
+  chartSeries: StoredChartPoint[]
+}
+
+function payloadToChartSample(raw: TelemetryPayload): ChartSeriesPoint {
+  const sample: ChartSeriesPoint = { timestamp: raw.timestamp }
+  for (const key of TELEMETRY_NUMERIC_KEYS) {
+    const val = raw[key]
+    if (typeof val === 'number') {
+      sample[key] = val
+    }
+  }
+  return sample
 }
 
 function sampleToPayload(sample: ChartSeriesPoint): TelemetryPayload {
@@ -47,41 +60,19 @@ function sampleToPayload(sample: ChartSeriesPoint): TelemetryPayload {
     ramUsedGb: sample.ramUsedGb ?? null,
     swapTotalGb: sample.swapTotalGb ?? null,
     swapUsedGb: sample.swapUsedGb ?? null,
-    disks: null,
     diskReadMbps: sample.diskReadMbps ?? null,
     diskWriteMbps: sample.diskWriteMbps ?? null,
     downloadMbps: sample.downloadMbps ?? null,
     uploadMbps: sample.uploadMbps ?? null,
     moboTemperature: sample.moboTemperature ?? null,
+    disks: null,
     activeUsers: null,
+    processes: null,
   }
 }
 
-function payloadToSample(payload: TelemetryPayload): ChartSeriesPoint {
-  return {
-    timestamp: payload.timestamp,
-    cpuUsage: payload.cpuUsage,
-    cpuTemp: payload.cpuTemp,
-    cpuFreqMhz: payload.cpuFreqMhz ?? undefined,
-    gpuUsage: payload.gpuUsage,
-    gpuTemp: payload.gpuTemp,
-    gpuPowerWatts: payload.gpuPowerWatts ?? undefined,
-    vramTotalGb: payload.vramTotalGb ?? undefined,
-    vramUsedGb: payload.vramUsedGb ?? undefined,
-    ramTotalGb: payload.ramTotalGb ?? undefined,
-    ramUsedGb: payload.ramUsedGb ?? undefined,
-    swapTotalGb: payload.swapTotalGb ?? undefined,
-    swapUsedGb: payload.swapUsedGb ?? undefined,
-    diskReadMbps: payload.diskReadMbps ?? undefined,
-    diskWriteMbps: payload.diskWriteMbps ?? undefined,
-    downloadMbps: payload.downloadMbps ?? undefined,
-    uploadMbps: payload.uploadMbps ?? undefined,
-    moboTemperature: payload.moboTemperature ?? undefined,
-  }
-}
-
-function entryToSample(entry: IdleBufferEntry): ChartSeriesPoint {
-  return payloadToSample(entry.metrics)
+function chartBucketStartMs(sampleMs: number): number {
+  return Math.floor(sampleMs / IDLE_CHART_BUCKET_MS) * IDLE_CHART_BUCKET_MS
 }
 
 class TelemetryIdleBuffer {
@@ -91,207 +82,210 @@ class TelemetryIdleBuffer {
     let state = this.machines.get(machineId)
     if (!state) {
       state = {
-        highRes: [],
-        lowRes: [],
-        pendingMinuteSamples: [],
-        pendingMinuteKey: null,
+        pendingBucketStartMs: null,
+        pendingSamples: [],
+        pendingIntervalSeconds: 60,
+        chartSeries: [],
       }
       this.machines.set(machineId, state)
     }
     return state
   }
 
+  /**
+   * Acumula amostra ociosa na janela de 15 min aberta; ao cruzar bucket, TWA → chartSeries.
+   */
   ingest(machineId: number, sample: TelemetryPayload, intervalSeconds: number): void {
     const state = this.getOrCreate(machineId)
-    const sampleMs = parseTimestampMs(sample.timestamp)
+    if (intervalSeconds > 0) {
+      state.pendingIntervalSeconds = intervalSeconds
+    }
+    const chartSample = payloadToChartSample(sample)
+    const sampleMs = parseTimestampMs(chartSample.timestamp)
+    const bucketStart = chartBucketStartMs(sampleMs)
 
-    if (intervalSeconds < 60) {
-      this.ingestSubMinute(state, sample, sampleMs)
-    } else {
-      this.flushPendingMinute(state)
-      state.highRes.push({
-        timestamp: sample.timestamp,
-        resolutionMs: ONE_MINUTE_MS,
-        metrics: { ...sample, allocationId: 0 },
-        sampleCount: 1,
-      })
+    if (
+      state.pendingBucketStartMs !== null &&
+      bucketStart !== state.pendingBucketStartMs
+    ) {
+      this.flushPendingBucket(state)
     }
 
-    this.compact(machineId, state)
-  }
-
-  private ingestSubMinute(
-    state: MachineIdleState,
-    sample: TelemetryPayload,
-    sampleMs: number
-  ): void {
-    const minuteKey = Math.floor(sampleMs / ONE_MINUTE_MS) * ONE_MINUTE_MS
-
-    if (state.pendingMinuteKey !== null && state.pendingMinuteKey !== minuteKey) {
-      this.flushPendingMinute(state)
+    if (state.pendingBucketStartMs === null) {
+      state.pendingBucketStartMs = bucketStart
     }
 
-    state.pendingMinuteKey = minuteKey
-    state.pendingMinuteSamples.push(payloadToSample(sample))
+    state.pendingSamples.push(chartSample)
+    this.purgeOldChartSeries(state)
   }
 
-  private flushPendingMinute(state: MachineIdleState): void {
-    if (state.pendingMinuteSamples.length === 0) {
-      state.pendingMinuteKey = null
+  private flushPendingBucket(state: MachineIdleState): void {
+    if (state.pendingSamples.length === 0 || state.pendingBucketStartMs === null) {
+      state.pendingSamples = []
+      state.pendingBucketStartMs = null
       return
     }
 
-    const bucket = aggregateSamplesToMinuteBucket(state.pendingMinuteSamples)
-    const sampleCount = state.pendingMinuteSamples.length
-    state.pendingMinuteSamples = []
-    state.pendingMinuteKey = null
-
-    if (!bucket) return
-
-    state.highRes.push({
-      timestamp: bucket.timestamp,
-      resolutionMs: ONE_MINUTE_MS,
-      metrics: sampleToPayload(bucket),
-      sampleCount,
-    })
-  }
-
-  private compact(_machineId: number, state: MachineIdleState): void {
-    const now = Date.now()
-    const oneHourAgo = now - ONE_HOUR_MS
-    const twentyFourHoursAgo = now - TWENTY_FOUR_HOURS_MS
-
-    const toKeep: IdleBufferEntry[] = []
-    const toCompress: IdleBufferEntry[] = []
-
-    for (const entry of state.highRes) {
-      if (parseTimestampMs(entry.timestamp) >= oneHourAgo) {
-        toKeep.push(entry)
-      } else {
-        toCompress.push(entry)
-      }
-    }
-
-    state.highRes = toKeep
-
-    if (toCompress.length > 0) {
-      const compressSamples = toCompress.map(entryToSample)
-      const rangeStart = parseTimestampMs(compressSamples[0].timestamp)
-      const rangeEnd = oneHourAgo
-      const compressed = compressPointsToBuckets(
-        compressSamples,
-        TEN_MINUTES_MS,
-        Math.floor(rangeStart / TEN_MINUTES_MS) * TEN_MINUTES_MS,
-        rangeEnd
-      )
-
-      this.mergeLowRes(state, compressed, toCompress.reduce((s, e) => s + e.sampleCount, 0))
-    }
-
-    state.lowRes = state.lowRes.filter(
-      (entry) => parseTimestampMs(entry.timestamp) >= twentyFourHoursAgo
+    const bucketStart = state.pendingBucketStartMs
+    const bucketEnd = bucketStart + IDLE_CHART_BUCKET_MS
+    const sampleCount = state.pendingSamples.length
+    const points = downsampleToBuckets(
+      state.pendingSamples,
+      IDLE_CHART_BUCKET_MS,
+      bucketStart,
+      bucketEnd
     )
+
+    state.pendingSamples = []
+    state.pendingBucketStartMs = null
+
+    if (points.length === 0) return
+
+    this.upsertChartPoint(state, points[0]!, sampleCount)
   }
 
-  private mergeLowRes(
+  private upsertChartPoint(
     state: MachineIdleState,
-    points: ChartSeriesPoint[],
-    defaultSampleCount: number
+    point: ChartSeriesPoint,
+    sampleCount: number
   ): void {
-    const byKey = new Map<number, IdleBufferEntry>()
-    for (const entry of state.lowRes) {
-      byKey.set(parseTimestampMs(entry.timestamp), entry)
+    const key = parseTimestampMs(point.timestamp)
+    const idx = state.chartSeries.findIndex((e) => parseTimestampMs(e.point.timestamp) === key)
+    if (idx >= 0) {
+      state.chartSeries[idx] = { point, sampleCount }
+    } else {
+      state.chartSeries.push({ point, sampleCount })
+      state.chartSeries.sort(
+        (a, b) => parseTimestampMs(a.point.timestamp) - parseTimestampMs(b.point.timestamp)
+      )
     }
+  }
 
-    for (const point of points) {
-      const key = parseTimestampMs(point.timestamp)
-      const existing = byKey.get(key)
-      if (existing) {
-        const merged = compressPointsToBuckets(
-          [entryToSample(existing), point],
-          TEN_MINUTES_MS,
-          key,
-          key + TEN_MINUTES_MS
-        )
-        if (merged.length > 0) {
-          byKey.set(key, {
-            timestamp: merged[0].timestamp,
-            resolutionMs: TEN_MINUTES_MS,
-            metrics: sampleToPayload(merged[0]),
-            sampleCount: existing.sampleCount + defaultSampleCount,
-          })
-        }
-      } else {
-        byKey.set(key, {
-          timestamp: point.timestamp,
-          resolutionMs: TEN_MINUTES_MS,
-          metrics: sampleToPayload(point),
-          sampleCount: defaultSampleCount,
-        })
-      }
-    }
-
-    state.lowRes = [...byKey.values()].sort(
-      (a, b) => parseTimestampMs(a.timestamp) - parseTimestampMs(b.timestamp)
+  private purgeOldChartSeries(state: MachineIdleState): void {
+    const cutoff = Date.now() - TWENTY_FOUR_HOURS_MS
+    state.chartSeries = state.chartSeries.filter(
+      (entry) => parseTimestampMs(entry.point.timestamp) >= cutoff
     )
   }
 
+  private buildPendingPreview(state: MachineIdleState): ChartSeriesPoint | null {
+    if (state.pendingSamples.length === 0 || state.pendingBucketStartMs === null) {
+      return null
+    }
+
+    const bucketStart = state.pendingBucketStartMs
+    const bucketEnd = bucketStart + IDLE_CHART_BUCKET_MS
+    const lastSampleMs = parseTimestampMs(
+      state.pendingSamples[state.pendingSamples.length - 1]!.timestamp
+    )
+    const intervalMs = Math.max(1, state.pendingIntervalSeconds) * 1000
+    const rangeEnd = Math.min(bucketEnd, lastSampleMs + intervalMs)
+    if (rangeEnd <= bucketStart) return null
+
+    const points = downsampleToBuckets(
+      state.pendingSamples,
+      IDLE_CHART_BUCKET_MS,
+      bucketStart,
+      rangeEnd
+    )
+    return points[0] ?? null
+  }
+
+  /** Pontos fechados @ 15 min (sem janela aberta). */
+  getClosedChartSeries(machineId: number): ChartSeriesPoint[] {
+    const state = this.machines.get(machineId)
+    if (!state) return []
+    return state.chartSeries.map((e) => ({ ...e.point }))
+  }
+
+  /**
+   * Série para gráfico 24 h — pontos fechados + preview da janela aberta (se houver).
+   */
+  getChartSeries(machineId: number): ChartSeriesPoint[] {
+    const state = this.machines.get(machineId)
+    if (!state) return []
+
+    const closed = state.chartSeries.map((e) => ({ ...e.point }))
+    const preview = this.buildPendingPreview(state)
+    if (!preview) return closed
+
+    const previewKey = parseTimestampMs(preview.timestamp)
+    const closedIdx = closed.findIndex((p) => parseTimestampMs(p.timestamp) === previewKey)
+    if (closedIdx >= 0) {
+      const merged = [...closed]
+      merged[closedIdx] = preview
+      return merged
+    }
+
+    return [...closed, preview]
+  }
+
+  /** Compat.: entradas fechadas @ 15 min (alias estruturado de `chartSeries`). */
   getHistory(machineId: number): IdleBufferEntry[] {
     const state = this.machines.get(machineId)
     if (!state) return []
 
-    this.flushPendingMinute(state)
-    this.compact(machineId, state)
-
-    return [...state.lowRes, ...state.highRes].sort(
-      (a, b) => parseTimestampMs(a.timestamp) - parseTimestampMs(b.timestamp)
-    )
-  }
-
-  /**
-   * Série para gráfico 24 h — buckets fixos de 15 min (TWA sobre buffer 1 min + 10 min).
-   */
-  getChartSeries(machineId: number): ChartSeriesPoint[] {
-    const entries = this.getHistory(machineId)
-    if (entries.length === 0) return []
-
-    const now = Date.now()
-    const rangeEndMs = now
-    const rangeStartMs = now - TWENTY_FOUR_HOURS_MS
-    const alignedStart =
-      Math.floor(rangeStartMs / IDLE_CHART_BUCKET_MS) * IDLE_CHART_BUCKET_MS
-
-    const samples = entries
-      .filter((e) => parseTimestampMs(e.timestamp) >= alignedStart)
-      .map(entryToSample)
-
-    if (samples.length === 0) return []
-
-    return downsampleToBuckets(samples, IDLE_CHART_BUCKET_MS, alignedStart, rangeEndMs)
+    return state.chartSeries.map((entry) => ({
+      timestamp: entry.point.timestamp,
+      resolutionMs: IDLE_CHART_BUCKET_MS,
+      metrics: sampleToPayload(entry.point),
+      sampleCount: entry.sampleCount,
+    }))
   }
 
   getMeta(machineId: number) {
-    const points = this.getHistory(machineId)
-    const chartSeries = this.getChartSeries(machineId)
-    const lastBufferTs =
-      points.length > 0 ? points[points.length - 1]!.timestamp : null
-    const lastChartTs =
-      chartSeries.length > 0 ? chartSeries[chartSeries.length - 1]!.timestamp : null
+    const state = this.machines.get(machineId)
+    const closed = state?.chartSeries ?? []
+    const preview = state ? this.buildPendingPreview(state) : null
+    const chartSeries = preview
+      ? [...closed.map((e) => e.point), preview]
+      : closed.map((e) => e.point)
+
+    const lastPendingTs =
+      state && state.pendingSamples.length > 0
+        ? state.pendingSamples[state.pendingSamples.length - 1]!.timestamp
+        : null
+    const lastClosedTs =
+      closed.length > 0 ? closed[closed.length - 1]!.point.timestamp : null
+
     return {
       retentionHours: 24,
-      recentResolutionMinutes: 1,
-      olderResolutionMinutes: 10,
-      pointCount: points.length,
+      /** @deprecated ambos = bucket do gráfico (15 min) após refactor */
+      recentResolutionMinutes: IDLE_CHART_BUCKET_MS / 60_000,
+      olderResolutionMinutes: IDLE_CHART_BUCKET_MS / 60_000,
+      pointCount: closed.length,
       chartBucketMinutes: IDLE_CHART_BUCKET_MS / 60_000,
       chartPointCount: chartSeries.length,
-      lastBufferTimestamp: lastBufferTs,
-      lastChartTimestamp: lastChartTs,
+      pendingSampleCount: state?.pendingSamples.length ?? 0,
+      lastBufferTimestamp: lastPendingTs ?? lastClosedTs,
+      lastChartTimestamp:
+        chartSeries.length > 0 ? chartSeries[chartSeries.length - 1]!.timestamp : null,
     }
   }
 
   getLatestEntry(machineId: number): IdleBufferEntry | null {
-    const history = this.getHistory(machineId)
-    return history.length > 0 ? history[history.length - 1]! : null
+    const state = this.machines.get(machineId)
+    if (!state) return null
+
+    if (state.pendingSamples.length > 0) {
+      const last = state.pendingSamples[state.pendingSamples.length - 1]!
+      return {
+        timestamp: last.timestamp,
+        resolutionMs: IDLE_CHART_BUCKET_MS,
+        metrics: sampleToPayload(last),
+        sampleCount: 1,
+      }
+    }
+
+    const lastStored = state.chartSeries[state.chartSeries.length - 1]
+    if (!lastStored) return null
+
+    return {
+      timestamp: lastStored.point.timestamp,
+      resolutionMs: IDLE_CHART_BUCKET_MS,
+      metrics: sampleToPayload(lastStored.point),
+      sampleCount: lastStored.sampleCount,
+    }
   }
 
   clearMachine(machineId: number): void {

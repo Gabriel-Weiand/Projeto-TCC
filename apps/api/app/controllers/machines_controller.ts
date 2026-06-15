@@ -259,18 +259,16 @@ export default class MachinesController {
     const allocationIds = allocations.map((a) => a.id)
 
     if (allocationIds.length === 0) {
-      const idleEntries = idleTelemetryBuffer.getHistory(machine.id)
       const idleChartRaw = idleTelemetryBuffer.getChartSeries(machine.id)
       const idleMeta = idleTelemetryBuffer.getMeta(machine.id)
+      const normalizedChart = idleChartRaw.map((p) =>
+        normalizeChartSeriesPoint(p as unknown as Record<string, unknown>)
+      )
       return response.ok({
         realtime: this.normalizeTelemetry(telemetryBuffer.getLatest(machine.id)),
         idleHistory: {
-          points: idleEntries.map((e) =>
-            normalizeChartSeriesPoint(e.metrics as unknown as Record<string, unknown>)
-          ),
-          chartSeries: idleChartRaw.map((p) =>
-            normalizeChartSeriesPoint(p as unknown as Record<string, unknown>)
-          ),
+          points: normalizedChart,
+          chartSeries: normalizedChart,
           meta: idleMeta,
         },
         history: { data: [], meta: { total: 0, perPage: limit, currentPage: page } },
@@ -285,19 +283,17 @@ export default class MachinesController {
       .paginate(page, limit)
 
     const latestRealtime = telemetryBuffer.getLatest(machine.id)
-    const idleEntries = idleTelemetryBuffer.getHistory(machine.id)
     const idleChartRaw = idleTelemetryBuffer.getChartSeries(machine.id)
     const idleMeta = idleTelemetryBuffer.getMeta(machine.id)
+    const normalizedChart = idleChartRaw.map((p) =>
+      normalizeChartSeriesPoint(p as unknown as Record<string, unknown>)
+    )
 
     return response.ok({
       realtime: this.normalizeTelemetry(latestRealtime),
       idleHistory: {
-        points: idleEntries.map((e) =>
-          normalizeChartSeriesPoint(e.metrics as unknown as Record<string, unknown>)
-        ),
-        chartSeries: idleChartRaw.map((p) =>
-          normalizeChartSeriesPoint(p as unknown as Record<string, unknown>)
-        ),
+        points: normalizedChart,
+        chartSeries: normalizedChart,
         meta: idleMeta,
       },
       history: telemetries,

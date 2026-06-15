@@ -184,18 +184,30 @@ pending → approved → [prepare] → active (full_shell) → grace → sftp_on
 ### Durante alocação vs ocioso
 
 - **Monitoramento ao vivo** (barras, processos, partições): lê **`GET /machines/:id/telemetry/stream`** → buffer runtime (`telemetryBuffer`), **não** o banco.
-- **Gráfico 24 h** no detalhe admin: lê **`idleHistory.chartSeries`** → calculado na hora a partir do buffer **1 min + 10 min** (não há array de 15 min persistido em RAM).
+- **Gráfico 24 h** no detalhe admin: lê **`idleHistory.chartSeries`** — série **@ 15 min** materializada em RAM (`pendingBucket` + `chartSeries`).
 - **Persistência da sessão** corre em paralelo (`telemetries`) para `POST /allocations/:id/summary` e purge posterior.
 
-### Memória por máquina ociosa (resumo)
+### Memória por máquina ociosa (dois buffers)
 
-| Camada | O quê guarda |
-|--------|----------------|
-| `telemetryBuffer` | ~15 amostras **completas** (live + stream + processos/discos) |
-| `idleTelemetryBuffer` | até ~**60** pontos @ 1 min (última hora) + ~**138** @ 10 min (1 h–24 h); pontos &gt; 1 h viram 10 min e os de 1 min são **descartados**; &gt; 24 h **descartados** |
-| Gráfico 15 min | **Não armazenado** — derivado na resposta de `GET …/telemetry` |
+Máquina **sem alocação ativa** usa **apenas** estes dois buffers em RAM (além do SQLite, que fica vazio ocioso):
 
-Ou seja: não é “só ring + buckets de 15 min”; há um buffer ocioso em **dois níveis** além do ring realtime.
+| Buffer | O quê guarda | Capacidade |
+|--------|----------------|------------|
+| **`telemetryBuffer`** | Amostras **ricas** do agente (barras, processos, discos, usuários) | ~15–31 amostras (ring + último lote) |
+| **`idleTelemetryBuffer`** | (1) janela **aberta** de 15 min com amostras na precisão do agente; (2) **~96 pontos** @ 15 min já fechados (24 h) | ≤15 amostras pendentes + 96 pts gráfico |
+
+**Ciclo do gráfico ocioso:** cada amostra do agente entra na janela de 15 min corrente. Quando a janela fecha, faz-se **TWA** sobre essas amostras → **um** ponto @ 15 min entra em `chartSeries`; as amostras brutas da janela são **descartadas**. Pontos &gt; 24 h saem do rolling. O `GET …/telemetry` **não recalcula** — devolve `chartSeries` pronto (+ preview da janela aberta).
+
+### RAM estimada — 1 máquina, 24 h ociosas (regime estável)
+
+Presets eco: intervalo **60 s**, lote **15** → 96 POSTs/dia, 1 440 amostras/dia processadas; **96 pontos** persistidos no gráfico. Estimativa: payload JSON + ~×1,8 overhead V8 (ordem de grandeza).
+
+| Preset | `telemetryBuffer` | idle pending (≤15) | idle `chartSeries` (~96) | **Total ocioso** |
+|--------|-------------------|--------------------|---------------------------|------------------|
+| **Eco atual** (cpu, ram, disco, users; sem gpu/rede/temp/proc) | ~35 KiB | ~17 KiB | ~30 KiB | **~81 KiB** |
+| **Eco full − processos** (gpu, rede, temp, users, disco; sem proc) | ~42 KiB | ~20 KiB | ~53 KiB | **~116 KiB** |
+
+Detalhes de implementação: [`apps/api/MODULE.md`](apps/api/MODULE.md#retenção-e-buffers).
 
 **Métricas desligadas no preset** → campo `null` na amostra (não confundir com 0). UI exibe `—`.
 

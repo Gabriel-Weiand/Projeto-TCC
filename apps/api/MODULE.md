@@ -128,56 +128,48 @@ A API mantém **dois buffers distintos em RAM** (singleton por processo), além 
 
 `recordBatch()` guarda sempre o último lote (≤ 15) para diff/playback no front.
 
-#### 2. `idleTelemetryBuffer` (`#services/telemetry_idle_buffer.ts`) — histórico ocioso 24 h
+#### 2. `idleTelemetryBuffer` (`#services/telemetry_idle_buffer.ts`) — gráfico ocioso 24 h
 
-| Faixa | Resolução interna | Retenção |
-|-------|-------------------|----------|
-| última **1 h** | buckets de **1 min** (TWA se intervalo &lt; 60 s) | rolling |
-| **1 h – 24 h** | buckets de **10 min** | rolling |
-| série do gráfico | **15 min**/ponto (~96 pts) | derivada do buffer acima |
+| Estrutura | Capacidade | Função |
+|-----------|------------|--------|
+| `pendingBucket` (`pendingSamples` + `pendingBucketStartMs`) | amostras do agente na janela **15 min aberta** (≤ ~15 no eco) | acumula na **precisão exata** do POST; descartadas ao fechar o bucket |
+| `chartSeries` | **~96** pontos @ **15 min** (24 h rolling) | TWA ao fechar cada janela; **materializado** — não recalculado no GET |
 
-**Só recebe amostras quando não há alocação ativa** no instante do POST (`ingest()`). Métricas agregadas **omit** `processes` e `activeUsers` (só uso de hardware/I/O).
+**Só recebe amostras quando não há alocação ativa** (`ingest()`). No idle **não** entram `processes` (só métricas de gráfico — campos numéricos TWA). `disksInfo` / `activeUsers` ficam no `telemetryBuffer` ao vivo, não no histórico ocioso.
 
-Perdido ao **reiniciar a API**; não é replicado entre instâncias.
+Perdido ao **reiniciar a API**; congela durante alocação (sem novos pontos até fim da sessão).
 
-**O gráfico de 15 min não é armazenado.** `getChartSeries()` recalcula ~96 pontos a cada leitura (`downsampleToBuckets` sobre `highRes` + `lowRes`). O que fica em RAM são só os tiers **1 min** e **10 min** (ver ciclo abaixo).
-
-#### Ciclo de vida do buffer ocioso (por máquina)
+#### Ciclo de vida
 
 ```
-POST agente (ocioso)
-  → amostras < 60 s: acumulam em pendingMinuteSamples → flush vira 1 bucket de 1 min em highRes
-  → amostras ≥ 60 s: entram direto em highRes (1 ponto / POST)
-
-compact() a cada ingest:
-  • highRes com timestamp < (now − 1 h) → TWA agregado em buckets de 10 min → merge em lowRes → pontos de 1 min descartados
-  • lowRes com timestamp < (now − 24 h) → removidos
+POST agente (ocioso), para cada amostra do lote:
+  → append em pendingBucket (campos agregáveis @ 15 min)
+  → se timestamp cruza fim do bucket 15 min corrente:
+       TWA(pendingBucket) → merge em chartSeries
+       pendingBucket := []
+  → purge chartSeries com timestamp < now − 24 h
 
 GET …/telemetry:
-  • idleHistory.points = cópia ordenada de lowRes + highRes (~ até 60 + ~138 entradas)
-  • idleHistory.chartSeries = projeção efêmera 15 min (não persiste em Map)
+  → idleHistory.chartSeries = chartSeries fechados + preview TWA da janela aberta
+  → idleHistory.points = alias de chartSeries (compat.)
 ```
 
-**Ordem de grandeza em RAM (ocioso, regime estável):**
+#### RAM — 1 máquina ociosa, 24 h em regime estável
 
-| Estrutura | Entradas máx. (aprox.) | Conteúdo por entrada |
-|-----------|------------------------|----------------------|
-| `telemetryBuffer` (latest + ring + lastBatch) | ~15–31 amostras completas | CPU/GPU/RAM, `disksInfo`, `processes`, `activeUsers` |
-| `idleTelemetryBuffer.highRes` | ~60 | métricas de hardware/I/O (sem processos/users/discos) |
-| `idleTelemetryBuffer.lowRes` | ~138 | idem, resolução 10 min |
-| Série 15 min do gráfico | **0 persistidos** | calculada na resposta HTTP |
+Eco: **60 s**, batch **15** → 96 fechamentos de bucket/dia; no pico, pending + chart + ring realtime.
+
+| Preset | Amostra agente (JSON) | Ponto @ 15 min (JSON) | `telemetryBuffer` (~31) | idle pending (≤15) | idle chart (~96) | **Total** |
+|--------|----------------------:|----------------------:|------------------------:|-------------------:|-----------------:|----------:|
+| **Eco atual** | ~638 B | ~177 B | ~35 KiB | ~17 KiB | ~30 KiB | **~81 KiB** |
+| **Eco full − proc**¹ | ~776 B | ~315 B | ~42 KiB | ~20 KiB | ~53 KiB | **~116 KiB** |
+
+¹ Mesmos intervalos eco; `telemetrySet` = fast completo **exceto** `processCapture: false` (gpu, rede, temp, users, disco ligados).
+
+Totais com overhead V8 ≈ ×1,8 sobre JSON serializado. Parque com *N* máquinas ociosas: multiplicar **Total** por *N* (singleton API).
+
+**Melhoria opcional (fase futura):** pending só campos TWA (~177 B) em vez da amostra rica — economia extra ~12 KiB/máq. no eco.
 
 Números ao vivo vêm de **`telemetryBuffer.getLatest()`**, não do buffer ocioso (fallback só se não houve POST recente).
-
-#### Por que não só buckets de 15 min?
-
-Arquitetura possível e mais enxuta: manter só ~96 buckets de 15 min + ring de 15 amostras realtime. Hoje há **dois tiers (1 min + 10 min)** porque:
-
-1. **Última hora mais fiel** — re-amostrar 1 min → 15 min preserva picos médios melhor do que agregar direto do agente (intervalo eco 30–60 s) em 15 min.
-2. **`idleHistory.points`** — a API expõe a série interna (1 min + 10 min), não só o gráfico.
-3. **Histórico implementado antes do downsample só-15 min** — trade-off de memória vs. fidelidade na hora recente.
-
-Simplificar para “15 min + realtime ring” reduziria ~40–50% das entradas ociosas por máquina; exigiria refactor de `telemetry_idle_buffer.ts` e decidir se `idleHistory.points` ainda expõe detalhe ou só `chartSeries`.
 
 #### Roteamento no `POST /agent/telemetry`
 
@@ -204,10 +196,10 @@ Sempre: telemetryBuffer.recordBatch(lote completo)
 
 | Contexto | Onde fica | Resolução | Retenção |
 |----------|-----------|-----------|----------|
-| Máquina **ociosa** | Buffer em memória (`telemetry_idle_buffer`) | 1 min (última 1 h); 10 min (1 h–24 h) | 24 h; perdido ao reiniciar a API |
+| Máquina **ociosa** | Buffer em memória (`telemetry_idle_buffer`) | **15 min** (~96 pts materializados + preview janela aberta) | 24 h; perdido ao reiniciar a API |
 | **Alocação ativa** | `telemetries` (DB) + espelho realtime em `telemetryBuffer` | Intervalo do agente (fast/eco/custom) | Até gerar resumo |
 | **Após resumo** | `allocation_metrics.chart_series` | Buckets adaptativos (1–2 min em sessões curtas; múltiplos de **5 min** em sessões longas; até ~100 pontos) | Até prune da alocação (CASCADE) |
-| **Máquina ociosa (gráfico 24 h)** | `idleHistory.chartSeries` via GET `/machines/:id/telemetry` | **15 min/ponto** fixo (~96 pts / 24 h), TWA sobre buffer 1 min + 10 min | Mesmo buffer ocioso |
+| **Máquina ociosa (gráfico 24 h)** | `idleHistory.chartSeries` via GET `/machines/:id/telemetry` | **15 min/ponto** fixo (~96 pts / 24 h), TWA materializado no `ingest()` | Mesmo buffer ocioso |
 
 - Intervalo de captura **< 60 s** (ocioso): amostras agregadas em buckets de 1 min (TWA).
 - Intervalo **≥ 60 s** (ocioso): pontos guardados como capturados.
@@ -1118,8 +1110,8 @@ Histórico ocioso 24 h + snapshot realtime + telemetrias brutas de alocações (
 | Campo | Origem | Observação |
 |-------|--------|------------|
 | `realtime` | `telemetryBuffer.getLatest()` | Sempre a amostra mais recente do agente (alocação ou ocioso) |
-| `idleHistory.points` | `idleTelemetryBuffer.getHistory()` | Buffer 1 min + 10 min (24 h) |
-| `idleHistory.chartSeries` | `idleTelemetryBuffer.getChartSeries()` | ~96 pontos @ 15 min para gráfico admin |
+| `idleHistory.points` | alias de `chartSeries` | Compatibilidade; mesmo array normalizado |
+| `idleHistory.chartSeries` | `idleTelemetryBuffer.getChartSeries()` | ~96 pontos @ 15 min fechados + preview da janela aberta |
 | `idleHistory.meta` | metadados do buffer ocioso | `retentionHours`, `lastBufferTimestamp`, etc. |
 | `history.data` | tabela `telemetries` | Bruto de alocações **não resumidas**; não usado pelo painel ao vivo |
 

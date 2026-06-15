@@ -15,7 +15,7 @@
     "processCaptureConfig": {
       "compareMetric": "cpuPercent",
       "topX": 10,
-      "userScope": "session"
+      "userScope": "all"
     }
   },
   "eco": {
@@ -34,7 +34,7 @@
     "processCaptureConfig": {
       "compareMetric": "cpuPercent",
       "topX": 10,
-      "userScope": "session"
+      "userScope": "all"
     }
   }
 }

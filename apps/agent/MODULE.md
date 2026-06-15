@@ -12,24 +12,25 @@ Documentação de referência do daemon `agentd.py` — comunicação com a API 
 ## Sumário
 
 1. [Papel e arquitetura](#1-papel-e-arquitetura)
-2. [Configuração (.env)](#2-configuração-env)
-3. [Autenticação](#3-autenticação)
-4. [Mapa de rotas da API](#4-mapa-de-rotas-da-api)
-5. [GET /api/config — bootstrap de telemetria](#5-get-apiconfig--bootstrap-de-telemetria)
-6. [PUT /api/v1/agent/sync-specs](#6-put-apiv1agentsync-specs)
-7. [POST /api/v1/agent/heartbeat](#7-post-apiv1agentheartbeat)
-8. [POST /api/v1/agent/telemetry](#8-post-apiv1agenttelemetry)
-9. [Multi-disco, home e conflitos](#9-multi-disco-home-e-conflitos)
-10. [Descomissionamento (exclusão admin)](#10-descomissionamento-exclusão-admin)
-11. [Ciclo de vida de alocação](#11-ciclo-de-vida-de-alocação)
-12. [Provisionamento no Linux](#12-provisionamento-no-linux)
-13. [Telemetria — campos e justificativas](#13-telemetria--campos-e-justificativas)
-14. [Threads e loop principal](#14-threads-e-loop-principal)
-15. [GPU — backends e detecção](#15-gpu--backends-e-detecção)
-16. [Auditoria SSH](#16-auditoria-ssh)
-17. [Resiliência e falhas](#17-resiliência-e-falhas)
-18. [Hardening no boot](#18-hardening-no-boot)
-19. [Catálogo de funções de captura](#19-catálogo-de-funções-de-captura)
+2. [Requisitos, instalação e operação (systemd)](#2-requisitos-instalação-e-operação-systemd)
+3. [Configuração (.env)](#3-configuração-env)
+4. [Autenticação](#4-autenticação)
+5. [Mapa de rotas da API](#5-mapa-de-rotas-da-api)
+6. [GET /api/config — bootstrap de telemetria](#6-get-apiconfig--bootstrap-de-telemetria)
+7. [PUT /api/v1/agent/sync-specs](#7-put-apiv1agentsync-specs)
+8. [POST /api/v1/agent/heartbeat](#8-post-apiv1agentheartbeat)
+9. [POST /api/v1/agent/telemetry](#9-post-apiv1agenttelemetry)
+10. [Multi-disco, home e conflitos](#10-multi-disco-home-e-conflitos)
+11. [Descomissionamento (exclusão admin)](#11-descomissionamento-exclusão-admin)
+12. [Ciclo de vida de alocação](#12-ciclo-de-vida-de-alocação)
+13. [Provisionamento no Linux](#13-provisionamento-no-linux)
+14. [Telemetria — campos e justificativas](#14-telemetria--campos-e-justificativas)
+15. [Threads e loop principal](#15-threads-e-loop-principal)
+16. [GPU — backends e detecção](#16-gpu--backends-e-detecção)
+17. [Auditoria SSH](#17-auditoria-ssh)
+18. [Resiliência e falhas](#18-resiliência-e-falhas)
+19. [Hardening no boot](#19-hardening-no-boot)
+20. [Catálogo de funções de captura](#20-catálogo-de-funções-de-captura)
 
 ---
 
@@ -60,7 +61,169 @@ O agente opera num modelo **State Enforcement (Pull Model)**:
 
 ---
 
-## 2. Configuração (.env)
+## 2. Requisitos, instalação e operação (systemd)
+
+O agente foi pensado para rodar como **serviço systemd** em cada máquina do laboratório, iniciando no boot e reiniciando após falhas de rede. Em produção o diretório recomendado é **`/opt/lab-agent`** (independente do clone do repositório).
+
+### 2.1 Requisitos do sistema
+
+| Item | Detalhe |
+|------|---------|
+| **SO** | Linux apenas — testado em **Ubuntu Server 22.04+** |
+| **Usuário do processo** | **root** — `useradd`/`userdel`, `usermod`, leitura de `/var/log/auth.log`, chaves em `/home/lab.*` |
+| **Rede** | Saída HTTP(S) até a API; **nenhuma porta inbound** no agente (modelo pull) |
+| **SSH** | `openssh-server` ativo; chave host **ed25519** em `/etc/ssh/ssh_host_ed25519_key.pub` (sync-specs envia fingerprint) |
+| **Python** | 3.10+ (`python3`, `python3-pip`, `python3-venv` opcional) |
+| **Pacotes OS** | `acl` (permissões em homes multi-partição) |
+
+**Dependências Python** (`requirements.txt`):
+
+```bash
+# Mínimo (sem telemetria NVIDIA rica):
+pip install psutil requests
+
+# Completo (repo):
+pip install -r requirements.txt
+```
+
+| Pacote | Função |
+|--------|--------|
+| `psutil` | CPU, RAM, swap, discos, processos, usuários ativos |
+| `requests` | HTTP para a API |
+| `nvitop` / `nvidia-ml-py` | GPU NVIDIA (opcional; sem eles CPU/RAM/disco seguem) |
+
+**GPU AMD/Intel:** leitura via sysfs — sem pacotes extras.
+
+### 2.2 Instalação (console)
+
+Substitua `/caminho/Projeto-TCC` pelo clone local e ajuste `SERVER_URL` / `MACHINE_TOKEN`.
+
+```bash
+# 1. Pacotes do sistema
+sudo apt update
+sudo apt install -y python3 python3-pip python3-venv openssh-server acl
+
+# 2. Diretório de implantação
+sudo mkdir -p /opt/lab-agent
+sudo cp /caminho/Projeto-TCC/apps/agent/agentd.py /opt/lab-agent/
+sudo cp /caminho/Projeto-TCC/apps/agent/requirements.txt /opt/lab-agent/
+sudo cp /caminho/Projeto-TCC/apps/agent/.env.example /opt/lab-agent/.env
+
+# 3. venv (recomendado)
+cd /opt/lab-agent
+sudo python3 -m venv venv
+sudo venv/bin/pip install --upgrade pip
+sudo venv/bin/pip install -r requirements.txt
+
+# 4. Configurar credenciais
+sudo nano /opt/lab-agent/.env   # SERVER_URL, MACHINE_TOKEN
+sudo chmod 600 /opt/lab-agent/.env
+sudo chown root:root /opt/lab-agent/.env
+
+# 5. Chave SSH host ed25519 (se ainda não existir)
+sudo test -f /etc/ssh/ssh_host_ed25519_key.pub || \
+  sudo ssh-keygen -t ed25519 -f /etc/ssh/ssh_host_ed25519_key -N ""
+sudo systemctl reload ssh
+
+# 6. Teste manual (opcional, Ctrl+C para parar)
+cd /opt/lab-agent
+sudo venv/bin/python3 agentd.py
+```
+
+**Token:** gerado no cadastro da máquina no admin ou `POST /api/v1/machines/:id/regenerate-token`. Após rotacionar, editar `.env` e reiniciar o serviço.
+
+### 2.3 Unit systemd
+
+Arquivo `/etc/systemd/system/lab-agent.service`:
+
+```ini
+[Unit]
+Description=Lab Agent Daemon (TCC UFPel)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=/opt/lab-agent
+EnvironmentFile=-/opt/lab-agent/.env
+ExecStart=/opt/lab-agent/venv/bin/python3 /opt/lab-agent/agentd.py
+Restart=on-failure
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target
+```
+
+Sem venv, use `ExecStart=/usr/bin/python3 /opt/lab-agent/agentd.py`.
+
+**Variáveis de ambiente:** o agente lê `.env` ao lado de `agentd.py` no import (`_load_dotenv`). O `EnvironmentFile=` do systemd é equivalente; se ambos existirem, **variáveis já presentes no ambiente (systemd) prevalecem**.
+
+**Ativar no boot:**
+
+```bash
+sudo systemctl daemon-reload
+sudo systemctl enable lab-agent
+sudo systemctl start lab-agent
+sudo systemctl status lab-agent
+```
+
+### 2.4 Operação do dia a dia
+
+| Ação | Comando |
+|------|---------|
+| Ver status | `systemctl status lab-agent` |
+| Parar | `sudo systemctl stop lab-agent` |
+| Iniciar | `sudo systemctl start lab-agent` |
+| Reiniciar (após update de código ou `.env`) | `sudo systemctl restart lab-agent` |
+| Desabilitar no boot | `sudo systemctl disable lab-agent` |
+| Logs ao vivo | `sudo journalctl -u lab-agent -f` |
+| Últimas 200 linhas | `sudo journalctl -u lab-agent -n 200 --no-pager` |
+
+**Atualizar o binário:**
+
+```bash
+sudo cp /caminho/novo/agentd.py /opt/lab-agent/
+sudo systemctl restart lab-agent
+```
+
+### 2.5 Desinstalação
+
+```bash
+sudo systemctl stop lab-agent
+sudo systemctl disable lab-agent
+sudo rm -f /etc/systemd/system/lab-agent.service
+sudo systemctl daemon-reload
+sudo rm -rf /opt/lab-agent
+```
+
+Isso **não** remove contas `lab.*` já provisionadas — use descomissionamento pelo admin ou remoção manual (`userdel`) em ambiente de teste.
+
+### 2.6 Logs no console e o serviço systemd
+
+O agente usa **`print()`** para diagnóstico (`[C2]`, `[OS]`, `[Telemetry]`, `[Specs]`, etc.) — não há módulo `logging` separado.
+
+**Isso não interfere no funcionamento do daemon.** Os `print` vão para **stdout/stderr**; com `Type=simple`, o systemd captura essa saída no **journal** (`journalctl -u lab-agent`). Heartbeat, telemetria e auditoria rodam em **threads daemon** independentes da escrita no console.
+
+| Aspecto | Comportamento |
+|---------|---------------|
+| Operação normal | Prints são apenas telemetria operacional para o administrador |
+| Falha de rede | `[C2] Erro no Heartbeat` / `[Telemetry] Erro de rede` — o loop continua |
+| Volume | Eco (~1 lote/min) gera poucas linhas; preset **fast** aumenta mensagens de telemetria no journal |
+| Parada via systemd | `systemctl stop` envia **SIGTERM**; o código só trata `KeyboardInterrupt` (execução manual) — encerramento é abrupto mas seguro (threads daemon) |
+| Produção | Opcional: `StandardOutput=journal` / rotação de journal (`journald.conf`) se o disco for apertado |
+
+Para desenvolvimento, rodar `sudo python3 agentd.py` no terminal mostra os mesmos prefixos em tempo real; como serviço, o conteúdo equivalente aparece no journal.
+
+### 2.7 Checklist pós-instalação
+
+1. `systemctl is-active lab-agent` → `active`
+2. `journalctl -u lab-agent` sem loop de `401` / token inválido
+3. Admin: máquina com **last seen** ~30 s
+4. `sync-specs` no boot: linha `[Specs] ✓ Hardware registrado` no journal
+
+---
+
+## 3. Configuração (.env)
 
 | Variável | Obrigatória | Descrição |
 |----------|-------------|-----------|
@@ -83,7 +246,7 @@ Telemetria (`intervalSeconds`, `batchSize`, `telemetrySet`) vem da API via heart
 
 ---
 
-## 3. Autenticação
+## 4. Autenticação
 
 Todas as rotas `/api/v1/agent/*` exigem:
 
@@ -103,7 +266,7 @@ Middleware: `machine_auth_middleware.ts` → `machineCache.getByToken(token)`.
 
 ---
 
-## 4. Mapa de rotas da API
+## 5. Mapa de rotas da API
 
 | Método | Rota | Quando roda | Controller |
 |--------|------|-------------|------------|
@@ -121,7 +284,7 @@ Relacionamento com o front/admin:
 
 ---
 
-## 5. GET /api/config — bootstrap de telemetria
+## 6. GET /api/config — bootstrap de telemetria
 
 **Função:** `bootstrap_telemetry_from_lab_config()` — executada antes do primeiro heartbeat.
 
@@ -145,7 +308,7 @@ Se falhar (API offline, timeout 5 s), permanece `_ECO_TELEMETRY_OFFLINE` até o 
 
 ---
 
-## 6. PUT /api/v1/agent/sync-specs
+## 7. PUT /api/v1/agent/sync-specs
 
 **Quando:** Uma vez após boot (thread principal, antes das workers).
 
@@ -194,7 +357,7 @@ Cada campo de spec só é gravado se estiver **vazio** no banco (`null`, string 
 
 ---
 
-## 7. POST /api/v1/agent/heartbeat
+## 8. POST /api/v1/agent/heartbeat
 
 **Intervalo:** 30 s (`HEARTBEAT_INTERVAL`) — **não** segue `intervalSeconds` da telemetria.
 
@@ -321,7 +484,7 @@ FASE 3 — Provisionar cada item
 
 ---
 
-## 8. POST /api/v1/agent/telemetry
+## 9. POST /api/v1/agent/telemetry
 
 **Intervalo:** `AGENT_CONFIG.telemetry.intervalSeconds` (5–300+ conforme preset).
 
@@ -394,7 +557,7 @@ Métricas de comparação disponíveis: `cpuPercent`, `ramMb`, `vramMb`, `gpuUse
 
 ---
 
-## 9. Multi-disco, home e conflitos
+## 10. Multi-disco, home e conflitos
 
 ### Modelo de dados (API)
 
@@ -539,7 +702,7 @@ Premissa: alocação **A** já criou `lab.aluno` com home em **disco A** (`usera
 
 ---
 
-## 10. Descomissionamento (exclusão admin)
+## 11. Descomissionamento (exclusão admin)
 
 Fluxo em **duas fases** (`DELETE /api/v1/machines/:id`):
 
@@ -572,7 +735,7 @@ Remove registro `machines`, limpa `telemetryBuffer` / `idleTelemetryBuffer`.
 
 ---
 
-## 11. Ciclo de vida de alocação
+## 12. Ciclo de vida de alocação
 
 Variáveis (`.env` / `lab_config`):
 
@@ -605,7 +768,7 @@ prepare → active → grace → post_sftp → no_key → teardown
 
 ---
 
-## 12. Provisionamento no Linux
+## 13. Provisionamento no Linux
 
 ### Conta
 
@@ -630,7 +793,7 @@ Objetivo: copiar artefatos da home sem terminal. Shell = `SFTP_SHELL` detectado 
 
 ---
 
-## 13. Telemetria — campos e justificativas
+## 14. Telemetria — campos e justificativas
 
 ### Convenção numérica (wire)
 
@@ -652,11 +815,11 @@ Objetivo: copiar artefatos da home sem terminal. Shell = `SFTP_SHELL` detectado 
 
 `buildAgentTelemetryConfig` também aplica `clampCustomTelemetryInterval` (mín. 2 s).
 
-Implementação detalhada de cada coletor: [§19 Catálogo de funções de captura](#19-catálogo-de-funções-de-captura).
+Implementação detalhada de cada coletor: [§20 Catálogo de funções de captura](#20-catálogo-de-funções-de-captura).
 
 ---
 
-## 14. Threads e loop principal
+## 15. Threads e loop principal
 
 ```
 main()
@@ -676,7 +839,7 @@ main()
 
 ---
 
-## 15. GPU — backends e detecção
+## 16. GPU — backends e detecção
 
 Ordem em `_detect_gpu_backend()`:
 
@@ -689,7 +852,7 @@ Multi-GPU: usa índice 0; comentário no código para iterar dispositivos se nec
 
 ---
 
-## 16. Auditoria SSH
+## 17. Auditoria SSH
 
 - Arquivo: `/var/log/auth.log` (hardcoded — typical Debian/Ubuntu)
 - Rotação: detecta mudança de inode → reopen
@@ -700,7 +863,7 @@ Eventos gravados em `ssh_connection_attempts` (API) + notificação flood (`chec
 
 ---
 
-## 17. Resiliência e falhas
+## 18. Resiliência e falhas
 
 | Evento | SO | API | Agente (processo) |
 |--------|----|----|-------------------|
@@ -713,7 +876,7 @@ Eventos gravados em `ssh_connection_attempts` (API) + notificação flood (`chec
 
 ---
 
-## 18. Hardening no boot
+## 19. Hardening no boot
 
 Idempotente em `main()`:
 
@@ -724,31 +887,31 @@ Falhas logadas como aviso — daemon continua.
 
 ---
 
-## 19. Catálogo de funções de captura
+## 20. Catálogo de funções de captura
 
 Referência de **todas** as funções de coleta em `agentd.py`: origem dos dados (psutil, sysfs, NVML, subprocess, etc.), rota/consumidor e formato wire.
 
-### 19.1 Telemetria periódica (`collect_telemetry`)
+### 20.1 Telemetria periódica (`collect_telemetry`)
 
 | Função / chamada | Biblioteca / origem | API psutil / SO | Campo(s) wire | `telemetrySet` | Justificativa |
 |------------------|---------------------|-----------------|---------------|----------------|---------------|
 | `psutil.cpu_percent(interval=None)` | psutil | CPU global instantânea | `cpuUsage` (×10) | `cpu` | Carga agregada do host; `interval=None` usa delta desde última chamada |
 | `psutil.cpu_freq(percpu=False)` | psutil | Frequência atual MHz | `cpuFreqMhz` | `cpu` | Contexto turbo/throttle junto com uso |
-| `_read_temperatures()` | psutil | `sensors_temperatures()` | `cpuTemp`, `moboTemperature` (×10) | `temperatures` | Ver §19.2 |
+| `_read_temperatures()` | psutil | `sensors_temperatures()` | `cpuTemp`, `moboTemperature` (×10) | `temperatures` | Ver §20.2 |
 | `_ram_wire()` | psutil | `virtual_memory()` total/available | `ramTotalGb`, `ramUsedGb` (×10) | `ramAndSwap` | Pressão de RAM |
 | `_swap_wire()` | psutil | `swap_memory()` total/used | `swapTotalGb`, `swapUsedGb` (×10) | `ramAndSwap` | Swap em uso |
 | `_GPU.usage()` | backend GPU | nvitop (NVIDIA) / sysfs AMD/Intel | `gpuUsage` (×10) | `gpu` | Utilização GPU; NVIDIA exige nvitop |
 | `_GPU.temp()` | backend GPU | NVML / `sensors_temperatures` amdgpu | `gpuTemp` (×10) | `gpu` | Termal GPU |
 | `_GPU.power()` | backend GPU | NVML mW / AMD hwmon µW | `gpuPowerWatts` (int W) | `gpu` | Consumo elétrico |
 | `_GPU.vram()` | backend GPU | NVML mem / AMD mem_info_vram_* | `vramTotalGb`, `vramUsedGb` (×10) | `gpu` | Memória dedicada; omitido se total=0 (iGPU) |
-| `_net_delta()` | psutil | `net_io_counters()` + delta monotonic | `downloadMbps`, `uploadMbps` | `networkIO` | Ver §19.3 |
+| `_net_delta()` | psutil | `net_io_counters()` + delta monotonic | `downloadMbps`, `uploadMbps` | `networkIO` | Ver §20.3 |
 | `_disk_metrics(space, io)` | psutil | `disk_partitions`, `disk_usage`, `disk_io_counters` | `diskReadMbps`, `diskWriteMbps`, `disksInfo[]` | `disk` | Espaço e I/O juntos |
 | `_active_users()` | psutil | `users()` filtrado `lab.*` | `activeUsers[]` | `activeUsers` | Sessões TTY/SSH provisionadas |
-| `_get_top_processes()` | psutil + nvitop | `process_iter` + nvitop `Device.processes()` | `processes[]` | `processCapture` | Ver §19.5 |
+| `_get_top_processes()` | psutil + nvitop | `process_iter` + nvitop `Device.processes()` | `processes[]` | `processCapture` | Ver §20.5 |
 
 **Aquecimento:** `telemetry_worker` chama `psutil.cpu_percent(interval=None)` uma vez antes do loop para estabilizar a primeira leitura de CPU.
 
-### 19.2 `_read_temperatures()`
+### 20.2 `_read_temperatures()`
 
 | Sensor psutil | Chave típica | Campo | Fallback |
 |---------------|--------------|-------|----------|
@@ -757,14 +920,14 @@ Referência de **todas** as funções de coleta em `agentd.py`: origem dos dados
 
 GPU **não** entra aqui — temperatura GPU vem exclusivamente de `_GPU.temp()` para evitar duplicata.
 
-### 19.3 `_net_delta()`
+### 20.3 `_net_delta()`
 
 - **Entrada:** `psutil.net_io_counters()` → `bytes_recv`, `bytes_sent`
 - **Estado:** cache global `_net_prev` com `{ t, recv, sent }` e `time.monotonic()`
 - **Cálculo:** `(Δbytes × 8) / 1_000_000 / Δt` → Mbps arredondado
 - **Primeira amostra:** retorna `0, 0` (sem delta anterior)
 
-### 19.4 `_disk_metrics(collect_space, collect_io)`
+### 20.4 `_disk_metrics(collect_space, collect_io)`
 
 | Passo | API | Detalhe |
 |-------|-----|---------|
@@ -778,7 +941,7 @@ GPU **não** entra aqui — temperatura GPU vem exclusivamente de `_GPU.temp()` 
 
 **Sync-specs vs telemetria:** `_disk_partitions()` (boot) envia `device`, `fstype`, `totalGb`, `freeGb`, `role`; telemetria envia `usagePct` + I/O opcional sem repetir `device` em todos os presets.
 
-### 19.5 `_get_top_processes(compare_metric, top_x)`
+### 20.5 `_get_top_processes(compare_metric, top_x)`
 
 | Fonte | Campos lidos | Uso |
 |-------|--------------|-----|
@@ -793,7 +956,7 @@ Cada processo no array inclui **todas** as métricas coletadas (`cpuPercent`, `r
 
 **Divisão psutil / nvitop:** uma passagem `psutil.process_iter` coleta CPU, RAM e I/O de todos os PIDs; um mapa único `nvitop.Device.processes()` (NVIDIA) enriquece VRAM e `gpuUse` por PID — processos sem GPU ficam com `vramMb`/`gpuUse` = 0.
 
-### 19.6 Heartbeat e inventário
+### 20.6 Heartbeat e inventário
 
 | Função | Biblioteca | API | Consumidor |
 |--------|------------|-----|------------|
@@ -803,7 +966,7 @@ Cada processo no array inclui **todas** as métricas coletadas (`cpuPercent`, `r
 
 **`_active_users()` detalhe:** cada entry inclui `username`, `terminal`, `host`, `isSsh` (host ∉ localhost/:0), `connectedSince` (epoch). Heartbeat envia só a lista de nomes; telemetria envia objetos completos.
 
-### 19.7 Sync-specs (boot, uma vez)
+### 20.7 Sync-specs (boot, uma vez)
 
 | Função | Biblioteca / origem | Saída |
 |--------|---------------------|-------|
@@ -816,7 +979,7 @@ Cada processo no array inclui **todas** as métricas coletadas (`cpuPercent`, `r
 
 **`_gpu_model_lspci()`:** subprocess `lspci -mm`, filtra classe VGA / Display / 3D controller (evita NVMe “3D NAND”).
 
-### 19.8 Backends GPU (`_GpuBackend`)
+### 20.8 Backends GPU (`_GpuBackend`)
 
 | Classe | Detecção | Métodos | Fontes |
 |--------|----------|---------|--------|
@@ -829,7 +992,7 @@ Cada processo no array inclui **todas** as métricas coletadas (`cpuPercent`, `r
 
 **AMD device pick:** `_pick_amd_drm_device_dir()` escolhe card com maior `mem_info_vram_total` (dGPU vs iGPU).
 
-### 19.9 Provisionamento / limpeza (não-telemetria)
+### 20.9 Provisionamento / limpeza (não-telemetria)
 
 | Função | Origem | Papel |
 |--------|--------|-------|
@@ -840,14 +1003,14 @@ Cada processo no array inclui **todas** as métricas coletadas (`cpuPercent`, `r
 | `apply_provisioning` | subprocess `useradd`, `usermod`, `chmod`, `chown` | Heartbeat 200 |
 | `_maybe_migrate_user_home` | subprocess `pkill`, `usermod -d`; `os.makedirs` | Heartbeat quando `allowHomeMigration` |
 
-### 19.10 Utilitários de formato
+### 20.10 Utilitários de formato
 
 | Função | Transformação |
 |--------|---------------|
 | `_gb_wire(byte_count)` | `round(bytes / 1024³ × 10)` → inteiro GB×10 |
 | `_partition_role(mountpoint)` | Heurística system vs user (espelha API `classifyDiskPartitionRole`) |
 
-### 19.11 Mapa função → rota HTTP
+### 20.11 Mapa função → rota HTTP
 
 ```text
 sync-specs     ← _cpu_model, _collect_gpu_specs, _ram_wire, _local_ip,
@@ -855,7 +1018,7 @@ sync-specs     ← _cpu_model, _collect_gpu_specs, _ram_wire, _local_ip,
 
 heartbeat      ← _active_users, pwd.getpwall, parse_ssh_line (buffer)
 
-telemetry      ← collect_telemetry() = todas as entradas §19.1
+telemetry      ← collect_telemetry() = todas as entradas §20.1
 
 (provisioning) ← apply_provisioning (sem HTTP de saída; side-effect SO)
 ```
@@ -868,7 +1031,7 @@ telemetry      ← collect_telemetry() = todas as entradas §19.1
 | Caminho | Conteúdo |
 |---------|----------|
 | `apps/agent/agentd.py` | Implementação |
-| `apps/agent/.env.example` | Variáveis |
+| `apps/agent/.env.example` | Variáveis e exemplo systemd |
 | `apps/api/app/controllers/agent_controller.ts` | Entrada HTTP agente |
 | `apps/api/app/services/heartbeat_service.ts` | provisioning, decommission |
 | `apps/api/app/services/machine_decommission.ts` | Exclusão admin 2 fases |
@@ -909,3 +1072,4 @@ telemetry      ← collect_telemetry() = todas as entradas §19.1
 | Processos | `cpuPercent` normalizado ÷ CPUs lógicas; campos 0 omitidos (`vramMb`, I/O…) |
 | Discos | `disksInfo` inclui `totalGb`; API atualiza `machines.disks` por lote |
 | Logs | Falha no POST de telemetria exibe status + trecho do corpo da resposta |
+| Implantação | Documentação systemd em [§2](#2-requisitos-instalação-e-operação-systemd) |

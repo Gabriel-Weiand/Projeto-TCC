@@ -204,7 +204,7 @@ Sincronização de relógio: `src/services/timeSync.ts` — `startTimeSync()` + 
 
 Durante **alocação ativa**, barras/processos/discos usam o buffer runtime (stream). O gráfico 24 h continua exibindo o buffer ocioso **sem novos pontos** até a sessão terminar. Bruto da sessão fica no SQLite até o resumo — o front **não** consulta `history.data` para monitoramento.
 
-**Memória (ocioso):** ao vivo = ring ~15 amostras completas em `telemetryBuffer`; histórico do gráfico = tiers **1 min + 10 min** em `idleTelemetryBuffer` (~198 entradas máx.); série **15 min** = calculada na API, não guardada.
+**Memória (ocioso):** ao vivo = ring ~15 amostras ricas em `telemetryBuffer`; gráfico = janela pending ≤15 + **~96 pts @ 15 min** materializados (~**81–116 KiB**/máquina conforme preset). Ver [`apps/api/MODULE.md`](../../api/MODULE.md#retenção-e-buffers).
 
 | Arquivo | Papel |
 |---------|--------|
