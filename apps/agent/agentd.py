@@ -774,6 +774,39 @@ def _purge_all_lab_users() -> None:
     _scan_orphan_lab_dirs()
 
 
+def _ensure_home_mount_parent(home: str) -> None:
+    """
+    Cria a cadeia de diretórios pais da home em partições de dados (755 root:root).
+    Ex.: /scratch/lab.aluno → garante /scratch; /data/deep/lab.aluno → /data e /data/deep.
+    Não altera paths já existentes; pula /home (gerenciado pelo SO).
+    """
+    home = os.path.normpath(home.strip())
+    parent = os.path.dirname(home)
+    skip = {"/", "/home", "/root"}
+
+    chain: list[str] = []
+    path = parent
+    while path and path not in skip:
+        chain.append(path)
+        path = os.path.dirname(path)
+    chain.reverse()
+
+    for mount_base in chain:
+        if os.path.isdir(mount_base):
+            continue
+        os.makedirs(mount_base, mode=0o755, exist_ok=True)
+        try:
+            shutil.chown(mount_base, user="root", group="root")
+        except LookupError:
+            pass
+
+
+def _grant_root_home_access(path: str) -> None:
+    """u:root:rx — sudo/root lista e lê a home sem mudar o chmod 700."""
+    subprocess.run(["setfacl", "-m", "u:root:rx", path], check=False)
+    subprocess.run(["setfacl", "-d", "-m", "u:root:rx", path], check=False)
+
+
 def _maybe_migrate_user_home(uname: str, target_home: str, user_info) -> object:
     """
     Atualiza pw_dir para target_home quando allowHomeMigration (API).
@@ -786,9 +819,11 @@ def _maybe_migrate_user_home(uname: str, target_home: str, user_info) -> object:
 
     print(f"[OS] Migrando home de {uname}: {current} → {target}")
     subprocess.run(["pkill", "-u", uname], stderr=subprocess.DEVNULL)
+    _ensure_home_mount_parent(target)
     os.makedirs(target, mode=0o700, exist_ok=True)
     subprocess.run(["usermod", "-d", target, uname], check=True)
     shutil.chown(target, user=uname, group=uname)
+    _grant_root_home_access(target)
     return pwd.getpwnam(uname)
 
 
@@ -828,6 +863,8 @@ def apply_provisioning(provisioning_data: list) -> None:
         except KeyError:
             print(f"[OS] Criando conta: {uname}")
             home_dir = (item.get("homeDirectory") or "").strip()
+            if home_dir:
+                _ensure_home_mount_parent(home_dir)
             useradd_cmd = [
                 "useradd", "-m", "-s", "/bin/bash", "-K", "UMASK=0077", "-G", "lab",
             ]
@@ -848,13 +885,16 @@ def apply_provisioning(provisioning_data: list) -> None:
 
             if not os.path.isdir(home):
                 print(f"[OS] Recriando home ausente: {home}")
+                _ensure_home_mount_parent(home)
                 os.makedirs(home, mode=0o700, exist_ok=True)
             subprocess.run(["chmod", "700", home], check=False)
             shutil.chown(home, user=uname, group=uname)
+            _grant_root_home_access(home)
 
             ssh_dir = os.path.join(home, ".ssh")
             auth_keys = os.path.join(ssh_dir, "authorized_keys")
             os.makedirs(ssh_dir, mode=0o700, exist_ok=True)
+            _grant_root_home_access(ssh_dir)
 
             current_key = ""
             if os.path.isfile(auth_keys):

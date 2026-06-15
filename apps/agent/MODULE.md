@@ -74,7 +74,7 @@ O agente foi pensado para rodar como **serviço systemd** em cada máquina do la
 | **Rede** | Saída HTTP(S) até a API; **nenhuma porta inbound** no agente (modelo pull) |
 | **SSH** | `openssh-server` ativo; chave host **ed25519** em `/etc/ssh/ssh_host_ed25519_key.pub` (sync-specs envia fingerprint) |
 | **Python** | 3.10+ (`python3`, `python3-pip`, `python3-venv` opcional) |
-| **Pacotes OS** | `acl` (permissões em homes multi-partição) |
+| **Pacotes OS** | `acl` — `setfacl` para root acessar homes `lab.*` via sudo (ver [§2.2.1](#221-pacote-acl-acesso-admin-via-sudo)) |
 
 **Dependências Python** (`requirements.txt`):
 
@@ -129,6 +129,47 @@ sudo systemctl reload ssh
 cd /opt/lab-agent
 sudo venv/bin/python3 agentd.py
 ```
+
+#### 2.2.1 Pacote ACL (acesso admin via sudo)
+
+Homes `lab.*` ficam com **chmod 700** (só o dono). Sem ACL, administradores com `sudo` podem ter dificuldade para **listar ou entrar** no diretório (`ls`, `cd`), embora leitura por caminho absoluto (`sudo cat …/arquivo`) às vezes funcione.
+
+O agente chama `setfacl` a cada provisionamento (heartbeat) em `$HOME` e `$HOME/.ssh`:
+
+```bash
+setfacl -m u:root:rx  <path>    # root pode listar e atravessar agora
+setfacl -d -m u:root:rx <path>    # entradas novas herdam a mesma regra
+```
+
+**Instalação** (já incluído no passo 1 acima):
+
+```bash
+sudo apt update
+sudo apt install -y acl
+```
+
+**Verificar** que o filesystem suporta ACL (ext4/xfs com ACL habilitado — padrão no Ubuntu Server):
+
+```bash
+# pacote presente
+which setfacl
+
+# montagem com ACL (flag acl no ext4, ou acl sempre no xfs)
+mount | grep ' / '
+touch /tmp/acl-test && setfacl -m u:root:rx /tmp/acl-test && getfacl /tmp/acl-test && rm /tmp/acl-test
+```
+
+**Conferir numa home provisionada:**
+
+```bash
+getfacl /data/lab.aluno
+# user:root:r-x  deve aparecer
+sudo ls -la /data/lab.aluno
+```
+
+**O que não muda:** modo Unix continua **700** / **600** — outros usuários `lab.*` **não** ganham acesso mútuo. Só **root** recebe `rx` via ACL.
+
+**Requisito operacional:** o pacote `acl` deve estar instalado **antes** de provisionar contas; o agente não instala pacotes nem corrige homes antigas no boot — ACL é reaplicada quando o heartbeat provisiona o usuário.
 
 **Token:** gerado no cadastro da máquina no admin ou `POST /api/v1/machines/:id/regenerate-token`. Após rotacionar, editar `.env` e reiniciar o serviço.
 
@@ -776,6 +817,8 @@ prepare → active → grace → post_sftp → no_key → teardown
 - Grupo `lab` (`groupadd -f lab` no boot)
 - UMASK 077 via `login.defs` + `useradd -K UMASK=0077`
 - Permissões: home `700`, `.ssh` `700`, `authorized_keys` `600`
+- Partições de dados: `_ensure_home_mount_parent()` cria pais ausentes (`755 root:root`) antes de `useradd -d` — ex. `/data` para home `/data/lab.aluno`
+- ACL admin: `_grant_root_home_access()` → `setfacl u:root:rx` em home e `.ssh` (requer pacote `acl`; ver [§2.2.1](#221-pacote-acl-acesso-admin-via-sudo)). **Só root** — outros `lab.*` não ganham acesso cruzado
 - **Sem senha** — apenas chave pública
 - **Sem sudo** — controle é shell vs SFTP, não privilégio root
 
@@ -884,6 +927,8 @@ Idempotente em `main()`:
 2. Substitui `UMASK` em `/etc/login.defs` por `077`
 
 Falhas logadas como aviso — daemon continua.
+
+**Fora do boot:** ACL de root nas homes (`_grant_root_home_access`) roda em **`apply_provisioning`** e **`_maybe_migrate_user_home`**, a cada heartbeat que reconcilia usuários — não na subida do daemon.
 
 ---
 
