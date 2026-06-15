@@ -1320,13 +1320,6 @@ def telemetry_worker():
         data = collect_telemetry()
         buffer.append(data)
 
-        gpu_wire = data.get("gpuUsage")
-        gpu_log = f"{gpu_wire / 10}%" if gpu_wire is not None else "off"
-        print(
-            f"[{time.strftime('%H:%M:%S')}] Amostra {len(buffer)}/{batch_size} | "
-            f"CPU {data['cpuUsage'] / 10}% | GPU({_GPU.name}) {gpu_log}"
-        )
-
         if len(buffer) >= batch_size:
             try:
                 resp = requests.post(
@@ -1336,15 +1329,15 @@ def telemetry_worker():
                     timeout=5,
                 )
                 if resp.status_code in (200, 201, 204):
-                    print(f"  ↳ [✓] Lote de {len(buffer)} amostras despachado.")
+                    print(f"[{time.strftime('%H:%M:%S')}] ↳ [✓] Lote de {len(buffer)} amostras despachado com sucesso.")
                 else:
                     detail = (resp.text or "").strip().replace("\n", " ")[:160]
                     print(
-                        f"  ↳ [✗ {resp.status_code}] Lote de {len(buffer)} amostras despachado."
+                        f"[{time.strftime('%H:%M:%S')}] ↳ [✗ {resp.status_code}] Falha no lote de {len(buffer)} amostras."
                         + (f" {detail}" if detail else "")
                     )
             except Exception as e:
-                print(f"  ↳ [✗] Erro de rede: {e}")
+                print(f"[{time.strftime('%H:%M:%S')}] ↳ [✗] Erro de rede na conexão: {e}")
             buffer = []
 
         time.sleep(interval)

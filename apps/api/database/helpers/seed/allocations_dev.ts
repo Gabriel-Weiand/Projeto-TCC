@@ -1,4 +1,3 @@
-import { BaseSeeder } from '@adonisjs/lucid/seeders'
 import Allocation from '#models/allocation'
 import AllocationMetric from '#models/allocation_metric'
 import Telemetry from '#models/telemetry'
@@ -31,9 +30,9 @@ import {
   TELEMETRY_PROCESS_CAPTURE_TOP_X_MAX,
 } from '#services/telemetry/presets'
 
-export default class extends BaseSeeder {
-  async run() {
-    const LAB_TZ = 'America/Sao_Paulo'
+/** Alocações, telemetrias, notificações e live seed — perfil dev. */
+export async function seedDevAllocations() {
+  const LAB_TZ = 'America/Sao_Paulo'
     const today = DateTime.now().setZone(LAB_TZ).startOf('day')
 
     const machines = await Machine.all()
@@ -665,5 +664,4 @@ export default class extends BaseSeeder {
     }
 
     console.log('✅ Seed de alocações concluído (live telemetry → storage/lab/live_telemetry_seed.json).\n')
-  }
 }

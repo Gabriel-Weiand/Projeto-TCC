@@ -13,6 +13,9 @@
     "dev": "node ace serve --hmr",
     "postinstall": "npm rebuild better-sqlite3",
     "test": "node ace test",
+    "seed:dev": "node ace seed:fresh dev",
+    "seed:minimal": "node ace seed:fresh minimal",
+    "seed:lab": "node ace seed:fresh lab",
     "lint": "eslint .",
     "format": "prettier --write .",
     "typecheck": "tsc --noEmit"
