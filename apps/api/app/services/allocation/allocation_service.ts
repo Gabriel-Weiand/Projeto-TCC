@@ -85,12 +85,6 @@ async function paginateWithLifecycleFilter(
   }
 }
 
-function assertAllocationOwner(user: User, allocation: Allocation, message: string) {
-  if (user.role !== 'admin' && allocation.userId !== user.id) {
-    throw new DomainError('NOT_OWNER', message, 403)
-  }
-}
-
 export const AllocationService = {
   async listMyAllocations(user: User, filters: ListAllocationsFilters) {
     const { status, lifecycleStatus, page = 1, limit = 20 } = filters
@@ -216,10 +210,6 @@ export const AllocationService = {
       )
     }
 
-    if (user.role !== 'admin' && allocation.userId !== user.id) {
-      throw new DomainError('NOT_OWNER', 'Apenas o dono pode estender a alocação.', 403)
-    }
-
     if (allocation.status !== 'approved') {
       throw new DomainError(
         'INVALID_STATUS',
@@ -285,10 +275,6 @@ export const AllocationService = {
   async finishAllocation(user: User, allocationId: number) {
     const allocation = await Allocation.findOrFail(allocationId)
 
-    if (user.role !== 'admin' && allocation.userId !== user.id) {
-      throw new DomainError('NOT_OWNER', 'Apenas o dono pode finalizar a alocação.', 403)
-    }
-
     if (allocation.status !== 'approved') {
       throw new DomainError(
         'INVALID_STATUS',
@@ -320,14 +306,6 @@ export const AllocationService = {
     const allocation = await Allocation.findOrFail(allocationId)
 
     if (user.role !== 'admin') {
-      if (allocation.userId !== user.id) {
-        throw new DomainError(
-          'NOT_OWNER',
-          'Você só pode alterar suas próprias alocações.',
-          403
-        )
-      }
-
       if (data.status && data.status !== 'cancelled') {
         throw new DomainError(
           'INVALID_STATUS_CHANGE',
@@ -441,14 +419,6 @@ export const AllocationService = {
   async softDeleteAllocation(user: User, allocationId: number) {
     const allocation = await Allocation.findOrFail(allocationId)
 
-    if (user.role !== 'admin' && allocation.userId !== user.id) {
-      throw new DomainError(
-        'NOT_OWNER',
-        'Você só pode remover suas próprias alocações.',
-        403
-      )
-    }
-
     const now = Date.now()
     const startMs = allocation.startTime.toMillis()
     const endMs = allocation.endTime.toMillis()
@@ -546,14 +516,8 @@ export const AllocationService = {
     return serializeAllocationMetric(metric)
   },
 
-  async getSessionSummary(user: User, allocationId: number) {
+  async getSessionSummary(allocationId: number) {
     const allocation = await Allocation.findOrFail(allocationId)
-
-    assertAllocationOwner(
-      user,
-      allocation,
-      'Você só pode visualizar o resumo das suas próprias alocações.'
-    )
 
     await allocation.load('metric')
 

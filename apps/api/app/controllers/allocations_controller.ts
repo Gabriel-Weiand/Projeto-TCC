@@ -1,4 +1,7 @@
 import type { HttpContext } from '@adonisjs/core/http'
+import Allocation from '#models/allocation'
+import Notification from '#models/notification'
+import AllocationPolicy from '#policies/allocation_policy'
 import {
   createAllocationValidator,
   updateAllocationValidator,
@@ -6,99 +9,60 @@ import {
   extendAllocationValidator,
 } from '#validators/allocation'
 import { AllocationService } from '#services/allocation/allocation_service'
-import { runWithDomainError } from '#controllers/shared/handle_domain_error'
 
 export default class AllocationsController {
-  /**
-   * Lista apenas as alocações do utilizador autenticado.
-   * GET /api/v1/allocations/my
-   */
   async myAllocations({ auth, request, response }: HttpContext) {
     const filters = await request.validateUsing(listAllocationsValidator)
     const result = await AllocationService.listMyAllocations(auth.user!, filters)
     return response.ok(result)
   }
 
-  /**
-   * Lista alocações com filtros opcionais.
-   * GET /api/v1/allocations
-   */
   async index({ auth, request, response }: HttpContext) {
     const filters = await request.validateUsing(listAllocationsValidator)
     const result = await AllocationService.listAllocations(auth.user!, filters)
     return response.ok(result)
   }
 
-  /**
-   * Cria uma nova alocação.
-   * POST /api/v1/allocations
-   */
   async store({ auth, request, response }: HttpContext) {
     const data = await request.validateUsing(createAllocationValidator)
-
-    return runWithDomainError(
-      response,
-      () => AllocationService.createAllocation(auth.user!, data),
-      (allocation) => response.created(allocation)
-    )
+    const allocation = await AllocationService.createAllocation(auth.user!, data)
+    return response.created(allocation)
   }
 
-  /**
-   * Estende o fim da reserva.
-   * POST /api/v1/allocations/:id/extend
-   */
-  async extend({ auth, params, request, response }: HttpContext) {
+  async extend({ auth, bouncer, params, request, response }: HttpContext) {
+    const allocation = await Allocation.findOrFail(params.id)
+    await bouncer.with(AllocationPolicy).authorize('extend', allocation)
+
     const payload = await request.validateUsing(extendAllocationValidator)
-
-    return runWithDomainError(
-      response,
-      () => AllocationService.extendAllocation(auth.user!, Number(params.id), payload),
-      (allocation) => response.ok(allocation)
-    )
+    const result = await AllocationService.extendAllocation(auth.user!, Number(params.id), payload)
+    return response.ok(result)
   }
 
-  /**
-   * Finaliza antecipadamente uma sessão aprovada.
-   * POST /api/v1/allocations/:id/finish
-   */
-  async finish({ auth, params, response }: HttpContext) {
-    return runWithDomainError(
-      response,
-      () => AllocationService.finishAllocation(auth.user!, Number(params.id)),
-      (allocation) => response.ok(allocation)
-    )
+  async finish({ auth, bouncer, params, response }: HttpContext) {
+    const allocation = await Allocation.findOrFail(params.id)
+    await bouncer.with(AllocationPolicy).authorize('finish', allocation)
+
+    const result = await AllocationService.finishAllocation(auth.user!, Number(params.id))
+    return response.ok(result)
   }
 
-  /**
-   * Atualiza uma alocação (status, horário, etc).
-   * PATCH /api/v1/allocations/:id
-   */
-  async update({ auth, params, request, response }: HttpContext) {
+  async update({ auth, bouncer, params, request, response }: HttpContext) {
+    const allocation = await Allocation.findOrFail(params.id)
+    await bouncer.with(AllocationPolicy).authorize('update', allocation)
+
     const data = await request.validateUsing(updateAllocationValidator)
-
-    return runWithDomainError(
-      response,
-      () => AllocationService.updateAllocation(auth.user!, Number(params.id), data),
-      (allocation) => response.ok(allocation)
-    )
+    const result = await AllocationService.updateAllocation(auth.user!, Number(params.id), data)
+    return response.ok(result)
   }
 
-  /**
-   * Soft-delete de uma alocação pelo usuário.
-   * DELETE /api/v1/allocations/:id
-   */
-  async softDelete({ auth, params, response }: HttpContext) {
-    return runWithDomainError(
-      response,
-      () => AllocationService.softDeleteAllocation(auth.user!, Number(params.id)),
-      (result) => response.ok(result)
-    )
+  async softDelete({ auth, bouncer, params, response }: HttpContext) {
+    const allocation = await Allocation.findOrFail(params.id)
+    await bouncer.with(AllocationPolicy).authorize('delete', allocation)
+
+    const result = await AllocationService.softDeleteAllocation(auth.user!, Number(params.id))
+    return response.ok(result)
   }
 
-  /**
-   * Histórico de alocações de uma máquina.
-   * GET /api/v1/machines/:id/allocations
-   */
   async machineHistory({ auth, params, request, response }: HttpContext) {
     const { page = 1, limit = 20 } = request.qs()
     const result = await AllocationService.machineHistory(
@@ -110,27 +74,18 @@ export default class AllocationsController {
     return response.ok(result)
   }
 
-  /**
-   * Gera resumo/métricas de uma sessão (alocação).
-   * POST /api/v1/allocations/:id/summary
-   */
-  async summarizeSession({ params, response }: HttpContext) {
-    return runWithDomainError(
-      response,
-      () => AllocationService.summarizeSession(Number(params.id)),
-      (metric) => response.created(metric)
-    )
+  async summarizeSession({ bouncer, params, response }: HttpContext) {
+    await bouncer.authorize('isAdmin')
+
+    const metric = await AllocationService.summarizeSession(Number(params.id))
+    return response.created(metric)
   }
 
-  /**
-   * Retorna o resumo/métricas de uma sessão.
-   * GET /api/v1/allocations/:id/summary
-   */
-  async getSessionSummary({ auth, params, response }: HttpContext) {
-    return runWithDomainError(
-      response,
-      () => AllocationService.getSessionSummary(auth.user!, Number(params.id)),
-      (metric) => response.ok(metric)
-    )
+  async getSessionSummary({ bouncer, params, response }: HttpContext) {
+    const allocation = await Allocation.findOrFail(params.id)
+    await bouncer.with(AllocationPolicy).authorize('viewSummary', allocation)
+
+    const metric = await AllocationService.getSessionSummary(Number(params.id))
+    return response.ok(metric)
   }
 }

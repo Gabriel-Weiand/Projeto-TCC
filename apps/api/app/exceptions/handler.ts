@@ -1,27 +1,42 @@
 import app from '@adonisjs/core/services/app'
 import { HttpContext, ExceptionHandler } from '@adonisjs/core/http'
+import { errors as bouncerErrors } from '@adonisjs/bouncer'
+import { DomainError, isDomainError } from '#services/shared/domain_error'
+
+function domainErrorBody(error: DomainError): Record<string, unknown> {
+  return {
+    code: error.code,
+    message: error.message,
+    ...error.details,
+  }
+}
+
+function domainErrorStatus(error: DomainError): number {
+  return error.status
+}
 
 export default class HttpExceptionHandler extends ExceptionHandler {
-  /**
-   * In debug mode, the exception handler will display verbose errors
-   * with pretty printed stack traces.
-   */
   protected debug = !app.inProduction
 
-  /**
-   * The method is used for handling errors and returning
-   * response to the client
-   */
   async handle(error: unknown, ctx: HttpContext) {
+    if (isDomainError(error)) {
+      return ctx.response.status(domainErrorStatus(error)).send(domainErrorBody(error))
+    }
+
+    if (error instanceof bouncerErrors.E_AUTHORIZATION_FAILURE) {
+      const status = error.response.status || error.status || 403
+      const message = error.getResponseMessage(ctx)
+      const code =
+        (error.response.translation?.identifier as string | undefined) ??
+        (error.response.translation?.data?.code as string | undefined) ??
+        'FORBIDDEN'
+
+      return ctx.response.status(status).send({ code, message })
+    }
+
     return super.handle(error, ctx)
   }
 
-  /**
-   * The method is used to report error to the logging service or
-   * the third party error monitoring service.
-   *
-   * @note You should not attempt to send a response from this method.
-   */
   async report(error: unknown, ctx: HttpContext) {
     return super.report(error, ctx)
   }

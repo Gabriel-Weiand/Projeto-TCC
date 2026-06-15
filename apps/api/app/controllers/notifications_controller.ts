@@ -1,42 +1,29 @@
 import type { HttpContext } from '@adonisjs/core/http'
+import Notification from '#models/notification'
+import NotificationPolicy from '#policies/notification_policy'
 import { markNotificationReadValidator } from '#validators/notification'
 import { NotificationInboxService } from '#services/notification/inbox_service'
-import { runWithDomainError } from '#controllers/shared/handle_domain_error'
 
 export default class NotificationsController {
-  /**
-   * Lista as notificações do usuário logado.
-   * GET /api/v1/notifications
-   */
   async index({ auth, response }: HttpContext) {
     const notifications = await NotificationInboxService.listForUser(auth.user!.id)
     return response.ok(notifications)
   }
 
-  /**
-   * Marca uma notificação como lida ou não lida.
-   * PATCH /api/v1/notifications/:id/read
-   */
-  async markAsRead({ auth, params, request, response }: HttpContext) {
-    const { isRead } = await request.validateUsing(markNotificationReadValidator)
+  async markAsRead({ params, request, response, bouncer }: HttpContext) {
+    const notification = await Notification.findOrFail(params.id)
+    await bouncer.with(NotificationPolicy).authorize('update', notification)
 
-    return runWithDomainError(
-      response,
-      () =>
-        NotificationInboxService.markRead(auth.user!, Number(params.id), isRead),
-      (notification) => response.ok(notification)
-    )
+    const { isRead } = await request.validateUsing(markNotificationReadValidator)
+    const updated = await NotificationInboxService.markRead(notification, isRead)
+    return response.ok(updated)
   }
 
-  /**
-   * Remove uma notificação do usuário logado.
-   * DELETE /api/v1/notifications/:id
-   */
-  async destroy({ auth, params, response }: HttpContext) {
-    return runWithDomainError(
-      response,
-      () => NotificationInboxService.deleteForUser(auth.user!, Number(params.id)),
-      () => response.noContent()
-    )
+  async destroy({ params, response, bouncer }: HttpContext) {
+    const notification = await Notification.findOrFail(params.id)
+    await bouncer.with(NotificationPolicy).authorize('delete', notification)
+
+    await NotificationInboxService.deleteNotification(notification)
+    return response.noContent()
   }
 }

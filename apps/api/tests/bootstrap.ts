@@ -40,10 +40,19 @@ export const runnerHooks: Required<Pick<Config, 'setup' | 'teardown'>> = {
  */
 let closeHttpServer: (() => Promise<void>) | undefined
 
+async function migrateFreshForTests() {
+  const ace = await app.container.make('ace')
+  const result = await ace.exec('migration:fresh', [])
+
+  if (result.exitCode !== 0) {
+    throw result.error ?? new Error('migration:fresh failed during test setup')
+  }
+}
+
 export const configureSuite: Config['configureSuite'] = (suite) => {
   if (['browser', 'functional', 'e2e'].includes(suite.name)) {
     suite.setup(async () => {
-      await testUtils.db().migrate()
+      await migrateFreshForTests()
       closeHttpServer = await testUtils.httpServer().start()
     })
 

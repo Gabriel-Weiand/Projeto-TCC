@@ -1628,12 +1628,15 @@ Request HTTP
 
 | Camada | Responsabilidade | Não deve |
 |--------|------------------|----------|
-| **Controller** | Validar input, autorizar rota, chamar service, serializar resposta | Conter regras de negócio, queries complexas, transações |
+| **Controller** | Validar input, autorizar via Bouncer, chamar service, serializar resposta | Conter regras de negócio, queries complexas, transações |
+| **Policy** | Quem pode fazer o quê (dono, admin) | Regras de negócio (fase, conflito, status) |
 | **Service** | Regras de domínio, orquestração, side effects | Importar `HttpContext` ou retornar status HTTP |
 | **Validator** | Schema de entrada (formato, tipos) | Regras de negócio (conflito, fase, ownership) |
 | **Model** | Entidade, relações, queries básicas | Orquestração de fluxos multi-entidade |
 
-**Erros de domínio:** services lançam `DomainError` (`#services/shared/domain_error`); controllers traduzem via `handleDomainError` (`#controllers/shared/handle_domain_error`).
+**Autorização (Bouncer):** policies em `#policies/` (`AllocationPolicy`, `NotificationPolicy`); abilities em `#abilities/main` (`isAdmin`). Controllers: `await bouncer.with(AllocationPolicy).authorize('extend', allocation)`.
+
+**Erros de domínio:** services lançam `DomainError`; `app/exceptions/handler.ts` responde `{ code, message }` com o status HTTP adequado (sem try/catch nos controllers).
 
 **Imports:** alias `#services/{domínio}/{módulo}` — ex.: `#services/allocation/schedule`, `#services/telemetry/buffer`.
 
@@ -1642,9 +1645,9 @@ Request HTTP
 ```
 apps/api/
 ├── app/
-│   ├── controllers/          # Entrada HTTP (validação + resposta)
-│   │   ├── shared/
-│   │   │   └── handle_domain_error.ts
+│   ├── abilities/              # Bouncer abilities (isAdmin)
+│   ├── policies/               # Bouncer policies por recurso
+│   ├── controllers/            # Entrada HTTP (validação + bouncer + resposta)
 │   │   ├── agent_controller.ts
 │   │   ├── allocations_controller.ts
 │   │   ├── auth_controller.ts
@@ -1655,7 +1658,7 @@ apps/api/
 │   │   ├── system_controller.ts
 │   │   ├── utils_controller.ts
 │   │   └── users_controller.ts
-│   ├── middleware/           # Interceptadores de requisição
+│   ├── middleware/           # Interceptadores (auth, bouncer, admin, machine)
 │   ├── models/                 # Entidades do banco de dados
 │   ├── services/               # Regras de negócio por domínio
 │   │   ├── shared/

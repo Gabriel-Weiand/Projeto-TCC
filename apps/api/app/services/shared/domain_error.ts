@@ -2,7 +2,7 @@ export type DomainErrorStatus = 400 | 403 | 404 | 409 | 422
 
 /**
  * Erro de domínio lançado pelos services.
- * Controllers traduzem para o status HTTP correspondente via handleDomainError.
+ * O HttpExceptionHandler traduz automaticamente para o status HTTP correspondente.
  */
 export class DomainError extends Error {
   constructor(
