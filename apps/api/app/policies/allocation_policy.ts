@@ -2,7 +2,7 @@ import User from '#models/user'
 import Allocation from '#models/allocation'
 import { BasePolicy } from '@adonisjs/bouncer'
 import type { AuthorizerResponse } from '@adonisjs/bouncer/types'
-import { allowOwnerOrAdmin, isAdmin } from '#policies/shared'
+import { allowOwnerOrAdmin, denyWithCode, isAdmin } from '#policies/shared'
 
 export default class AllocationPolicy extends BasePolicy {
   /**
@@ -63,7 +63,13 @@ export default class AllocationPolicy extends BasePolicy {
   /**
    * Apenas admin gera resumo manualmente (POST /summary).
    */
-  summarize(_user: User): AuthorizerResponse {
-    return isAdmin(_user)
+  summarize(user: User): AuthorizerResponse {
+    if (isAdmin(user)) {
+      return true
+    }
+    return denyWithCode(
+      'ADMIN_ONLY',
+      'Apenas administradores podem gerar resumos de sessão.'
+    )
   }
 }

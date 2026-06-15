@@ -213,43 +213,70 @@ Sempre: telemetryBuffer.recordBatch(lote completo)
 - `system_username` deve ser estável/imutável por regra de negócio (a constraint explícita não está no schema).
 - Autenticação do agente: apenas `Authorization: Bearer <token>` (512 bits).
 
-## Notificações (`notification_service`)
+## Notificações
 
-Política central em `#services/notification/notification_service`. Disparos por controller, heartbeat ou scheduler (`start/scheduler.ts`, mesmo cron do auto-finalize). Variáveis: `LAB_NOTIF_*` em `.env.example`.
+### Arquivos
 
-### Usuário
+| Arquivo | Papel |
+|---------|--------|
+| `app/services/notification/notification_service.ts` | **Envio** — cria registros na tabela `notifications` (títulos, mensagens, deduplicação) |
+| `app/services/notification/inbox_service.ts` | **Caixa de entrada** — listar (até 50), marcar lida, excluir (rotas `GET/PATCH/DELETE /notifications`) |
+| `app/controllers/notifications_controller.ts` | HTTP da inbox; autorização via `NotificationPolicy` (somente dono) |
+| `start/scheduler.ts` | Cron operacional (lembretes T-10/T-5/T-0, agente offline) |
+| `app/services/agent/heartbeat_service.ts` | Flood SSH e lembrete de chave no início da sessão |
 
-| Título | Gatilho |
-|--------|---------|
-| Reserva aprovada | `pending` → `approved` |
-| Reserva negada | status `denied` |
-| Reserva cancelada | status `cancelled` (qualquer fluxo) |
-| Reserva cancelada (manutenção) | máquina entra em `maintenance` (todas `approved`/`pending` canceladas) |
-| Reserva em breve | scheduler: início em até **10 min** (`LAB_NOTIF_UPCOMING_MINUTES`) |
-| Chave SSH — reserva em 5 min | scheduler: início em até **5 min**, sem `ssh_public_key` |
-| Chave SSH — reserva iniciada | scheduler (sessão ativa) ou **heartbeat** (alocação corrente), sem chave |
-| Sessão encerrada | auto-finalize (`finished`) |
-| Resumo da sessão disponível | `POST /allocations/:id/summary` |
-| Cadastre sua chave SSH | `POST /users` (criação de conta) |
+Persistência: model `Notification` (`userId`, `title`, `message`, `isRead`, `readAt`, `createdAt`). Cada notificação pertence a **um** usuário; admins recebem cópias individuais via `notifyAllAdmins`.
 
-Marcador `[alloc#id#]` na mensagem evita duplicata nos lembretes agendados (e `[machine#id#]` para alertas admin).
+### Deduplicação
 
-### Admin
+- **Alocação:** marcador `[alloc#<id>#]` no corpo da mensagem — lembretes agendados (T-10, SSH T-5/T-0) não repetem o mesmo título para a mesma alocação.
+- **Máquina (admin):** marcador `[machine#<id>#]` + cooldown configurável — evita flood em “Possível flood SSH” e “Agente offline”.
 
-| Título | Gatilho |
-|--------|---------|
-| Nova reserva pendente | criação com `status: pending` (`LAB_ALLOCATION_REQUIRE_ADMIN_APPROVAL=true` ou admin criou pending) |
-| Reserva pendente negada / cancelada | `pending` → `denied` ou `cancelled` |
-| Possível flood SSH | **heartbeat** com `sshAttempts`: ≥20 falhas em 15 min (`LAB_NOTIF_SSH_FLOOD_*`), cooldown 1 h por máquina |
-| Agente offline | scheduler (a cada 5 min): `lastSeenAt` ausente ou &gt; **10 min** em máquina `available`/`occupied`; **no máximo 1 alerta a cada 24 h** por máquina (`LAB_NOTIF_AGENT_OFFLINE_COOLDOWN_HOURS`) — sinal para colocar em **manutenção** ou retirar do parque, sem flood |
+Variáveis `LAB_NOTIF_*`: ver `.env.example` e tabela de limites mais abaixo neste doc.
+
+### Catálogo — usuário (`role: user` e dono da alocação)
+
+| Título | Gatilho | Origem |
+|--------|---------|--------|
+| **Reserva aprovada** | `pending` → `approved` | `notifyAllocationStatusChange` ← `AllocationService.update` / `softDelete` |
+| **Reserva negada** | status → `denied` | idem |
+| **Reserva cancelada** | status → `cancelled` (reserva já aprovada ou outro fluxo; **não** quando o autor cancela uma `pending`) | `notifyAllocationStatusChange` ← `AllocationService.update` / `softDelete` |
+| **Reserva cancelada (manutenção)** | máquina em `maintenance` ou descomissionamento cancela `approved`/`pending` | `cancelAllocationsForMaintenance` ← `MachineService.update` / `decommission` |
+| **Reserva em breve** | início da reserva em até `LAB_NOTIF_UPCOMING_MINUTES` (padrão 10 min) | scheduler → `runScheduledAllocationReminders` |
+| **Chave SSH — reserva em 5 min** | início em até `LAB_NOTIF_SSH_KEY_MINUTES` (padrão 5 min), usuário sem `sshPublicKey` | scheduler → `runScheduledAllocationReminders` |
+| **Chave SSH — reserva iniciada** | sessão ativa sem chave SSH | scheduler **ou** heartbeat da alocação corrente → `maybeNotifyMissingSshKeyAtSessionStart` |
+| **Sessão encerrada** | auto-finalize após janela SFTP (`finished` pelo scheduler) | `summarizer.autoFinalizeExpired` → `notifyAllocationAutoFinished` |
+| **Sessão encerrada** | usuário chama `POST /allocations/:id/finish` | `AllocationService.finishAllocation` → `notifyAllocationFinishedByUser` (mesmo título, mensagem “Você finalizou…”) |
+| **Resumo da sessão disponível** | admin gera métricas com `POST /allocations/:id/summary` | `AllocationService.summarizeSession` → `notifySessionSummaryReady` |
+| **Cadastre sua chave SSH** | criação de conta (`POST /users` ou registro admin) | `UserService.createUser` → `notifySshKeyRequired` |
+
+### Catálogo — admin (todos os usuários com `role: admin`)
+
+| Título | Gatilho | Origem |
+|--------|---------|--------|
+| **Nova reserva pendente** | nova alocação com `status: pending` | `AllocationService.createAllocation` → `notifyAdminsPendingAllocation` |
+| **Possível flood SSH** | heartbeat envia `sshAttempts` e há ≥ `LAB_NOTIF_SSH_FLOOD_THRESHOLD` falhas na janela (`LAB_NOTIF_SSH_FLOOD_WINDOW_MINUTES`); cooldown `LAB_NOTIF_SSH_FLOOD_COOLDOWN_HOURS` por máquina | `heartbeat_service` → `checkSshFailureFlood` |
+| **Agente offline** | scheduler: máquina `available`/`occupied` sem `lastSeenAt` ou heartbeat &gt; `LAB_NOTIF_AGENT_OFFLINE_MINUTES`; cooldown `LAB_NOTIF_AGENT_OFFLINE_COOLDOWN_HOURS` por máquina | scheduler → `notifyOfflineAgents` |
+
+Quando uma solicitação **deixa de ser** `pending` (`approved`, `denied` ou `cancelled` pelo autor), o alerta **Nova reserva pendente** é **removido** da inbox de todos os admins (`clearPendingAllocationAdminNotifications`). Não há notificação admin de desfecho (`pending` → `denied`/`cancelled`).
 
 Flood SSH **não** roda no endpoint de telemetria — só quando o agente envia tentativas no heartbeat.
 
-**Agente offline:** o job roda no mesmo cron do auto-finalize; a detecção é frequente, mas o cooldown de 24 h garante um lembrete diário por máquina problemática (labs remotos dependem do heartbeat).
+**Agente offline:** job no mesmo cron do auto-finalize (padrão 5 min); cooldown longo (padrão 24 h) limita a um lembrete por máquina problemática por dia.
 
 ### Manutenção de máquina
 
-`PUT /machines/:id` com `status: maintenance` cancela **todas** as alocações `approved`/`pending` da máquina e notifica cada usuário. Resposta inclui `cancelledAllocations` quando > 0.
+`PUT /machines/:id` com `status: maintenance` (ou fluxo de descomissionamento) cancela **todas** as alocações `approved`/`pending` da máquina e envia **Reserva cancelada (manutenção)** a cada usuário afetado. Resposta da API inclui `cancelledAllocations` quando &gt; 0.
+
+### API da inbox (consumo no front)
+
+| Método | Rota | Quem |
+|--------|------|------|
+| `GET` | `/api/v1/notifications` | usuário logado — últimas 50 próprias |
+| `PATCH` | `/api/v1/notifications/:id/read` | dono — `{ "isRead": true/false }` |
+| `DELETE` | `/api/v1/notifications/:id` | dono — remove da inbox (hard delete) |
+
+Limpeza em massa (admin): `DELETE /api/v1/system/prune/notifications` ou rotina `POST /system/maintenance/run` — não há exclusão pontual admin por `:id`.
 
 ---
 
@@ -541,7 +568,7 @@ Disparo manual equivalente: `POST /api/v1/system/maintenance/run`.
 | Área | Rotas | Uso no front |
 |------|-------|--------------|
 | **Manutenção em lote** | `POST /system/maintenance/run` + `DELETE /system/prune/{notifications,ssh-attempts}` | Rotina completa (inclui alocações); prune seletivo só notificações e SSH |
-| **Exclusão pontual** | `DELETE /system/{allocations,notifications,ssh-attempts}/:id` | Correção cirúrgica |
+| **Exclusão pontual** | `DELETE /system/{allocations,ssh-attempts}/:id` | Correção cirúrgica |
 | **SSH por intervalo** | `DELETE /ssh-attempts/:keepDays` | Atalho: manter últimos N dias |
 | **Alocações alheias** | `PATCH /allocations/:id` (admin: `startTime`, `endTime`, `status`) | Corrigir horários com validação de conflito |
 | **Grupos** | CRUD `/machine-groups` + `machineIds` no body | Renomear, descrever, reassociar máquinas |
@@ -1510,7 +1537,6 @@ Executa o mesmo fluxo do cron de manutenção.
 | Método | Rota | Response |
 |--------|------|----------|
 | `DELETE` | `/allocations/:id` | 204 (hard delete; CASCADE telemetria + métrica) |
-| `DELETE` | `/notifications/:id` | 204 |
 | `DELETE` | `/ssh-attempts/:id` | 204 |
 
 ---

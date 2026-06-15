@@ -77,7 +77,10 @@ test.group('Allocation notifications', (group) => {
     assert.equal(adminNotifs[0].title, 'Nova reserva pendente')
   })
 
-  test('aprovação de pending notifica o usuário', async ({ client, assert }) => {
+  test('aprovação de pending notifica o usuário e remove alerta pending dos admins', async ({
+    client,
+    assert,
+  }) => {
     const admin = await User.create({
       fullName: 'Admin Apr',
       email: 'admin-apr@teste.com',
@@ -104,6 +107,13 @@ test.group('Allocation notifications', (group) => {
       status: 'pending',
     })
 
+    await Notification.create({
+      userId: admin.id,
+      title: 'Nova reserva pendente',
+      message: `[alloc#${allocation.id}#] Solicitação de reserva em ${machine.name}.`,
+      isRead: false,
+    })
+
     const response = await client
       .patch(`/api/v1/allocations/${allocation.id}`)
       .loginAs(admin)
@@ -114,9 +124,15 @@ test.group('Allocation notifications', (group) => {
     const notifications = await Notification.query().where('userId', user.id)
     assert.lengthOf(notifications, 1)
     assert.equal(notifications[0].title, 'Reserva aprovada')
+
+    const adminNotifs = await Notification.query().where('userId', admin.id)
+    assert.lengthOf(adminNotifs, 0)
   })
 
-  test('negação de reserva notifica o usuário', async ({ client, assert }) => {
+  test('negação de reserva notifica o usuário e remove alerta pending dos admins', async ({
+    client,
+    assert,
+  }) => {
     const admin = await User.create({
       fullName: 'Admin Neg',
       email: 'admin-neg@teste.com',
@@ -143,6 +159,13 @@ test.group('Allocation notifications', (group) => {
       status: 'pending',
     })
 
+    await Notification.create({
+      userId: admin.id,
+      title: 'Nova reserva pendente',
+      message: `[alloc#${allocation.id}#] Solicitação de reserva em ${machine.name}.`,
+      isRead: false,
+    })
+
     const response = await client
       .patch(`/api/v1/allocations/${allocation.id}`)
       .loginAs(admin)
@@ -153,6 +176,60 @@ test.group('Allocation notifications', (group) => {
     const userNotifs = await Notification.query().where('userId', user.id)
     assert.lengthOf(userNotifs, 1)
     assert.equal(userNotifs[0].title, 'Reserva negada')
+
+    const adminNotifs = await Notification.query().where('userId', admin.id)
+    assert.lengthOf(adminNotifs, 0)
+  })
+
+  test('cancelamento de pending pelo autor remove alerta dos admins sem notificar ninguém', async ({
+    client,
+    assert,
+  }) => {
+    const admin = await User.create({
+      fullName: 'Admin Canc Pend',
+      email: 'admin-canc-pend@teste.com',
+      password: 'senha123',
+      role: 'admin',
+    })
+    const user = await User.create({
+      fullName: 'Aluno Canc Pend',
+      email: 'notif-canc-pend@teste.com',
+      password: 'senha123',
+      role: 'user',
+    })
+    const machine = await createTestMachine({
+      name: 'PC-CANC-PEND',
+      description: 'Lab',
+      status: 'available',
+    })
+
+    const allocation = await Allocation.create({
+      userId: user.id,
+      machineId: machine.id,
+      startTime: DateTime.utc().plus({ hours: 2 }),
+      endTime: DateTime.utc().plus({ hours: 4 }),
+      status: 'pending',
+    })
+
+    await Notification.create({
+      userId: admin.id,
+      title: 'Nova reserva pendente',
+      message: `[alloc#${allocation.id}#] Solicitação de reserva em ${machine.name}.`,
+      isRead: false,
+    })
+
+    const response = await client
+      .patch(`/api/v1/allocations/${allocation.id}`)
+      .loginAs(user)
+      .json({ status: 'cancelled' })
+
+    response.assertStatus(200)
+
+    const userNotifs = await Notification.query().where('userId', user.id)
+    assert.lengthOf(userNotifs, 0)
+
+    const adminNotifs = await Notification.query().where('userId', admin.id)
+    assert.lengthOf(adminNotifs, 0)
   })
 
   test('cancelamento notifica o usuário', async ({ client, assert }) => {

@@ -1,6 +1,5 @@
 import { DateTime } from 'luxon'
 import Allocation from '#models/allocation'
-import Notification from '#models/notification'
 import SshConnectionAttempt from '#models/ssh_connection_attempt'
 import { labConfig } from '#services/lab/config'
 import {
@@ -58,11 +57,6 @@ export const SystemService = {
   async hardDeleteAllocation(allocationId: number) {
     const allocation = await Allocation.findOrFail(allocationId)
     await allocation.delete()
-  },
-
-  async hardDeleteNotification(notificationId: number) {
-    const notification = await Notification.findOrFail(notificationId)
-    await notification.delete()
   },
 
   async hardDeleteSshAttempt(attemptId: number) {

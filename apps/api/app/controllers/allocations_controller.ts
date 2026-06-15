@@ -1,6 +1,5 @@
 import type { HttpContext } from '@adonisjs/core/http'
 import Allocation from '#models/allocation'
-import Notification from '#models/notification'
 import AllocationPolicy from '#policies/allocation_policy'
 import {
   createAllocationValidator,
@@ -75,7 +74,7 @@ export default class AllocationsController {
   }
 
   async summarizeSession({ bouncer, params, response }: HttpContext) {
-    await bouncer.authorize('isAdmin')
+    await bouncer.with(AllocationPolicy).authorize('summarize')
 
     const metric = await AllocationService.summarizeSession(Number(params.id))
     return response.created(metric)

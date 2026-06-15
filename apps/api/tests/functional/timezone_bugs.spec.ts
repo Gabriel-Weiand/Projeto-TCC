@@ -4,9 +4,15 @@ import User from '#models/user'
 import Allocation from '#models/allocation'
 import testUtils from '@adonisjs/core/services/test_utils'
 import { DateTime } from 'luxon'
+import { labConfig } from '#services/lab/config'
 import { autoFinalizeExpired } from '#services/allocation/summarizer'
 import { pruneAllocations, pruneExpiredTokens } from '#services/lab/maintenance'
 import { createTestMachine } from '../helpers/test_machine.js'
+import {
+  futureUtc,
+  toBareLabWallClock,
+  toUtcIso,
+} from '../helpers/future_allocation_times.js'
 
 /**
  * Helpers reutilizáveis para os testes.
@@ -243,37 +249,38 @@ test.group('Bug: data sem timezone do frontend', (group) => {
   }) => {
     const { user, machine } = await createUserAndMachine('tzfront1')
 
-    // Frontend CORRIGIDO: toLocalIso("2026-06-15", "14:30") no browser UTC-3
-    // → new Date("2026-06-15T14:30:00").toISOString() → "2026-06-15T17:30:00.000Z"
+    // Front corrigido: parede no fuso do lab convertida para UTC antes do POST
+    // +5h no UTC garante que a parede do lab enviada sem offset (≈ UTC−3h) ainda fique no futuro
+    const labWall = futureUtc(5).setZone(labConfig.timezone)
+    const correctUtc = labWall.toUTC()
+    const correctEnd = correctUtc.plus({ hours: 2 })
+
     const withTz = await client.post('/api/v1/allocations').loginAs(user).json({
       machineId: machine.id,
-      startTime: '2026-06-15T17:30:00.000Z',
-      endTime: '2026-06-15T19:30:00.000Z',
+      startTime: toUtcIso(correctUtc),
+      endTime: toUtcIso(correctEnd),
     })
     withTz.assertStatus(201)
 
     const { user: user2, machine: machine2 } = await createUserAndMachine('tzfront2')
 
-    // Se o front NÃO converte e envia bare string, servidor trata como UTC
-    // Isso significa: 14:30 vira 14:30 UTC (3h antes do esperado pelo user UTC-3)
+    // Front legado: mesmos números de parede do lab, sem offset → servidor trata como UTC
     const withoutTz = await client.post('/api/v1/allocations').loginAs(user2).json({
       machineId: machine2.id,
-      startTime: '2026-06-15T14:30:00',
-      endTime: '2026-06-15T16:30:00',
+      startTime: toBareLabWallClock(labWall),
+      endTime: toBareLabWallClock(labWall.plus({ hours: 2 })),
     })
     withoutTz.assertStatus(201)
 
     const start1 = DateTime.fromISO(withTz.body().startTime).toUTC()
     const start2 = DateTime.fromISO(withoutTz.body().startTime).toUTC()
 
-    // Comportamento correto do servidor: bare string = UTC
-    // start1 = 17:30 UTC (frontend converteu 14:30 -03:00 → 17:30 Z)
-    // start2 = 14:30 UTC (bare string tratada como UTC — front DEVE ter convertido!)
-    assert.equal(start1.hour, 17, 'Com TZ explícito: 17:30 UTC')
-    assert.equal(start2.hour, 14, 'Sem TZ: servidor trata como 14:30 UTC')
+    assert.equal(start1.toMillis(), correctUtc.toMillis(), 'Com TZ explícito: instante UTC do lab')
+    assert.equal(start2.hour, labWall.hour, 'Sem TZ: números de parede tratados como UTC')
+    assert.equal(start2.minute, labWall.minute)
     assert.notEqual(
-      start1.hour,
-      start2.hour,
+      start1.toMillis(),
+      start2.toMillis(),
       'Horários DEVEM divergir quando front não converte — por isso o fix no NewAllocationModal'
     )
   })

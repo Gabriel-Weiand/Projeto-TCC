@@ -6,12 +6,12 @@ const AuthController = () => import('#controllers/auth_controller')
 const UsersController = () => import('#controllers/users_controller')
 const AgentController = () => import('#controllers/agent_controller')
 const MachinesController = () => import('#controllers/machines_controller')
-const MachineGroupsController = () => import('#controllers/machine_groups_controller') // NOVO
+const MachineGroupsController = () => import('#controllers/machine_groups_controller')
 const AllocationsController = () => import('#controllers/allocations_controller')
 const SystemController = () => import('#controllers/system_controller')
 const UtilsController = () => import('#controllers/utils_controller')
-const NotificationsController = () => import('#controllers/notifications_controller') // NOVO
-const SshAttemptsController = () => import('#controllers/ssh_attempts_controller') // NOVO (Substitui o antigo SshSessionsController)
+const NotificationsController = () => import('#controllers/notifications_controller')
+const SshAttemptsController = () => import('#controllers/ssh_attempts_controller')
 const LabTelemetryController = () => import('#controllers/lab_telemetry_controller')
 const LabSettingsController = () => import('#controllers/lab_settings_controller')
 
@@ -29,30 +29,27 @@ router
 /**
  * API v1
  */
-
 router
   .group(() => {
-    // Rotas Frontend
     router.group(() => {
-      // ========================================
-      // PUBLIC ROUTES
-      // ========================================
+      // ====================================================================
+      // PUBLIC
+      // ====================================================================
       router.post('login', [AuthController, 'login']).as('auth.login')
 
-      // ========================================
-      // AUTHENTICATED ROUTES
-      // ========================================
+      // ====================================================================
+      // AUTHENTICATED — qualquer usuário logado
+      // Autorização por recurso (dono vs admin) via Bouncer nos controllers.
+      // ====================================================================
       router
         .group(() => {
-          // --- Auth & Profile ---
+          // --- Sessão & perfil próprio ---
           router.delete('logout', [AuthController, 'logout']).as('auth.logout')
           router.get('me', [AuthController, 'me']).as('auth.me')
-
-          // --- User Profile Self-Management ---
           router.put('users/me', [UsersController, 'updateMe']).as('users.update.me')
-          router.put('users/me/ssh-key', [UsersController, 'updateSshKey']).as('users.updateSshKey') // NOVO
+          router.put('users/me/ssh-key', [UsersController, 'updateSshKey']).as('users.updateSshKey')
 
-          // --- Notifications (User) ---
+          // --- Notificações (inbox do usuário; policy: somente dono) ---
           router.get('notifications', [NotificationsController, 'index']).as('notifications.index')
           router
             .patch('notifications/:id/read', [NotificationsController, 'markAsRead'])
@@ -63,7 +60,40 @@ router
             .as('notifications.destroy')
             .where('id', router.matchers.number())
 
-          // --- Users (Admin Only) ---
+          // --- Máquinas (leitura para todos; mutações no bloco admin) ---
+          router.get('/machines', [MachinesController, 'index']).as('machines.index')
+          router
+            .get('/machines/:id', [MachinesController, 'show'])
+            .as('machines.show')
+            .where('id', router.matchers.number())
+          router
+            .get('/machines/:id/allocations', [AllocationsController, 'machineHistory'])
+            .as('machines.allocations')
+            .where('id', router.matchers.number())
+
+          // --- Alocações (rotas mistas; policy: dono OU admin) ---
+          router
+            .group(() => {
+              router.get('/my', [AllocationsController, 'myAllocations']).as('allocations.my')
+              router.post('/', [AllocationsController, 'store']).as('allocations.store')
+              router.get('/', [AllocationsController, 'index']).as('allocations.index')
+              router.patch('/:id', [AllocationsController, 'update']).as('allocations.update')
+              router.post('/:id/extend', [AllocationsController, 'extend']).as('allocations.extend')
+              router.post('/:id/finish', [AllocationsController, 'finish']).as('allocations.finish')
+              router
+                .delete('/:id', [AllocationsController, 'softDelete'])
+                .as('allocations.softDelete')
+              router
+                .get('/:id/summary', [AllocationsController, 'getSessionSummary'])
+                .as('allocations.summary.show')
+            })
+            .prefix('allocations')
+            .where('id', router.matchers.number())
+
+          // ====================================================================
+          // ADMIN ONLY — middleware.isAdmin() (barreira de rota)
+          // Sem checagem de dono: ações globais do laboratório.
+          // ====================================================================
           router
             .group(() => {
               router.post('/', [UsersController, 'store']).as('users.store')
@@ -73,9 +103,8 @@ router
             })
             .prefix('users')
             .where('id', router.matchers.number())
-            .use(middleware.isAdmin()) // Admin Only
+            .use(middleware.isAdmin())
 
-          // --- Lab config (Admin Only) ---
           router
             .group(() => {
               router
@@ -90,7 +119,6 @@ router
             .prefix('lab')
             .use(middleware.isAdmin())
 
-          // --- Machine Groups (Admin Only) ---
           router
             .group(() => {
               router.get('/', [MachineGroupsController, 'index']).as('machineGroups.index')
@@ -101,15 +129,8 @@ router
                 .as('machineGroups.destroy')
             })
             .prefix('machine-groups')
-            .use(middleware.isAdmin()) // Admin Only
             .where('id', router.matchers.number())
-
-          // --- Machines (GET list + show: General | Mutations: Admin Only) ---
-          router.get('/machines', [MachinesController, 'index']).as('machines.index')
-          router
-            .get('/machines/:id', [MachinesController, 'show'])
-            .as('machines.show')
-            .where('id', router.matchers.number())
+            .use(middleware.isAdmin())
 
           router
             .group(() => {
@@ -148,9 +169,8 @@ router
             })
             .prefix('machines')
             .where('id', router.matchers.number())
-            .use(middleware.isAdmin()) // Admin Only
+            .use(middleware.isAdmin())
 
-          // --- SSH Attempts Auditing (Admin only) ---
           router
             .group(() => {
               router.get('/', [SshAttemptsController, 'index']).as('sshAttempts.index')
@@ -158,39 +178,13 @@ router
             .prefix('ssh-attempts')
             .use(middleware.isAdmin())
 
-          // --- Machines Allocations (General - anonimizado para users) ---
-          router
-            .get('/machines/:id/allocations', [AllocationsController, 'machineHistory'])
-            .as('machines.allocations')
-            .where('id', router.matchers.number())
-
-          // --- Allocations (Mixed Permissions) ---
-          router
-            .group(() => {
-              router.get('/my', [AllocationsController, 'myAllocations']).as('allocations.my') // Busca rápida das próprias reservas
-              router.post('/', [AllocationsController, 'store']).as('allocations.store') // General
-              router.get('/', [AllocationsController, 'index']).as('allocations.index') // General
-              router.patch('/:id', [AllocationsController, 'update']).as('allocations.update') // General
-              router.post('/:id/extend', [AllocationsController, 'extend']).as('allocations.extend')
-              router.post('/:id/finish', [AllocationsController, 'finish']).as('allocations.finish')
-              router
-                .delete('/:id', [AllocationsController, 'softDelete'])
-                .as('allocations.softDelete') // General (user soft-delete)
-              router
-                .get('/:id/summary', [AllocationsController, 'getSessionSummary'])
-                .as('allocations.summary.show') // General
-            })
-            .prefix('allocations')
-            .where('id', router.matchers.number())
-
-          // --- Allocations Summary (Admin Only) ---
+          // Admin gera resumo; middleware + AllocationPolicy.summarize no controller
           router
             .post('allocations/:id/summary', [AllocationsController, 'summarizeSession'])
             .as('allocations.summary.create')
             .where('id', router.matchers.number())
-            .use(middleware.isAdmin()) // Admin Only
+            .use(middleware.isAdmin())
 
-          // --- System Maintenance (Admin Only) ---
           router
             .group(() => {
               router
@@ -199,9 +193,6 @@ router
               router
                 .delete('allocations/:id', [SystemController, 'destroyAllocation'])
                 .as('system.allocations.destroy')
-              router
-                .delete('notifications/:id', [SystemController, 'destroyNotification'])
-                .as('system.notifications.destroy')
               router
                 .delete('ssh-attempts/:id', [SystemController, 'destroySshAttempt'])
                 .as('system.sshAttempts.destroy')
@@ -213,22 +204,18 @@ router
                 .as('system.prune.sshAttempts')
             })
             .prefix('system')
-            .use(middleware.isAdmin()) // Admin Only
             .where('id', router.matchers.number())
+            .use(middleware.isAdmin())
         })
         .use(middleware.auth())
     })
 
     /**
-     * API v1 - Machine Agent Routes
-     * Todas as rotas requerem autenticação via token da máquina.
+     * API v1 — Agent (token da máquina, não usuário)
      */
     router
       .group(() => {
-        // --- Heartbeat (inclui should-block e info da alocação atual) ---
         router.post('heartbeat', [AgentController, 'heartbeat']).as('agent.heartbeat')
-
-        // --- Sync & Telemetria ---
         router.put('sync-specs', [AgentController, 'syncSpecs']).as('agent.syncSpecs')
         router.post('telemetry', [AgentController, 'telemetry']).as('agent.telemetry')
       })

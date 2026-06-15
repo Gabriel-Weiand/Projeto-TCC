@@ -5,6 +5,12 @@ import testUtils from '@adonisjs/core/services/test_utils'
 import { DateTime, Settings } from 'luxon'
 import { labConfig } from '#services/lab/config'
 import { createTestMachine } from '../helpers/test_machine.js'
+import {
+  futureUtc,
+  toBareUtcWallClock,
+  toLabOffsetIso,
+  toUtcIso,
+} from '../helpers/future_allocation_times.js'
 
 test.group('Timezone — processo e persistência', (group) => {
   group.each.setup(() => testUtils.db().withGlobalTransaction())
@@ -44,20 +50,18 @@ test.group('Timezone — Alocações em UTC', (group) => {
       status: 'available',
     })
 
-    // 14:00 Brasil (UTC-3) = 17:00 UTC
-    const startTime = '2026-06-15T17:00:00.000Z'
-    const endTime = '2026-06-15T19:00:00.000Z'
+    const startUtc = futureUtc(2)
+    const endUtc = startUtc.plus({ hours: 2 })
 
     const response = await client.post('/api/v1/allocations').loginAs(user).json({
       machineId: machine.id,
-      startTime,
-      endTime,
+      startTime: toUtcIso(startUtc),
+      endTime: toUtcIso(endUtc),
     })
 
     response.assertStatus(201)
     const body = response.body()
 
-    // O horário retornado deve estar em UTC (offset +00:00)
     assert.isTrue(
       body.startTime.includes('+00:00') || body.startTime.includes('Z'),
       `startTime esperado UTC, recebeu: ${body.startTime}`
@@ -87,24 +91,20 @@ test.group('Timezone — Alocações em UTC', (group) => {
       status: 'available',
     })
 
-    // 14:00 horário de Brasília explícito
-    const startTime = '2026-06-15T14:00:00.000-03:00'
-    const endTime = '2026-06-15T16:00:00.000-03:00'
+    const startUtc = futureUtc(2)
+    const endUtc = startUtc.plus({ hours: 2 })
 
     const response = await client.post('/api/v1/allocations').loginAs(user).json({
       machineId: machine.id,
-      startTime,
-      endTime,
+      startTime: toLabOffsetIso(startUtc),
+      endTime: toLabOffsetIso(endUtc),
     })
 
     response.assertStatus(201)
     const body = response.body()
 
-    // Após normalização, o horário deve estar em UTC
-    // 14:00 -03:00 = 17:00 UTC
-    const startDt = DateTime.fromISO(body.startTime)
-    assert.equal(startDt.toUTC().hour, 17, 'startTime deveria ser 17:00 UTC')
-    assert.equal(startDt.toUTC().minute, 0)
+    const startDt = DateTime.fromISO(body.startTime).toUTC()
+    assert.equal(startDt.toMillis(), startUtc.toMillis(), 'offset do lab deve normalizar ao mesmo instante UTC')
   })
 
   test('detecção de conflito funciona corretamente com UTC', async ({ client, assert }) => {
@@ -123,20 +123,20 @@ test.group('Timezone — Alocações em UTC', (group) => {
       status: 'available',
     })
 
-    // Primeira alocação: 17:00-19:00 UTC
+    const startUtc = futureUtc(2)
+    const endUtc = startUtc.plus({ hours: 2 })
+
     const res1 = await client.post('/api/v1/allocations').loginAs(user).json({
       machineId: machine.id,
-      startTime: '2026-06-15T17:00:00.000Z',
-      endTime: '2026-06-15T19:00:00.000Z',
+      startTime: toUtcIso(startUtc),
+      endTime: toUtcIso(endUtc),
     })
     assert.equal(res1.status(), 201)
 
-    // Segunda alocação: mesmo horário expresso com offset -03:00
-    // 14:00 -03:00 = 17:00 UTC → deve conflitar!
     const res2 = await client.post('/api/v1/allocations').loginAs(user).json({
       machineId: machine.id,
-      startTime: '2026-06-15T14:00:00.000-03:00',
-      endTime: '2026-06-15T16:00:00.000-03:00',
+      startTime: toLabOffsetIso(startUtc),
+      endTime: toLabOffsetIso(endUtc),
     })
 
     assert.equal(res2.status(), 409, 'Deveria detectar conflito entre UTC e offset -03:00')
@@ -161,21 +161,21 @@ test.group('Timezone — Alocações em UTC', (group) => {
       status: 'available',
     })
 
-    // Frontend antigo enviava "14:30:00" sem offset — servidor trata como UTC
-    // Isso é ERRADO para um usuário em UTC-3, mas é o comportamento atual
+    const startUtc = futureUtc(2, 30)
+    const endUtc = startUtc.plus({ hours: 2 })
+
     const response = await client.post('/api/v1/allocations').loginAs(user).json({
       machineId: machine.id,
-      startTime: '2026-06-15T14:30:00',
-      endTime: '2026-06-15T16:30:00',
+      startTime: toBareUtcWallClock(startUtc),
+      endTime: toBareUtcWallClock(endUtc),
     })
 
     response.assertStatus(201)
     const body = response.body()
 
-    // Servidor interpreta como 14:30 UTC (não 14:30 Brasil = 17:30 UTC)
-    const startDt = DateTime.fromISO(body.startTime)
-    assert.equal(startDt.toUTC().hour, 14, 'Sem offset → tratado como UTC (hora 14)')
-    assert.equal(startDt.toUTC().minute, 30)
+    const startDt = DateTime.fromISO(body.startTime).toUTC()
+    assert.equal(startDt.hour, startUtc.hour, 'Sem offset → tratado como UTC (mesma hora)')
+    assert.equal(startDt.minute, startUtc.minute)
   })
 
   test('14:30 no fuso do lab (via ISO Z) persiste e relê sem deslocar +3h', async ({
@@ -238,21 +238,22 @@ test.group('Timezone — Alocações em UTC', (group) => {
       status: 'available',
     })
 
-    // Frontend CORRIGIDO: converte 14:30 local (UTC-3) → 17:30 UTC antes de enviar
-    // Simulamos: new Date("2026-06-15T14:30:00").toISOString() em UTC-3
-    // = "2026-06-15T17:30:00.000Z"
+    // Parede no fuso do lab → instante UTC (como .toISOString() no browser)
+    const labWall = futureUtc(3).setZone(labConfig.timezone)
+    const startUtc = labWall.toUTC()
+    const endUtc = startUtc.plus({ hours: 2 })
+
     const response = await client.post('/api/v1/allocations').loginAs(user).json({
       machineId: machine.id,
-      startTime: '2026-06-15T17:30:00.000Z',
-      endTime: '2026-06-15T19:30:00.000Z',
+      startTime: toUtcIso(startUtc),
+      endTime: toUtcIso(endUtc),
     })
 
     response.assertStatus(201)
     const body = response.body()
 
-    // O horário armazenado deve ser 17:30 UTC
-    const startDt = DateTime.fromISO(body.startTime)
-    assert.equal(startDt.toUTC().hour, 17, 'Front corrigido: 14:30 -03:00 → 17:30 UTC')
-    assert.equal(startDt.toUTC().minute, 30)
+    const startDt = DateTime.fromISO(body.startTime).toUTC()
+    assert.equal(startDt.toMillis(), startUtc.toMillis(), 'Front corrigido: parede local → instante UTC')
+    assert.equal(startDt.minute, startUtc.minute)
   })
 })

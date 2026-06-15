@@ -86,31 +86,13 @@ export async function notifyAdminsPendingAllocation(
   )
 }
 
-/** Admin: reserva pendente negada ou cancelada pelo solicitante. */
-export async function notifyAdminsPendingAllocationOutcome(
-  allocation: AllocationModel,
-  machine: MachineModel,
-  previousStatus: AllocationModel['status']
-) {
-  if (previousStatus !== 'pending') return
-
-  const range = formatAllocationRange(allocation.startTime, allocation.endTime)
-  const ref = allocRef(allocation.id)
-
-  if (allocation.status === 'denied') {
-    await notifyAllAdmins(
-      'Reserva negada',
-      `${ref} Solicitação pendente em ${machine.name} (${range}) foi negada.`
-    )
-    return
-  }
-
-  if (allocation.status === 'cancelled') {
-    await notifyAllAdmins(
-      'Reserva cancelada',
-      `${ref} Solicitação pendente em ${machine.name} (${range}) foi cancelada pelo usuário.`
-    )
-  }
+/** Remove alertas "Nova reserva pendente" dos admins quando a solicitação deixa de ser pending. */
+export async function clearPendingAllocationAdminNotifications(allocationId: number) {
+  const ref = allocRef(allocationId)
+  await Notification.query()
+    .where('title', 'Nova reserva pendente')
+    .where('message', 'like', `%${ref}%`)
+    .delete()
 }
 
 /** User: só quando saiu de pending → approved. */
@@ -399,18 +381,26 @@ export async function notifyAllocationStatusChange(
 
   if (allocation.status === 'approved') {
     await notifyAllocationApprovedFromPending(allocation, machine, previousStatus)
+    if (previousStatus === 'pending') {
+      await clearPendingAllocationAdminNotifications(allocation.id)
+    }
     return
   }
 
   if (allocation.status === 'denied') {
     await notifyAllocationDenied(allocation, machine)
-    await notifyAdminsPendingAllocationOutcome(allocation, machine, previousStatus)
+    if (previousStatus === 'pending') {
+      await clearPendingAllocationAdminNotifications(allocation.id)
+    }
     return
   }
 
   if (allocation.status === 'cancelled') {
+    if (previousStatus === 'pending') {
+      await clearPendingAllocationAdminNotifications(allocation.id)
+      return
+    }
     await notifyAllocationCancelled(allocation, machine)
-    await notifyAdminsPendingAllocationOutcome(allocation, machine, previousStatus)
   }
 }
 

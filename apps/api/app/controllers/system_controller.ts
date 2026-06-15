@@ -49,16 +49,6 @@ export default class SystemController {
   }
 
   /**
-   * Remove uma notificação específica.
-   *
-   * DELETE /api/v1/system/notifications/:id
-   */
-  async destroyNotification({ params, response }: HttpContext) {
-    await SystemService.hardDeleteNotification(Number(params.id))
-    return response.noContent()
-  }
-
-  /**
    * Remove uma tentativa SSH específica.
    *
    * DELETE /api/v1/system/ssh-attempts/:id
