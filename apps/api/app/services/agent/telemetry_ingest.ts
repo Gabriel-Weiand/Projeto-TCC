@@ -5,6 +5,7 @@ import { updateMachinePresence } from '#services/agent/presence'
 import { telemetryBuffer } from '#services/telemetry/buffer'
 import { idleTelemetryBuffer } from '#services/telemetry/idle_buffer'
 import { resolveMachineIntervalSeconds } from '#services/telemetry/presets'
+import { shouldPersistAllocationSample } from '#services/telemetry/allocation_scalar_source'
 import type { Infer } from '@vinejs/vine/types'
 import type { telemetryReportValidator } from '#validators/telemetry'
 
@@ -46,13 +47,18 @@ export const TelemetryIngestService = {
     )
 
     for (const item of batchPayload) {
+      const inAllocation = Boolean(activeAlloc)
+      const intervalSeconds = resolveMachineIntervalSeconds(machine, inAllocation)
+
       if (activeAlloc) {
-        telemetryBuffer.add(machine.id, item)
+        telemetryBuffer.add(machine.id, item, {
+          persist: shouldPersistAllocationSample(item),
+        })
       } else {
         telemetryBuffer.updateRealtime(machine.id, item)
-        const intervalSeconds = resolveMachineIntervalSeconds(machine, false)
-        idleTelemetryBuffer.ingest(machine.id, item, intervalSeconds)
       }
+
+      idleTelemetryBuffer.ingest(machine.id, item, intervalSeconds)
     }
 
     telemetryBuffer.recordBatch(machine.id, batchPayload)

@@ -14,6 +14,10 @@ import {
   type TelemetrySample,
 } from '#services/telemetry/downsample'
 import { buildProcessSummary } from '#services/telemetry/process_summary'
+import {
+  chartSeriesFromIdleBuffer,
+  scalarSamplesFromIdleChart,
+} from '#services/telemetry/allocation_scalar_source'
 
 function telemetryToSample(row: Telemetry): TelemetrySample {
   return {
@@ -198,12 +202,20 @@ export async function summarizeAllocation(
   const existing = await AllocationMetric.findBy('allocationId', allocation.id)
   if (existing) return null
 
-  const telemetries = await Telemetry.query().where('allocationId', allocation.id)
-  if (telemetries.length === 0) return null
+  await allocation.load('machine')
 
-  const metrics = calculateMetrics(telemetries, allocation)
-  const { points: chartSeries, bucketMs } = buildAllocationChartSeries(telemetries, allocation)
-  const processSummary = buildProcessSummary(telemetries, allocation)
+  const dbTelemetries = await Telemetry.query().where('allocationId', allocation.id)
+  const idleScalars = scalarSamplesFromIdleChart(allocation.machineId, allocation)
+  const scalarSource = idleScalars.length > 0 ? idleScalars : dbTelemetries
+
+  if (scalarSource.length === 0 && dbTelemetries.length === 0) return null
+
+  const metrics = calculateMetrics(scalarSource, allocation)
+  const { points: chartSeries, bucketMs } =
+    idleScalars.length > 0
+      ? chartSeriesFromIdleBuffer(allocation.machineId, allocation)
+      : buildAllocationChartSeries(dbTelemetries, allocation)
+  const processSummary = buildProcessSummary(dbTelemetries, allocation)
 
   const metric = await AllocationMetric.create({
     allocationId: allocation.id,

@@ -18,9 +18,9 @@ const props = withDefaults(
     machine: Machine;
     machineId: number;
     liveData: RealtimeTelemetry | null;
-    /** Bloco CPU/GPU/RAM/rede em tempo real (somente admin). */
+    /** Bloco CPU/GPU/RAM/rede em tempo real. */
     showTelemetry?: boolean;
-    /** Gráfico 24 h (somente admin). */
+    /** Gráfico 24 h. */
     showCharts?: boolean;
     /** Lista de processos do último lote (somente admin). */
     showProcesses?: boolean;
@@ -304,6 +304,7 @@ function formatBatchTime(iso: string | null | undefined): string {
       <MachineIdleHistoryChart
         :machine-id="machineId"
         :active="!chartsCollapsed"
+        :live-stamp="latestBatchTimestamp"
       />
     </CollapsibleSection>
 

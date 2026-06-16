@@ -9,6 +9,8 @@ const props = defineProps<{
   machineId: number;
   /** Só faz polling quando a seção está expandida. */
   active?: boolean;
+  /** Timestamp do último lote ao vivo — força refresh do histórico ocioso. */
+  liveStamp?: string | null;
 }>();
 
 const lab = useLabConfigStore();
@@ -17,7 +19,7 @@ const enabled = computed(() => props.active !== false);
 
 const { chartSeries, meta, loading, error } = useMachineIdleHistory(
   () => props.machineId,
-  { enabled },
+  { enabled, liveStamp: () => props.liveStamp },
 );
 
 const resolutionLegend = computed(() => {

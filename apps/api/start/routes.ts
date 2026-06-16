@@ -70,6 +70,14 @@ router
             .get('/machines/:id/allocations', [AllocationsController, 'machineHistory'])
             .as('machines.allocations')
             .where('id', router.matchers.number())
+          router
+            .get('/machines/:id/telemetry', [MachinesController, 'telemetry'])
+            .as('machines.telemetry')
+            .where('id', router.matchers.number())
+          router
+            .get('/machines/:id/telemetry/stream', [MachinesController, 'telemetryStream'])
+            .as('machines.telemetryStream')
+            .where('id', router.matchers.number())
 
           // --- Alocações (rotas mistas; policy: dono OU admin) ---
           router
@@ -137,12 +145,6 @@ router
               router.post('/', [MachinesController, 'store']).as('machines.store')
               router.put('/:id', [MachinesController, 'update']).as('machines.update')
               router.delete('/:id', [MachinesController, 'destroy']).as('machines.destroy')
-              router
-                .get('/:id/telemetry', [MachinesController, 'telemetry'])
-                .as('machines.telemetry')
-              router
-                .get('/:id/telemetry/stream', [MachinesController, 'telemetryStream'])
-                .as('machines.telemetryStream')
               router
                 .post('/:id/regenerate-token', [MachinesController, 'regenerateToken'])
                 .as('machines.regenerateToken')

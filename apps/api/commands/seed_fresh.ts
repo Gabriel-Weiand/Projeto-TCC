@@ -5,7 +5,7 @@ import { isSeedProfile } from '../database/helpers/seed/profile.js'
 export default class SeedFresh extends BaseCommand {
   static commandName = 'seed:fresh'
   static description =
-    'Recria o banco (migration:fresh) e aplica um perfil de seed: dev, minimal ou lab'
+    'Recria o banco (migration:fresh --seed) com perfil dev, minimal ou lab'
 
   static options: CommandOptions = {
     startApp: false,
@@ -22,6 +22,7 @@ export default class SeedFresh extends BaseCommand {
 
     if (!isSeedProfile(profile)) {
       this.logger.error(`Perfil inválido "${this.profile}". Use: dev, minimal ou lab.`)
+      this.logger.info('Exemplos: node ace seed:fresh dev | npm run seed:lab')
       this.exitCode = 1
       return
     }
@@ -29,17 +30,14 @@ export default class SeedFresh extends BaseCommand {
     process.env.LAB_SEED_PROFILE = profile
     this.logger.info(`Aplicando perfil de seed: ${profile}`)
 
-    const fresh = await this.kernel.exec('migration:fresh', [])
-    if (fresh.error) {
-      this.logger.error(fresh.error.message)
+    const result = await this.kernel.exec('migration:fresh', ['--seed'])
+    if (result.error) {
+      this.logger.error(result.error.message)
       this.exitCode = 1
       return
     }
-
-    const seed = await this.kernel.exec('db:seed', [])
-    if (seed.error) {
-      this.logger.error(seed.error.message)
-      this.exitCode = 1
+    if (result.exitCode !== 0) {
+      this.exitCode = result.exitCode
       return
     }
 

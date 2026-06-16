@@ -110,13 +110,14 @@ class TelemetryBuffer {
 
   /**
    * Adiciona telemetria ao buffer de persistência (para batch insert no banco).
-   * Chamado apenas quando há alocação ativa.
+   * Chamado quando há alocação ativa.
    * Também atualiza o estado real-time.
-   * @param machineId - ID da máquina
-   * @param data - Dados da telemetria com allocationId válido
+   * @param options.persist — false: só ring buffer ao vivo (escalares vão ao idleTelemetryBuffer)
    */
-  add(machineId: number, data: TelemetryData): void {
+  add(machineId: number, data: TelemetryData, options?: { persist?: boolean }): void {
     this.updateRealtime(machineId, data)
+    if (options?.persist === false) return
+
     this.buffer.push(data)
 
     if (this.buffer.length >= this.MAX_BUFFER_SIZE) {

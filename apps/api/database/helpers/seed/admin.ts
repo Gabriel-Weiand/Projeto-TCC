@@ -14,6 +14,14 @@ export function buildAdminUserPayload() {
 
 export async function seedAdminUser() {
   const payload = buildAdminUserPayload()
+  const existing = await User.findBy('email', payload.email)
+  if (existing) {
+    console.log(`\n--- Admin existente ---`)
+    console.log(`  ${existing.email}`)
+    console.log('---\n')
+    return existing
+  }
+
   const admin = await User.create(payload)
   console.log(`\n--- Admin inicial ---`)
   console.log(`  ${admin.email} / ${payload.password}`)

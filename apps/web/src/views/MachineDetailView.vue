@@ -48,7 +48,7 @@ onMounted(async () => {
     ]);
     machine.value = m;
     scheduleAllocations.value = sched.data || [];
-    if (isAdmin.value) startPlayback();
+    startPlayback();
 
     allocRefresh = setInterval(async () => {
       try {
@@ -82,11 +82,7 @@ const displayProcesses = computed(
   () => latestProcesses.value ?? liveData.value?.processes ?? null,
 );
 
-const showLiveSections = computed(
-  () =>
-    isAdmin.value ||
-    (machine.value?.disks != null && machine.value.disks.length > 0),
-);
+const showLiveSections = computed(() => Boolean(machine.value));
 
 const myActiveAllocation = computed(() => {
   const uid = auth.user?.id;
@@ -331,8 +327,8 @@ const displayDiskGb = computed(() =>
         :machine="machine"
         :machine-id="machineId"
         :live-data="liveData"
-        :show-telemetry="isAdmin"
-        :show-charts="isAdmin"
+        :show-telemetry="true"
+        :show-charts="true"
         :show-processes="isAdmin"
         :latest-processes="displayProcesses"
         :latest-batch-timestamp="latestBatchTimestamp"

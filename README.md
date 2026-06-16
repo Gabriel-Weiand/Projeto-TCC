@@ -177,7 +177,7 @@ pending → approved → [prepare] → active (full_shell) → grace → sftp_on
 | Contexto | Armazenamento | Uso principal |
 |----------|---------------|---------------|
 | **Tempo real** (CPU, RAM, GPU, discos, processos) | RAM — `telemetryBuffer` | Painel admin, parque, stream; **sempre** atualizado pelo agente |
-| **Gráfico 24 h ocioso** | RAM — `idleTelemetryBuffer` | Só enquanto **sem** alocação ativa; ~96 pts @ 15 min |
+| **Gráfico 24 h ocioso** | RAM — `idleTelemetryBuffer` | Sempre (ocioso **e** alocação); ~96 pts @ 15 min |
 | **Sessão em curso** | SQLite — `telemetries` | Flush a cada 60 s; base para resumo TWA; **não** alimenta UI ao vivo |
 | **Após resumo** | `allocation_metrics.chart_series` | Modal de estatísticas do usuário/admin |
 
@@ -274,7 +274,11 @@ cd apps/api
 npm install
 cp .env.example .env
 node ace migration:run
-# dev com seed: node ace migration:fresh --seed
+# Banco + dados de teste (perfil dev):
+node ace seed:fresh dev
+# ou: npm run seed:dev
+# outros perfis: npm run seed:minimal | npm run seed:lab
+# alternativa: LAB_SEED_PROFILE=dev node ace migration:fresh --seed
 node ace serve --watch
 ```
 

@@ -10,7 +10,7 @@ import {
   Legend,
   Filler,
 } from "chart.js";
-import { computed, onBeforeUnmount, onMounted, ref, watch } from "vue";
+import { computed, onBeforeUnmount, onMounted, ref, watch, nextTick } from "vue";
 import type { AllocationChartPoint } from "@/types";
 import {
   buildSummaryChartTabs,
@@ -67,6 +67,25 @@ const renderSignature = computed(() => {
 
 let chart: Chart | null = null;
 let lastAppliedSignature = "";
+let resizeObserver: ResizeObserver | null = null;
+
+function scheduleResize() {
+  nextTick(() => {
+    requestAnimationFrame(() => {
+      chart?.resize();
+    });
+  });
+}
+
+function observeCanvasContainer() {
+  resizeObserver?.disconnect();
+  const wrap = canvasRef.value?.parentElement;
+  if (!wrap) return;
+  resizeObserver = new ResizeObserver(() => {
+    chart?.resize();
+  });
+  resizeObserver.observe(wrap);
+}
 
 function destroyChart() {
   chart?.destroy();
@@ -184,6 +203,7 @@ function syncChart() {
       options: buildChartOptions(tab),
     });
     lastAppliedSignature = signature;
+    scheduleResize();
     return;
   }
 
@@ -192,6 +212,7 @@ function syncChart() {
   chart.options = buildChartOptions(tab);
   chart.update("none");
   lastAppliedSignature = signature;
+  scheduleResize();
 }
 
 watch(renderSignature, () => {
@@ -207,9 +228,20 @@ onMounted(() => {
     activeTab.value = defaultChartTab(tabs.value);
   }
   syncChart();
+  observeCanvasContainer();
 });
 
-onBeforeUnmount(() => destroyChart());
+onBeforeUnmount(() => {
+  resizeObserver?.disconnect();
+  resizeObserver = null;
+  destroyChart();
+});
+
+watch(canvasRef, (el) => {
+  if (!el) return;
+  observeCanvasContainer();
+  syncChart();
+});
 </script>
 
 <template>

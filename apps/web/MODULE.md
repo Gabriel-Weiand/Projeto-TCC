@@ -199,10 +199,10 @@ Sincronização de relógio: `src/services/timeSync.ts` — `startTimeSync()` + 
 |---------|-------------------|--------|-----|
 | **Ao vivo** | `GET /machines/:id/telemetry/stream` via `useTelemetryPlayback` | Admin no detalhe da máquina | Barras, discos, processos, usuários ativos |
 | **Parque / fallback** | `GET /machines` → `latestTelemetry` | Listagem e refresh 30 s | Cards do dashboard admin |
-| **Gráfico 24 h ocioso** | `GET /machines/:id/telemetry` → `idleHistory` via `useMachineIdleHistory` | Admin, seção gráficos | `MachineIdleHistoryChart` |
+| **Gráfico 24 h ocioso** | `GET /machines/:id/telemetry` → `idleHistory` via `useMachineIdleHistory` | Todos (seção gráficos) | `MachineIdleHistoryChart` — atualiza também em alocação |
 | **Resumo de sessão** | `GET /allocations/:id/summary` | Após admin gerar resumo | `AllocationUsageStatsModal` |
 
-Durante **alocação ativa**, barras/processos/discos usam o buffer runtime (stream). O gráfico 24 h continua exibindo o buffer ocioso **sem novos pontos** até a sessão terminar. Bruto da sessão fica no SQLite até o resumo — o front **não** consulta `history.data` para monitoramento.
+Durante **alocação ativa**, barras/processos/discos usam o buffer runtime (stream). O gráfico 24 h **continua** a agregar TWA @ 15 min no `idleTelemetryBuffer`. Escalares da sessão no resumo vêm desse buffer; só amostras com **processos** vão para a fila SQLite até o resumo.
 
 **Memória (ocioso):** ao vivo = ring ~15 amostras ricas em `telemetryBuffer`; gráfico = janela pending ≤15 + **~96 pts @ 15 min** materializados (~**81–116 KiB**/máquina conforme preset). Ver [`apps/api/MODULE.md`](../../api/MODULE.md#retenção-e-buffers).
 

@@ -26,8 +26,10 @@ cp .env.example .env
 # Executar as migrations
 node ace migration:run
 
-# (Opcional) Dados de teste
-node ace db:seed
+# Banco + seed (perfil dev — fictício completo)
+node ace seed:fresh dev
+# npm run seed:dev | seed:minimal | seed:lab
+# LAB_SEED_PROFILE=lab node ace migration:fresh --seed
 
 # Iniciar servidor
 node ace serve --watch
@@ -175,8 +177,10 @@ Números ao vivo vêm de **`telemetryBuffer.getLatest()`**, não do buffer ocios
 
 ```
 Para cada amostra do lote:
-  se alocação approved na janela → telemetryBuffer.add()
-  senão → telemetryBuffer.updateRealtime() + idleTelemetryBuffer.ingest()
+  sempre → idleTelemetryBuffer.ingest()   # gráfico 24 h @ 15 min (ocioso ou alocação)
+  se alocação approved na janela:
+    telemetryBuffer.add(..., persist: só se processes.length > 0)
+  senão → telemetryBuffer.updateRealtime()
 
 Sempre: telemetryBuffer.recordBatch(lote completo)
 ```
@@ -188,7 +192,7 @@ Sempre: telemetryBuffer.recordBatch(lote completo)
 | Barras CPU/GPU/RAM, discos ao vivo | `telemetryBuffer` (`/telemetry/stream`, `latestTelemetry`) | idem |
 | Tabela de **processos** | último lote em `telemetryBuffer` (campo `processes` da amostra) | idem; vazio se `userScope: session` e nenhum `lab.*` em sessão |
 | Sessões **activeUsers** | amostra realtime (buffer) + heartbeat | idem |
-| Gráfico **24 h ocioso** | `idleTelemetryBuffer` — **congela** (sem novos pontos até fim da alocação) | atualizado a cada POST |
+| Gráfico **24 h ocioso** | `idleTelemetryBuffer` — **continua** durante alocação (mesma série @ 15 min) | atualizado a cada POST |
 | Histórico bruto de **sessão** | tabela `telemetries` (flush 60 s) | N/A |
 | Gráfico pós-sessão (usuário/admin) | `allocation_metrics.chart_series` após resumo | N/A |
 

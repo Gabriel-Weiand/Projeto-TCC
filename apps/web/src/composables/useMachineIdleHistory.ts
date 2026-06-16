@@ -10,6 +10,8 @@ import type { AllocationChartPoint, MachineIdleHistoryMeta } from "@/types";
 
 /** Verifica se há dados novos; alinhado ao heartbeat do agente (~30 s). */
 const CHECK_INTERVAL_MS = 30_000;
+const SPARSE_CHECK_INTERVAL_MS = 5_000;
+const SPARSE_CHART_POINT_THRESHOLD = 4;
 
 function idleHistorySignature(
   meta: MachineIdleHistoryMeta | null,
@@ -25,7 +27,11 @@ function idleHistorySignature(
 
 export function useMachineIdleHistory(
   machineId: MaybeRefOrGetter<number>,
-  options?: { enabled?: MaybeRefOrGetter<boolean> },
+  options?: {
+    enabled?: MaybeRefOrGetter<boolean>;
+    /** Atualiza o gráfico quando a telemetria ao vivo muda (ex.: novo lote do agente). */
+    liveStamp?: MaybeRefOrGetter<string | null | undefined>;
+  },
 ) {
   const chartSeries = ref<AllocationChartPoint[]>([]);
   const meta = ref<MachineIdleHistoryMeta | null>(null);
@@ -33,8 +39,23 @@ export function useMachineIdleHistory(
   const error = ref("");
 
   const machinesStore = useMachinesStore();
-  let pollTimer: ReturnType<typeof setInterval> | null = null;
+  let pollTimer: ReturnType<typeof setTimeout> | null = null;
   let lastSignature = "";
+
+  function pollIntervalMs(): number {
+    const count = meta.value?.chartPointCount ?? chartSeries.value.length;
+    return count < SPARSE_CHART_POINT_THRESHOLD
+      ? SPARSE_CHECK_INTERVAL_MS
+      : CHECK_INTERVAL_MS;
+  }
+
+  function schedulePoll() {
+    if (pollTimer) clearTimeout(pollTimer);
+    pollTimer = setTimeout(async () => {
+      await refresh();
+      if (isEnabled()) schedulePoll();
+    }, pollIntervalMs());
+  }
 
   function isEnabled(): boolean {
     return options?.enabled === undefined ? true : Boolean(toValue(options.enabled));
@@ -65,13 +86,14 @@ export function useMachineIdleHistory(
     if (pollTimer) return;
     loading.value = chartSeries.value.length === 0;
     lastSignature = "";
-    void refresh({ force: true });
-    pollTimer = setInterval(() => void refresh(), CHECK_INTERVAL_MS);
+    void refresh({ force: true }).finally(() => {
+      if (isEnabled()) schedulePoll();
+    });
   }
 
   function stopPolling() {
     if (pollTimer) {
-      clearInterval(pollTimer);
+      clearTimeout(pollTimer);
       pollTimer = null;
     }
     lastSignature = "";
@@ -87,6 +109,14 @@ export function useMachineIdleHistory(
       if (id && enabled) startPolling();
     },
     { immediate: true },
+  );
+
+  watch(
+    () => (options?.liveStamp === undefined ? null : toValue(options.liveStamp)),
+    (stamp, prev) => {
+      if (!stamp || stamp === prev || !isEnabled()) return;
+      void refresh();
+    },
   );
 
   onUnmounted(stopPolling);

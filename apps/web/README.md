@@ -25,9 +25,14 @@ API em execução (`apps/api`, porta 3333). Front: `http://localhost:5173`.
 ```bash
 cd apps/api
 npm install && cp .env.example .env
-node ace migration:fresh --seed
+node ace seed:fresh dev
+# ou: npm run seed:dev
+# perfis: seed:fresh minimal | seed:fresh lab  (npm run seed:minimal / seed:lab)
+# alternativa: LAB_SEED_PROFILE=dev node ace migration:fresh --seed
 node ace serve --watch
 ```
+
+> **Atenção:** `node ace migration:fresh dev` **não** aplica o perfil `dev` — o argumento é ignorado e nenhum seed roda. Use `seed:fresh dev` ou `migration:fresh --seed` com `LAB_SEED_PROFILE`.
 
 Usuários de teste (seed):
 

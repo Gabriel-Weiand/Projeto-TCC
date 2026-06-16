@@ -869,13 +869,14 @@ test.group('Fluxo End-to-End via API do Agente', (group) => {
       telResponse.assertStatus(204)
     }
 
-    // === 2. FLUSH MANUAL DO BUFFER (simula timer de 60s) ===
+    // === 2. FLUSH MANUAL DO BUFFER (escalares vão ao idleTelemetryBuffer; DB só processos) ===
     const flushed = await telemetryBuffer.flush()
-    assert.equal(flushed, 24)
+    assert.equal(flushed, 0)
 
-    // === 3. VERIFICAR TELEMETRIAS NO BANCO ===
+    // === 3. Escalares no buffer ocioso; SQLite sem linhas brutas ===
     const dbTel = await Telemetry.query().where('allocationId', allocation.id)
-    assert.equal(dbTel.length, 24)
+    assert.equal(dbTel.length, 0)
+    assert.isAtLeast(idleTelemetryBuffer.getChartSeries(machine.id).length, 1)
 
     // === 4. ADMIN GERA RESUMO ===
     // Finaliza alocação primeiro
@@ -1326,6 +1327,34 @@ test.group('Telemetry Stream Endpoint', (group) => {
     assert.equal(response.body().total, 0)
     assert.deepEqual(response.body().entries, [])
   })
+
+  test('usuário autenticado pode ler stream de telemetria', async ({ client, assert }) => {
+    const user = await User.create({
+      fullName: 'Aluno Stream Read',
+      email: 'aluno.stream.read@teste.com',
+      password: 'senha123',
+      role: 'user',
+    })
+
+    const machine = await Machine.create({
+      name: 'PC-STREAM-USER',
+      description: 'Máquina stream user',
+      status: 'available',
+    })
+
+    telemetryBuffer.add(machine.id, {
+      allocationId: 0,
+      ...generateTelemetry(0, 0.4),
+    })
+
+    const response = await client
+      .get(`/api/v1/machines/${machine.id}/telemetry/stream`)
+      .loginAs(user)
+
+    response.assertStatus(200)
+    assert.equal(response.body().machineId, machine.id)
+    assert.isAtLeast(response.body().total, 1)
+  })
 })
 
 // ============================================================================
@@ -1412,16 +1441,73 @@ test.group('Buffer ocioso 24h e chart series', (group) => {
     }
   })
 
-  test('buffer ocioso não recebe amostras durante alocação ativa', async ({ client, assert }) => {
+  test('durante alocação só persiste amostras com processos', async ({ client, assert }) => {
+    telemetryBuffer.reset()
+
     const machine = await Machine.create({
-      name: 'PC-IDLE-SKIP',
-      description: 'Máquina idle skip',
+      name: 'PC-PERSIST-PROC',
+      description: 'Persist process only',
       status: 'available',
     })
 
     const user = await User.create({
-      fullName: 'Aluno Idle Skip',
-      email: 'aluno.idleskip@teste.com',
+      fullName: 'Aluno Persist Proc',
+      email: 'aluno.persistproc@teste.com',
+      password: 'senha123',
+      role: 'user',
+    })
+
+    const allocation = await Allocation.create({
+      userId: user.id,
+      machineId: machine.id,
+      startTime: DateTime.now().minus({ minutes: 1 }),
+      endTime: DateTime.now().plus({ hours: 2 }),
+      status: 'approved',
+    })
+
+    await client
+      .post('/api/v1/agent/telemetry')
+      .header('Authorization', `Bearer ${machine.token}`)
+      .json({
+        data: [
+          generateTelemetry(0, 0.4),
+          {
+            ...generateTelemetry(1, 0.6),
+            processes: [
+              {
+                pid: 42,
+                name: 'python',
+                username: 'lab.aluno',
+                cpuPercent: 120,
+                ramMb: 512,
+              },
+            ],
+          },
+        ],
+      })
+
+    assert.equal(telemetryBuffer.stats().pendingRecords, 1)
+
+    await telemetryBuffer.flush()
+    const rows = await Telemetry.query().where('allocationId', allocation.id)
+    assert.equal(rows.length, 1)
+    assert.isAtLeast(rows[0].processes?.length ?? 0, 1)
+    assert.isAtLeast(idleTelemetryBuffer.getChartSeries(machine.id).length, 1)
+  })
+
+  test('buffer ocioso recebe amostras durante alocação ativa (gráfico 24 h)', async ({
+    client,
+    assert,
+  }) => {
+    const machine = await Machine.create({
+      name: 'PC-IDLE-ALLOC',
+      description: 'Máquina idle durante alocação',
+      status: 'available',
+    })
+
+    const user = await User.create({
+      fullName: 'Aluno Idle Alloc',
+      email: 'aluno.idlealloc@teste.com',
       password: 'senha123',
       role: 'user',
     })
@@ -1439,7 +1525,9 @@ test.group('Buffer ocioso 24h e chart series', (group) => {
       .header('Authorization', `Bearer ${machine.token}`)
       .json({ data: [generateTelemetry(0, 0.5)] })
 
-    assert.equal(idleTelemetryBuffer.getHistory(machine.id).length, 0)
+    const series = idleTelemetryBuffer.getChartSeries(machine.id)
+    assert.isAtLeast(series.length, 1)
+    assert.isAtLeast(idleTelemetryBuffer.getMeta(machine.id).pendingSampleCount, 1)
   })
 
   test('GET /machines/:id/telemetry expõe idleHistory', async ({ client, assert }) => {
@@ -1471,6 +1559,34 @@ test.group('Buffer ocioso 24h e chart series', (group) => {
     assert.isArray(response.body().idleHistory.chartSeries)
     assert.equal(response.body().idleHistory.meta.retentionHours, 24)
     assert.equal(response.body().idleHistory.meta.chartBucketMinutes, 15)
+  })
+
+  test('usuário autenticado pode ler idleHistory em GET /telemetry', async ({ client, assert }) => {
+    const user = await User.create({
+      fullName: 'Aluno Idle Hist',
+      email: 'aluno.idlehist@teste.com',
+      password: 'senha123',
+      role: 'user',
+    })
+
+    const machine = await Machine.create({
+      name: 'PC-IDLE-HIST-USER',
+      description: 'Máquina idle history user',
+      status: 'available',
+    })
+
+    await client
+      .post('/api/v1/agent/telemetry')
+      .header('Authorization', `Bearer ${machine.token}`)
+      .json({ data: [generateTelemetry(0, 0.5)] })
+
+    const response = await client
+      .get(`/api/v1/machines/${machine.id}/telemetry`)
+      .loginAs(user)
+
+    response.assertStatus(200)
+    assert.property(response.body(), 'idleHistory')
+    assert.isArray(response.body().idleHistory.chartSeries)
   })
 
   test('chartSeries com intervalo 300s não gera pontos 0 espúrios', async ({ client, assert }) => {
