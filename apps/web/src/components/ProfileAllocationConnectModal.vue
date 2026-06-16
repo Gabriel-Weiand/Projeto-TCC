@@ -6,6 +6,7 @@ import type { Allocation } from "@/types";
 import { formatLabDateTime } from "@/utils/datetime";
 import { effectiveLifecycleStatus } from "@/utils/allocationLifecycle";
 import { buildSshCommand, buildSftpCommand } from "@/utils/ssh";
+import { copyToClipboard } from "@/utils/clipboard";
 
 const props = defineProps<{
   allocation: Allocation;
@@ -72,11 +73,7 @@ const sftpPhaseNotice =
 const fingerprint = computed(() => machine.value?.hostFingerprint ?? null);
 
 async function copyCommand(text: string) {
-  try {
-    await navigator.clipboard.writeText(text);
-  } catch {
-    /* ignore */
-  }
+  await copyToClipboard(text);
 }
 </script>
 

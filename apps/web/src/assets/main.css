@@ -64,7 +64,7 @@ body {
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
   min-height: 100vh;
-  user-select: none;
+  user-select: text;
 }
 
 #app { min-height: 100vh; }
@@ -85,7 +85,11 @@ input, select, textarea {
   transition: border-color var(--transition), box-shadow var(--transition);
   width: 100%;
   cursor: text;
+}
+
+code, pre, .token-box, .copyable-text {
   user-select: text;
+  cursor: text;
 }
 input::placeholder, textarea::placeholder { color: var(--text-muted); }
 input:focus, select:focus, textarea:focus {

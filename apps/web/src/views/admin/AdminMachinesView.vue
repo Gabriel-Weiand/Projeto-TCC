@@ -3,6 +3,7 @@ import { ref, reactive, onMounted, computed } from "vue";
 import { useRouter } from "vue-router";
 import { useMachinesStore } from "@/stores/machines";
 import type { Machine } from "@/types";
+import { copyToClipboard } from "@/utils/clipboard";
 
 const router = useRouter();
 const store = useMachinesStore();
@@ -21,6 +22,7 @@ const createError = ref("");
 const tokenModal = ref(false);
 const tokenValue = ref("");
 const tokenMachine = ref("");
+const tokenCopied = ref(false);
 
 onMounted(async () => {
   try {
@@ -136,8 +138,14 @@ function statusLabel(s: string) {
   return map[s] || s;
 }
 
-function copyToken() {
-  navigator.clipboard.writeText(tokenValue.value).catch(() => {});
+async function copyToken() {
+  const ok = await copyToClipboard(tokenValue.value);
+  if (ok) {
+    tokenCopied.value = true;
+    window.setTimeout(() => {
+      tokenCopied.value = false;
+    }, 2000);
+  }
 }
 </script>
 
@@ -265,9 +273,11 @@ function copyToken() {
             <p class="text-secondary" style="font-size: 0.88rem">
               Copie o token abaixo. Ele <strong>não será exibido novamente</strong>.
             </p>
-            <div class="token-box"><code>{{ tokenValue }}</code></div>
+            <div class="token-box copyable-text"><code>{{ tokenValue }}</code></div>
             <div class="modal-actions">
-              <button class="btn btn-ghost" @click="copyToken">Copiar</button>
+              <button type="button" class="btn btn-ghost" @click="copyToken">
+                {{ tokenCopied ? "Copiado!" : "Copiar" }}
+              </button>
               <button class="btn btn-primary" @click="tokenModal = false">Fechar</button>
             </div>
           </div>
@@ -361,6 +371,7 @@ function copyToken() {
   font-family: monospace;
   font-size: 0.85rem;
   color: var(--accent);
+  user-select: text;
 }
 .form-error {
   color: var(--danger);

@@ -9,6 +9,7 @@ import AdminMachineDisksTab from "@/components/admin/machine/AdminMachineDisksTa
 import AdminMachineUsersTab from "@/components/admin/machine/AdminMachineUsersTab.vue";
 import AdminMachineSshTab from "@/components/admin/machine/AdminMachineSshTab.vue";
 import type { Machine, MachineOperationalMode } from "@/types";
+import { copyToClipboard } from "@/utils/clipboard";
 
 const route = useRoute();
 const router = useRouter();
@@ -48,6 +49,7 @@ const form = reactive({
 
 const tokenModal = ref(false);
 const tokenValue = ref("");
+const tokenCopied = ref(false);
 
 const backLabel = computed(() =>
   route.query.from === "machine-detail"
@@ -197,8 +199,14 @@ function onTelemetrySaved(m: Machine) {
   machine.value = m;
 }
 
-function copyToken() {
-  navigator.clipboard.writeText(tokenValue.value).catch(() => {});
+async function copyToken() {
+  const ok = await copyToClipboard(tokenValue.value);
+  if (ok) {
+    tokenCopied.value = true;
+    window.setTimeout(() => {
+      tokenCopied.value = false;
+    }, 2000);
+  }
 }
 </script>
 
@@ -396,9 +404,11 @@ function copyToken() {
             <p class="text-secondary" style="font-size: 0.88rem">
               Copie agora — não será exibido novamente.
             </p>
-            <div class="token-box"><code>{{ tokenValue }}</code></div>
+            <div class="token-box copyable-text"><code>{{ tokenValue }}</code></div>
             <div class="modal-actions">
-              <button type="button" class="btn btn-ghost" @click="copyToken">Copiar</button>
+              <button type="button" class="btn btn-ghost" @click="copyToken">
+                {{ tokenCopied ? "Copiado!" : "Copiar" }}
+              </button>
               <button type="button" class="btn btn-primary" @click="tokenModal = false">
                 Fechar
               </button>
@@ -548,5 +558,6 @@ function copyToken() {
   font-family: monospace;
   font-size: 0.85rem;
   color: var(--accent);
+  user-select: text;
 }
 </style>

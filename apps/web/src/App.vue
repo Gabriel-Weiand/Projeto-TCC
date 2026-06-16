@@ -8,7 +8,6 @@ import { RouterView } from "vue-router";
 
 <style>
 body {
-  user-select: text;
   -webkit-user-drag: none;
 }
 </style>
