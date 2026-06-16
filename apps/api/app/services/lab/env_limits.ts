@@ -16,7 +16,6 @@ export const LAB_ENV_LIMITS = {
     graceMinutes: { min: 0, max: 1440 },
     postSftpMinutes: { min: 0, max: 10080 },
     deleteUserDays: { min: 0, max: 365 },
-    prepareMinutes: { min: 0, max: 1440 },
   },
   maintenance: {
     summarizeAfterHours: { min: 1, max: 8760 },

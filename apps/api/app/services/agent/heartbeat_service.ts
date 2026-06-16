@@ -14,7 +14,6 @@ import {
   machineHasAllocationTelemetry,
   phaseToProvisioning,
   resolveDominantAccessForUser,
-  allowHomeMigrationForUser,
   sftpEndsAt,
   type AccessPhase,
 } from '#services/allocation/access'
@@ -182,22 +181,12 @@ export default class HeartbeatService {
         allocation.homeMountpoint
       )
 
-      const userAllocations = allocationsByUserId.get(user.id) ?? []
-      const allowHomeMigration = allowHomeMigrationForUser(
-        userAllocations,
-        allocation,
-        homeDirectory,
-        now,
-        access
-      )
-
       provisioning.push({
         systemUsername: user.systemUsername,
         sshPublicKey: allocationProv.sshPublicKey,
         accessState: allocationProv.accessState,
         revokeSshKey: allocationProv.revokeSshKey,
         ...(homeDirectory ? { homeDirectory } : {}),
-        ...(allowHomeMigration ? { allowHomeMigration: true } : {}),
       })
     }
 

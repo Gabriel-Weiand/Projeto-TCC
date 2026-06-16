@@ -47,7 +47,7 @@ O agente opera num modelo **State Enforcement (Pull Model)**:
 | Área | O que faz |
 |------|-----------|
 | **Provisionamento** | `useradd`, `usermod`, chaves `authorized_keys`, `userdel`, limpeza multi-partição |
-| **Controle de acesso** | Bash (`/bin/bash`) vs SFTP (`sftp-server`) conforme fase da alocação |
+| **Controle de acesso** | Bash (`/bin/bash`) vs SFTP (`internal-sftp` + **ChrootDirectory**) conforme fase |
 | **Processos** | `pkill -u` na transição `full_shell` → `sftp_only` e na remoção de conta |
 | **Telemetria** | CPU, GPU, RAM, swap, discos, rede, temperaturas, usuários ativos, processos pesados |
 | **Auditoria** | Parse de `/var/log/auth.log` → tentativas SSH para a API |
@@ -487,10 +487,9 @@ Cada campo de spec só é gravado se estiver **vazio** no banco (`null`, string 
 |-------|---------|------------------|
 | `systemUsername` | `lab.*` | Nome POSIX (`useradd` / `usermod`) |
 | `sshPublicKey` | `ssh-ed25519 ...` ou vazio | Escrita em `~/.ssh/authorized_keys`; **só ed25519** é aceita |
-| `accessState` | `full_shell` \| `sftp_only` | `/bin/bash` vs `SFTP_SHELL` |
+| `accessState` | `full_shell` \| `sftp_only` | `/bin/bash` vs chroot SFTP (`internal-sftp`) |
 | `revokeSshKey` | boolean | Se `true`, trunca `authorized_keys` (fase `no_key`) |
-| `homeDirectory` | path absoluto, opcional | `useradd -d` na criação; `usermod -d` se `allowHomeMigration` |
-| `allowHomeMigration` | boolean, opcional | `true` quando reservas antigas só em `no_key` — ver [§9](#correção-implementada-migração-de-home-no_key) |
+| `homeDirectory` | path absoluto, opcional | Raiz do chroot (`/scratch/lab.aluno`); `pw_dir` = `{homeDirectory}/home` na 1ª criação |
 
 **API — quem entra em `provisioning`:**
 
@@ -515,10 +514,10 @@ FASE 2 — Scan órfãos
   Diretórios lab.* em partições user sem passwd → rmtree
 
 FASE 3 — Provisionar cada item
-  useradd (se KeyError) com -d homeDirectory
-  ~/.ssh/authorized_keys, chmod/chown
+  useradd -M (se KeyError): chroot {homeDirectory} root:root 755 + pw_dir …/home
+  _ensure_sftp_chroot_layout, ~/.ssh/authorized_keys, chmod/chown
   pkill se full_shell → sftp_only
-  usermod -s bash | sftp
+  usermod -s bash | nologin; Match User + ChrootDirectory em sftp_only
 ```
 
 **Crítico:** Só executa se HTTP **200**. Lista vazia `provisioning: []` **ainda** remove contas órfãs (exceto durante outage da API — exceção não aplicada).
@@ -536,7 +535,7 @@ FASE 3 — Provisionar cada item
 | Situação | Destino |
 |----------|---------|
 | Alocação `approved` ativa no instante da amostra | `telemetryBuffer` + persistência futura ligada à alocação |
-| Máquina ociosa | `telemetryBuffer` realtime + `idleTelemetryBuffer` (histórico ocioso) |
+| Máquina | `telemetryBuffer` realtime + `chartTelemetryBuffer` (gráfico 24 h) |
 
 ### Amostra (`data[]`) — campos
 
@@ -620,8 +619,8 @@ Funções: `normalizeAllocationHomeMount`, `listAllocatableDiskMountpoints`, `re
 
 | Momento | Comportamento |
 |---------|---------------|
-| **Criação** (`useradd`) | Se `homeDirectory` presente → `-d {homeDirectory}`; senão home padrão do SO (`/home/lab.*`) |
-| **Conta já existe** | **Não migra home** — `usermod -d` não é chamado. Nova reserva em outro disco com mesma conta reutiliza home antigo até `userdel` |
+| **Criação** (`useradd`) | `-M -d {homeDirectory}/home`; chroot `{homeDirectory}` root:root 755 |
+| **Conta já existe** | **Não migra home** — dados permanecem em `home/`; só shell/chave/sshd Match mudam entre fases |
 | **Remoção** (`_purge_lab_user`) | `userdel -r -f` + varredura em **todas** as partições `role=user` + `/home/{uname}` + paths do passwd |
 
 ### Conflitos tratados
@@ -630,7 +629,7 @@ Funções: `normalizeAllocationHomeMount`, `listAllocatableDiskMountpoints`, `re
 |---------|------------|
 | Reserva pede `/data` mas `onlyMainDisk=true` | API rejeita na criação (`422`) |
 | Mount inválido / sistema | API rejeita — agente nunca recebe |
-| Duas reservas sequenciais, discos diferentes | Home na 1ª criação; **migração em `no_key`** da antiga via `allowHomeMigration` ([§9](#correção-implementada-migração-de-home-no_key)) |
+| Duas reservas sequenciais, discos diferentes | Home fixa na 1ª criação até `userdel`; reserva nova no outro disco reutiliza a mesma conta |
 | Dados órfãos após `userdel` falho parcial | `_scan_orphan_lab_dirs()` remove dirs `lab.*` sem passwd em partições user |
 | Admin remove usuário provisionado | DELETE `machine_users` → próximo heartbeat sem item → drift + purge multi-partição |
 | Mesmo usuário, duas alocações | API escolhe **fase dominante** (`resolveDominantAccessForUser`) — prevalece `active`/`grace` sobre `no_key` antiga |
@@ -649,82 +648,11 @@ Cenário típico:
 
 1. **Provisionamento é por usuário POSIX** (`lab.aluno`), não por alocação nem por disco. O agente recebe **no máximo uma** entrada em `provisioning[]` por `systemUsername`.
 2. **`resolveDominantAccessForUser`** (`allocation_access.ts`) compara todas as alocações `approved`/`finished` do mesmo `userId` na máquina e escolhe a fase de **maior rank** (`PHASE_RANK`: `active`=50 > `grace`=40 > … > `no_key`=10 > `teardown`=0).
-3. Enquanto **B** estiver `active`/`grace`/`prepare`/`post_sftp`, a fase dominante **não** é `teardown` de A → o usuário **permanece** em `provisioning` → o agente **não** executa `_purge_lab_user` (drift só remove quem **não** está na lista).
-4. **`homeDirectory` + `allowHomeMigration` no heartbeat** — vêm da alocação dominante. Na **1ª criação**, `useradd -d`. Se a conta já existe e `allowHomeMigration: true` (só quando reservas antigas estão em `no_key`/`none`/`teardown`), o agente faz `usermod -d` para o disco da reserva nova **sem apagar** a home antiga.
+3. Enquanto **B** estiver `active`/`grace`/`post_sftp`, a fase dominante **não** é `teardown` de A → o usuário **permanece** em `provisioning` → o agente **não** executa `_purge_lab_user`.
+4. **`homeDirectory`** vem da alocação dominante — usado só na **1ª criação** (`useradd`). Entre fases shell ↔ SFTP os arquivos em `{homeDirectory}/home/` **não são movidos nem apagados**; mudam apenas shell, chave e bloco `Match User` no sshd.
 
-**O que acontece com os dados em cada disco?**
+**Purge final:** quando **nenhuma** alocação do usuário na máquina exige provisioning, drift faz `userdel` + varredura multi-partição (todas as pastas `lab.*` candidatas).
 
-| Momento | Disco A (`/data/lab/...`) | Disco B (`/scratch/...`) | Conta `lab.aluno` |
-|---------|---------------------------|--------------------------|-------------------|
-| A em `no_key`, B `active` | Pasta antiga **permanece** (não há purge por alocação) | Dados novos se o usuário gravar manualmente em `/scratch` | Mantida, bash ativo (dominante B) |
-| A entra em `teardown` sozinha | Pasta **ainda não apagada** | Idem | **Mantida** (B ainda exige provisioning) |
-| B também passa `teardown` + `deleteUserDays` | — | — | Sai de `provisioning` → `_purge_lab_user` |
-| Purge final | `_collect_user_remnant_paths` varre **todas** as partições `user` + `/home` + passwd | Idem — **ambas** as pastas `lab.aluno` são candidatas à remoção | `userdel -r -f` + `rmtree` nos paths |
-
-**Conclusão:** teardown de A **não** derruba sessão, chave nem conta enquanto B (ou outra alocação do mesmo usuário) ainda exigir acesso. A limpeza física é **por conta**, não por alocação/disco — só ocorre quando **nenhuma** alocação daquele usuário na máquina precisa mais de provisioning. Resíduos no disco da alocação antiga podem ficar no filesystem até esse purge final (comportamento intencional para não apagar dados enquanto o mesmo `lab.*` ainda está ativo).
-
-**Diagrama de decisão (API → agente):**
-
-```text
-Alocações do userId na máquina
-        │
-        ▼
-resolveDominantAccessForUser  ──► fase dominante + allocation B
-        │
-        ▼
-phaseToProvisioning + resolveHomeDirectory(B.homeMountpoint)
-        │
-        ▼
-provisioning: [{ systemUsername, accessState, homeDirectory?, ... }]
-        │
-        ▼
-Agente: conta em expected_users?  SIM → não purge
-                                   NÃO → _purge_lab_user (multi-partição)
-```
-
-### Alocações próximas: disco efetivo no login (comportamento atual)
-
-Premissa: alocação **A** já criou `lab.aluno` com home em **disco A** (`useradd -d` no `prepare` de A). Alocação **B** reserva **disco B** no mesmo PC.
-
-| Estado da alocação antiga (A) | Nova reserva (B) | Shell dominante (típico) | Disco/home efetivo no SSH/SFTP **hoje** |
-|------------------------------|------------------|--------------------------|----------------------------------------|
-| `post_sftp` | B em `prepare` | SFTP (`prepare` > `post_sftp`) | **Disco A** — home do `passwd` |
-| `post_sftp` | B `active` | Bash | **Disco A** |
-| `no_key` | B em `prepare` / `active` / `grace` | conforme B | **Disco B** após heartbeat com `allowHomeMigration` |
-| `teardown` (conta ainda não purgada)* | B em `prepare`/`active` | conforme B | **Disco A** até purge, depois **disco B** no próximo `useradd` |
-| Conta purgada (`userdel`) | B em `prepare` (1ª criação) | SFTP → bash | **Disco B** — novo `useradd -d` |
-
-\*Enquanto B mantém o usuário em `provisioning`, A em `teardown` sozinha **não** dispara purge; a linha relevante é “conta purgada” quando **nenhuma** alocação exige mais a conta.
-
-**Janela problemática (aceita):** A ainda em `post_sftp` e B começando — SFTP/bash da reserva nova, mas home permanece no **disco A** até A passar a `no_key` (sem chave útil na home antiga).
-
-### Correção implementada: migração de home em `no_key`
-
-**Quando:** alocação dominante B envia `homeDirectory` em disco B e **nenhuma** outra alocação do mesmo usuário na máquina está em `post_sftp`, `active`, `grace` ou `prepare` — tipicamente, a reserva antiga A só resta em **`no_key`**.
-
-**API** (`allowHomeMigrationForUser` em `allocation_access.ts` → `heartbeat_service.ts`):
-
-```json
-{
-  "systemUsername": "lab.aluno",
-  "homeDirectory": "/scratch/lab.aluno",
-  "allowHomeMigration": true,
-  "accessState": "full_shell",
-  "sshPublicKey": "ssh-ed25519 ..."
-}
-```
-
-**Agente** (`_maybe_migrate_user_home` em `agentd.py`), se `pw_dir` ≠ `homeDirectory`:
-
-1. `pkill -u` (sessões residuais)
-2. `mkdir` + `chown` da nova home
-3. `usermod -d` (sem `-m` — discos distintos)
-4. Fluxo normal grava `authorized_keys` na **nova** home
-5. **Não apaga** arquivos no disco A
-
-**Expiração da alocação A:** quando A entra em `teardown` (`endTime + 7d`), ela **deixa de exigir** provisioning, mas a conta **permanece** enquanto B (ou outra reserva) ainda precisar de acesso. Só quando **nenhuma** alocação do usuário na máquina exigir provisioning é que o drift faz `userdel` + purge multi-partição. Se B ainda estiver ativa, o usuário **continua** no disco B; se B também expirou, purge remove ambas as árvores de dados.
-
-**Limitação remanescente:** overlap com A em `post_sftp` — home fica no disco A até A ir para `no_key`.
 ### Diagrama reserva → home
 
 ```text
@@ -770,7 +698,7 @@ _purge_all_lab_users()  # userdel + resquícios em todas partições user
 
 ### Fase 2 — `204 No Content`
 
-Remove registro `machines`, limpa `telemetryBuffer` / `idleTelemetryBuffer`.
+Remove registro `machines`, limpa `telemetryBuffer` / `chartTelemetryBuffer`.
 
 **Por que duas fases?** Token ainda válido entre fases → agente recebe ordem de limpeza **antes** do registro sumir (401 impediria drift).
 
@@ -782,7 +710,6 @@ Variáveis (`.env` / `lab_config`):
 
 | Variável | Padrão | Papel |
 |----------|--------|--------|
-| `LAB_ALLOCATION_PREPARE_MINUTES` | 5 | T-N: SFTP + chave antes de `startTime` |
 | `LAB_ALLOCATION_GRACE_MINUTES` | 10 | Bash extra após `endTime` |
 | `LAB_ALLOCATION_POST_SFTP_MINUTES` | 1440 | SFTP com chave pós-grace |
 | `LAB_ALLOCATION_DELETE_USER_DAYS` | 7 | Após isso → fase `teardown` → fora do `provisioning` |
@@ -790,8 +717,8 @@ Variáveis (`.env` / `lab_config`):
 ### Fases (`approved`, término natural)
 
 ```text
-prepare → active → grace → post_sftp → no_key → teardown
-  SFTP     BASH     BASH     SFTP+key    SFTP no key   (sem provisioning)
+(none antes de startTime) → active → grace → post_sftp → no_key → teardown
+   sem provisioning          BASH     BASH     SFTP+key    SFTP no key   (sem provisioning)
 ```
 
 **`finished` (POST finish):** pula grace; `sftpEndsAt = endTime`; depois `no_key` → teardown.
@@ -800,10 +727,9 @@ prepare → active → grace → post_sftp → no_key → teardown
 
 | Fase | `accessState` | Chave | Agente |
 |------|---------------|-------|--------|
-| `prepare` | `sftp_only` | sim | useradd + SFTP + keys |
-| `active` | `full_shell` | sim | bash |
+| `active` | `full_shell` | sim | useradd (1ª vez) + bash |
 | `grace` | `full_shell` | sim | bash (telemetria “quente”) |
-| `post_sftp` | `sftp_only` | sim | pkill + SFTP |
+| `post_sftp` | `sftp_only` | sim | pkill + SFTP chroot |
 | `no_key` | `sftp_only` | revogada | esvazia authorized_keys |
 | `teardown` | — | — | **não** listado → drift remove |
 
@@ -825,14 +751,20 @@ prepare → active → grace → post_sftp → no_key → teardown
 ### Transições críticas
 
 ```
-full_shell → sftp_only : pkill -u  THEN  usermod -s SFTP_SHELL
+full_shell → sftp_only : pkill -u  THEN  shell nologin + Match User (ChrootDirectory + internal-sftp)
 revokeSshKey=true      : truncate authorized_keys
 drift / decommission   : _purge_lab_user → multi-partição
 ```
 
 ### SFTP pós-reserva
 
-Objetivo: copiar artefatos da home sem terminal. Shell = `SFTP_SHELL` detectado no boot (`which sftp-server` / glob openssh).
+Objetivo: copiar artefatos **somente dentro da home** (`chroot_root/home/`). O agente grava `/etc/ssh/sshd_config.d/99-lab-sftp-chroot.conf` com `Match User lab.*` + `ChrootDirectory` (raiz root:root 755) + `ForceCommand internal-sftp`. Usuários em `full_shell` **não** entram no Match — bash normal.
+
+Estrutura POSIX por usuário:
+```
+/scratch/lab.aluno/          # root:root 755 — ChrootDirectory (homeDirectory da API)
+/scratch/lab.aluno/home/     # lab.aluno:lab.aluno 700 — pw_dir gravável
+```
 
 ---
 
@@ -928,7 +860,7 @@ Idempotente em `main()`:
 
 Falhas logadas como aviso — daemon continua.
 
-**Fora do boot:** ACL de root nas homes (`_grant_root_home_access`) roda em **`apply_provisioning`** e **`_maybe_migrate_user_home`**, a cada heartbeat que reconcilia usuários — não na subida do daemon.
+**Fora do boot:** ACL de root nas homes (`_grant_root_home_access`) roda em **`apply_provisioning`**, a cada heartbeat que reconcilia usuários — não na subida do daemon.
 
 ---
 
@@ -1046,7 +978,7 @@ Cada processo no array inclui **todas** as métricas coletadas (`cpuPercent`, `r
 | `_purge_lab_user` / `_purge_all_lab_users` | subprocess `pkill`, `userdel`; `shutil.rmtree` | Drift e descomissionamento |
 | `_scan_orphan_lab_dirs()` | `os.listdir` em partições user | Dirs `lab.*` sem passwd |
 | `apply_provisioning` | subprocess `useradd`, `usermod`, `chmod`, `chown` | Heartbeat 200 |
-| `_maybe_migrate_user_home` | subprocess `pkill`, `usermod -d`; `os.makedirs` | Heartbeat quando `allowHomeMigration` |
+| `_ensure_sftp_chroot_layout` / `_sync_sshd_sftp_chroot` | dirs + drop-in sshd | Fases SFTP |
 
 ### 20.10 Utilitários de formato
 
@@ -1082,7 +1014,7 @@ telemetry      ← collect_telemetry() = todas as entradas §20.1
 | `apps/api/app/services/machine_decommission.ts` | Exclusão admin 2 fases |
 | `apps/api/app/services/machine_specs_merge.ts` | Fill-empty no sync-specs |
 | `apps/api/app/services/disk_partitions.ts` | Roles, mainDisk, homeDirectory, merge telemetria |
-| `apps/api/app/services/allocation_access.ts` | Fases prepare→teardown; `allowHomeMigrationForUser` |
+| `apps/api/app/services/allocation/access.ts` | Fases active→teardown |
 | `apps/api/app/services/telemetry_presets.ts` | Presets eco/fast/custom |
 | `apps/api/tests/functional/agent.spec.ts` | Testes contrato agente |
 | `apps/web/src/stores/machines.ts` | DELETE com retry 35 s |

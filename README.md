@@ -29,7 +29,7 @@ Substituir planilhas e acordos informais por um fluxo único:
 | Objetivo | Como o sistema atende |
 |----------|------------------------|
 | **Reservar máquinas** com calendário, conflitos e aprovação configurável | Alocações com validação de período, gap de grace e status (`pending` / `approved`) |
-| **Provisionar acesso SSH** só durante a janela da reserva | Agente reconcilia `lab.*`, chaves ed25519 e fases `full_shell` → grace → `sftp_only` |
+| **Provisionar acesso SSH** só durante a janela da reserva | Agente reconcilia `lab.*`, chaves ed25519 e fases `full_shell` → grace → `sftp_only` (chroot) |
 | **Medir uso real** (CPU, GPU, RAM, disco, processos) | Telemetria em lote + resumo TWA por sessão + gráficos para usuário e admin |
 | **Operar o parque** (specs, discos, telemetria, manutenção) | Painel admin com edição de hardware, política de volumes, presets globais e prune |
 | **Auditar segurança** | Tentativas SSH agregadas no heartbeat; alertas de flood para admin |
@@ -71,7 +71,7 @@ Documentação detalhada: [`apps/api/MODULE.md`](apps/api/MODULE.md), [`apps/web
 
 - Calendário **Gantt** multi-máquina; nova reserva com motivo, disco de home (quando permitido) e validações de horário no fuso do lab.
 - **Minhas alocações:** cancelar (antes do início), finalizar antecipadamente, estender fim, **conectar SSH**, ver **estatísticas e gráficos TWA** da sessão, ocultar do histórico.
-- **Parque:** listagem por grupo, busca, modal de specs; detalhe da máquina com hardware e atalho para reservar.
+- **Parque:** listagem por grupo, busca, modal de specs; detalhe da máquina com hardware, **telemetria ao vivo** (barras CPU/GPU/RAM/rede/temp), **gráfico 24 h**, **partições** com uso em tempo real, reservar e conectar SSH.
 - **Perfil:** nome, e-mail, senha; chave SSH **ed25519** obrigatória para reservas.
 - **Notificações** in-app (aprovação, lembretes, chave ausente, resumo disponível).
 
@@ -79,7 +79,7 @@ Documentação detalhada: [`apps/api/MODULE.md`](apps/api/MODULE.md), [`apps/web
 
 - **Usuários:** CRUD; `system_username` imutável; ver alocações por usuário.
 - **Máquinas:** CRUD, grupos, status efetivo (online/offline/ocupada/manutenção), **edição de specs** (CPU, GPU, RAM, VRAM, disco total, IP local/alternativo), **política de discos** (principal / reservável), preset de telemetria por máquina, token do agente, descomissionamento em duas fases, usuários provisionados (override shell/sftp).
-- **Detalhe ao vivo:** telemetria streaming, gráficos 24 h ocioso, **tabela de processos** com filtro Todos / Usuário lab. / Sistema, sessões ativas, partições com uso em tempo real.
+- **Detalhe da máquina (admin):** tudo que o usuário vê, mais **tabela de processos** (filtro lab/sistema), **sessões ativas** e painel de preset custom por máquina.
 - **Alocações:** listagem global, filtros por sub-estado (ativa, grace, SFTP…), aprovar/negar/cancelar, editar período, **gerar resumo TWA**, reservar em nome de outro usuário.
 - **Manutenção** (`/admin/maintenance`): presets globais fast/eco, políticas do lab (aprovação, grace, SFTP, nomes no Gantt), retenção e prune manual.
 
@@ -96,7 +96,7 @@ Documentação detalhada: [`apps/api/MODULE.md`](apps/api/MODULE.md), [`apps/web
 
 - Validações: ordem início/fim, duração mínima, limite futuro, passado, conflito com gap de grace (`LAB_ALLOCATION_GRACE_MINUTES`, padrão **10 min**).
 - Aprovação automática ou pendente (`LAB_ALLOCATION_REQUIRE_ADMIN_APPROVAL`).
-- Fases operacionais: preparação → sessão (`full_shell`) → grace → SFTP (`sftp_only`) → teardown.
+- Fases operacionais: antes do `startTime` sem provisionamento → sessão (`full_shell`) → grace → SFTP chroot (`sftp_only`) → teardown.
 
 ### Notificações
 
@@ -147,13 +147,13 @@ Telemetria: última amostra do lote com `disksInfo` atualiza capacidade via `mer
 ### Ciclo da reserva (visão integrada)
 
 ```
-pending → approved → [prepare] → active (full_shell) → grace → sftp_only → teardown → finished
+pending → approved → active (full_shell) → grace → sftp_only → teardown → finished
 ```
 
 | Fase | Usuário vê | Agente aplica | Telemetria API |
 |------|------------|---------------|----------------|
-| Antes do início | Reserva no Gantt; pode cancelar | Sem conta ou preparação | Eco (máquina ociosa) |
-| Sessão ativa | Botão **Conectar SSH**; modal com comando | `full_shell` + chave ed25519 | **Fast** + amostras brutas em `telemetries` |
+| Antes do início | Reserva no Gantt; pode cancelar | Sem conta (sem provisioning) | Eco (máquina ociosa) |
+| Sessão ativa | Botão **Conectar SSH**; modal com comando | `full_shell` + chave ed25519 | **Fast**; escalares no `chartTelemetryBuffer`; SQLite só **processos** |
 | Grace / SFTP | Ainda conectável (SFTP) | `sftp_only`; `pkill` na transição | Fast até teardown |
 | Após fim | Histórico; **estatísticas da sessão** se admin gerou resumo | Remoção gradual (`userdel`) | Raw purgada; fica `allocation_metrics` |
 
@@ -176,15 +176,15 @@ pending → approved → [prepare] → active (full_shell) → grace → sftp_on
 
 | Contexto | Armazenamento | Uso principal |
 |----------|---------------|---------------|
-| **Tempo real** (CPU, RAM, GPU, discos, processos) | RAM — `telemetryBuffer` | Painel admin, parque, stream; **sempre** atualizado pelo agente |
-| **Gráfico 24 h ocioso** | RAM — `idleTelemetryBuffer` | Sempre (ocioso **e** alocação); ~96 pts @ 15 min |
-| **Sessão em curso** | SQLite — `telemetries` | Flush a cada 60 s; base para resumo TWA; **não** alimenta UI ao vivo |
+| **Tempo real** (CPU, RAM, GPU, discos, processos) | RAM — `telemetryBuffer` | Detalhe da máquina (usuário e admin), parque, stream; **sempre** atualizado pelo agente |
+| **Gráfico 24 h** | RAM — `chartTelemetryBuffer` | Sempre (ocioso **e** alocação); ~96 pts @ 15 min |
+| **Sessão em curso** | SQLite — `telemetries` | Flush a cada 60 s; **só amostras com processos**; escalares no chart buffer |
 | **Após resumo** | `allocation_metrics.chart_series` | Modal de estatísticas do usuário/admin |
 
 ### Durante alocação vs ocioso
 
 - **Monitoramento ao vivo** (barras, processos, partições): lê **`GET /machines/:id/telemetry/stream`** → buffer runtime (`telemetryBuffer`), **não** o banco.
-- **Gráfico 24 h** no detalhe admin: lê **`idleHistory.chartSeries`** — série **@ 15 min** materializada em RAM (`pendingBucket` + `chartSeries`).
+- **Gráfico 24 h** no detalhe da máquina: lê **`chartHistory.chartSeries`** — série **@ 15 min** materializada em RAM (`chartTelemetryBuffer`).
 - **Persistência da sessão** corre em paralelo (`telemetries`) para `POST /allocations/:id/summary` e purge posterior.
 
 ### Memória por máquina ociosa (dois buffers)
@@ -194,15 +194,15 @@ Máquina **sem alocação ativa** usa **apenas** estes dois buffers em RAM (alé
 | Buffer | O quê guarda | Capacidade |
 |--------|----------------|------------|
 | **`telemetryBuffer`** | Amostras **ricas** do agente (barras, processos, discos, usuários) | ~15–31 amostras (ring + último lote) |
-| **`idleTelemetryBuffer`** | (1) janela **aberta** de 15 min com amostras na precisão do agente; (2) **~96 pontos** @ 15 min já fechados (24 h) | ≤15 amostras pendentes + 96 pts gráfico |
+| **`chartTelemetryBuffer`** | (1) janela **aberta** de 15 min; (2) **~96 pontos** @ 15 min (24 h) | ≤15 amostras pendentes + 96 pts gráfico |
 
-**Ciclo do gráfico ocioso:** cada amostra do agente entra na janela de 15 min corrente. Quando a janela fecha, faz-se **TWA** sobre essas amostras → **um** ponto @ 15 min entra em `chartSeries`; as amostras brutas da janela são **descartadas**. Pontos &gt; 24 h saem do rolling. O `GET …/telemetry` **não recalcula** — devolve `chartSeries` pronto (+ preview da janela aberta).
+**Ciclo do gráfico 24 h:** cada amostra do agente entra na janela de 15 min corrente (ocioso **ou** alocação). Quando a janela fecha, faz-se **TWA** sobre essas amostras → **um** ponto @ 15 min entra em `chartSeries`; as amostras brutas da janela são **descartadas**. Pontos &gt; 24 h saem do rolling. O `GET …/telemetry` **não recalcula** — devolve `chartSeries` pronto (+ preview da janela aberta).
 
 ### RAM estimada — 1 máquina, 24 h ociosas (regime estável)
 
 Presets eco: intervalo **60 s**, lote **15** → 96 POSTs/dia, 1 440 amostras/dia processadas; **96 pontos** persistidos no gráfico. Estimativa: payload JSON + ~×1,8 overhead V8 (ordem de grandeza).
 
-| Preset | `telemetryBuffer` | idle pending (≤15) | idle `chartSeries` (~96) | **Total ocioso** |
+| Preset | `telemetryBuffer` | chart pending (≤15) | chart `chartSeries` (~96) | **Total ocioso** |
 |--------|-------------------|--------------------|---------------------------|------------------|
 | **Eco atual** (cpu, ram, disco, users; sem gpu/rede/temp/proc) | ~35 KiB | ~17 KiB | ~30 KiB | **~81 KiB** |
 | **Eco full − processos** (gpu, rede, temp, users, disco; sem proc) | ~42 KiB | ~20 KiB | ~53 KiB | **~116 KiB** |
@@ -224,7 +224,7 @@ _Medições em junho/2026 (excl. `node_modules` / venv)._
 | Métrica | Agente | API | Web |
 |---------|--------|-----|-----|
 | Linhas principais | ~1 350 (`agentd.py`) | ~16 000 TS | ~18 000 Vue/TS |
-| Testes automatizados | — (contrato via API) | **231** specs Japa | Scripts Node (`datetime`, `ssh`, `notificationMessage`) |
+| Testes automatizados | — (contrato via API) | **232** specs Japa | Scripts Node (`datetime`, `ssh`, `notificationMessage`) |
 | Documentação | `MODULE.md` | `MODULE.md` | `MODULE.md` |
 
 ### Pontos de atenção (revisão de código)
@@ -282,7 +282,7 @@ node ace seed:fresh dev
 node ace serve --watch
 ```
 
-Testes: `node ace test` (231 specs).
+Testes: `node ace test` (232 specs).
 
 Utilitários web: `node apps/web/src/utils/datetime.spec.mjs`
 

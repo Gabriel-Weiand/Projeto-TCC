@@ -140,12 +140,6 @@ export const labConfig = {
       LAB_ENV_LIMITS.allocation.deleteUserDays.min,
       LAB_ENV_LIMITS.allocation.deleteUserDays.max
     ),
-    prepareMinutes: envIntAllowZero(
-      'LAB_ALLOCATION_PREPARE_MINUTES',
-      5,
-      LAB_ENV_LIMITS.allocation.prepareMinutes.min,
-      LAB_ENV_LIMITS.allocation.prepareMinutes.max
-    ),
   },
 
   maintenance: {
@@ -259,7 +253,6 @@ export function labPublicConfig() {
         graceEnabled: labConfig.allocation.graceMinutes > 0,
         postSftpEnabled: labConfig.allocation.postSftpMinutes > 0,
         deleteUserDays: labConfig.allocation.deleteUserDays,
-        prepareMinutes: labConfig.allocation.prepareMinutes,
       },
       requireAdminApproval: isAllocationRequireAdminApproval(),
     },
@@ -309,7 +302,6 @@ export function getLabAccessConfig() {
     gapMinutes: graceMinutes,
     postSftpMinutes: labConfig.allocation.postSftpMinutes,
     deleteUserDays: labConfig.allocation.deleteUserDays,
-    prepareMinutes: labConfig.allocation.prepareMinutes,
   }
 }
 

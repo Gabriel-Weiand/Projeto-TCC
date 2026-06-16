@@ -8,7 +8,7 @@ import type {
   PaginatedResponse,
   MachineProvisionedUser,
   MachineAccessType,
-  MachineIdleHistoryResponse,
+  MachineChartHistoryResponse,
 } from "@/types";
 
 export const useMachinesStore = defineStore("machines", () => {
@@ -161,11 +161,11 @@ export const useMachinesStore = defineStore("machines", () => {
     return data;
   }
 
-  async function fetchMachineIdleHistory(id: number) {
+  async function fetchMachineChartHistory(id: number) {
     const { data } = await api.get<{
-      idleHistory: MachineIdleHistoryResponse;
+      chartHistory: MachineChartHistoryResponse;
     }>(`/api/v1/machines/${id}/telemetry`, { params: { limit: 1, page: 1 } });
-    return data.idleHistory;
+    return data.chartHistory;
   }
 
   return {
@@ -179,7 +179,7 @@ export const useMachinesStore = defineStore("machines", () => {
     fetchMachineAllocations,
     regenerateToken,
     fetchTelemetryStream,
-    fetchMachineIdleHistory,
+    fetchMachineChartHistory,
     fetchProvisionedUsers,
     updateProvisionedUser,
     removeProvisionedUser,

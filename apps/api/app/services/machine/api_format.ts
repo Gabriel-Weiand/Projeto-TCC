@@ -5,7 +5,7 @@ import {
   resolveEffectiveMachineStatus,
 } from '#services/machine/effective_status'
 import { telemetryBuffer } from '#services/telemetry/buffer'
-import { idleTelemetryBuffer } from '#services/telemetry/idle_buffer'
+import { chartTelemetryBuffer } from '#services/telemetry/chart_buffer'
 import { normalizeChartSeriesPoint } from '#services/telemetry/api_format'
 import { normalizeRealtimeTelemetry } from '#services/telemetry/normalize'
 
@@ -34,7 +34,7 @@ export function mapMachineDisks(disks: unknown) {
 export function resolveParkTelemetry(machineId: number) {
   const live = telemetryBuffer.getLatest(machineId)
   if (live) return live
-  return idleTelemetryBuffer.getLatestEntry(machineId)?.metrics ?? null
+  return chartTelemetryBuffer.getLatestEntry(machineId)?.metrics ?? null
 }
 
 export function serializeMachineForApi(
@@ -67,17 +67,17 @@ export function serializeMachineForApi(
   }
 }
 
-export function buildIdleHistory(machineId: number) {
-  const idleChartRaw = idleTelemetryBuffer.getChartSeries(machineId)
-  const idleMeta = idleTelemetryBuffer.getMeta(machineId)
-  const normalizedChart = idleChartRaw.map((p) =>
+export function buildChartHistory(machineId: number) {
+  const chartRaw = chartTelemetryBuffer.getChartSeries(machineId)
+  const chartMeta = chartTelemetryBuffer.getMeta(machineId)
+  const normalizedChart = chartRaw.map((p) =>
     normalizeChartSeriesPoint(p as unknown as Record<string, unknown>)
   )
 
   return {
     points: normalizedChart,
     chartSeries: normalizedChart,
-    meta: idleMeta,
+    meta: chartMeta,
   }
 }
 

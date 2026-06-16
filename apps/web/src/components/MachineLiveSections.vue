@@ -9,7 +9,7 @@ import {
   sortDisksBySize,
 } from "@/utils/machineDisks";
 import CollapsibleSection from "@/components/CollapsibleSection.vue";
-import MachineIdleHistoryChart from "@/components/MachineIdleHistoryChart.vue";
+import MachineChartHistoryChart from "@/components/MachineChartHistoryChart.vue";
 import MachineLiveProcessSection from "@/components/MachineLiveProcessSection.vue";
 import type { TelemetryProcessSnapshot } from "@/types";
 
@@ -301,7 +301,7 @@ function formatBatchTime(iso: string | null | undefined): string {
       v-model:collapsed="chartsCollapsed"
       title="Gráficos"
     >
-      <MachineIdleHistoryChart
+      <MachineChartHistoryChart
         :machine-id="machineId"
         :active="!chartsCollapsed"
         :live-stamp="latestBatchTimestamp"

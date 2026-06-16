@@ -36,7 +36,6 @@ export interface LabPublicConfig {
       graceEnabled?: boolean;
       postSftpEnabled?: boolean;
       deleteUserDays: number;
-      prepareMinutes: number;
     };
     /** true = reservas de usuários exigem aprovação admin */
     requireAdminApproval?: boolean;
@@ -81,7 +80,6 @@ const DEFAULT_CONFIG: LabPublicConfig = {
       graceEnabled: true,
       postSftpEnabled: true,
       deleteUserDays: 7,
-      prepareMinutes: 5,
     },
   },
   auth: {

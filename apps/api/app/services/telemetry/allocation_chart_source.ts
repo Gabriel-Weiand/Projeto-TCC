@@ -1,12 +1,9 @@
 import type Allocation from '#models/allocation'
 import type Telemetry from '#models/telemetry'
-import {
-  IDLE_CHART_BUCKET_MS,
-  idleTelemetryBuffer,
-} from '#services/telemetry/idle_buffer'
+import { CHART_BUCKET_MS, chartTelemetryBuffer } from '#services/telemetry/chart_buffer'
 import { parseTimestampMs, type ChartSeriesPoint } from '#services/telemetry/downsample'
 
-/** Converte payload do buffer ocioso em linha compatível com `calculateMetrics`. */
+/** Converte payload do buffer de gráfico em linha compatível com `calculateMetrics`. */
 function payloadToScalarRow(
   allocationId: number,
   timestamp: string,
@@ -48,26 +45,26 @@ function allocationWindowMs(allocation: Allocation) {
 function bucketOverlapsAllocation(pointTs: string, allocation: Allocation): boolean {
   const { startMs, endMs } = allocationWindowMs(allocation)
   const bucketStart = parseTimestampMs(pointTs)
-  const bucketEnd = bucketStart + IDLE_CHART_BUCKET_MS
+  const bucketEnd = bucketStart + CHART_BUCKET_MS
   return bucketEnd > startMs && bucketStart <= endMs
 }
 
 /**
- * Pontos TWA @ 15 min do buffer ocioso dentro da janela da alocação.
+ * Pontos TWA @ 15 min do chartTelemetryBuffer dentro da janela da alocação.
  * Substitui telemetria bruta escalar no resumo de sessão.
  */
-export function scalarSamplesFromIdleChart(
+export function scalarSamplesFromChartBuffer(
   machineId: number,
   allocation: Allocation
 ): Telemetry[] {
-  const closed = idleTelemetryBuffer
+  const closed = chartTelemetryBuffer
     .getHistory(machineId)
     .filter((entry) => bucketOverlapsAllocation(entry.timestamp, allocation))
     .map((entry) =>
       payloadToScalarRow(allocation.id, entry.timestamp, entry.metrics as Record<string, unknown>)
     )
 
-  const preview = idleTelemetryBuffer.getChartSeries(machineId).find((point) =>
+  const preview = chartTelemetryBuffer.getChartSeries(machineId).find((point) =>
     bucketOverlapsAllocation(point.timestamp, allocation)
   )
 
@@ -90,14 +87,14 @@ export function scalarSamplesFromIdleChart(
   )
 }
 
-export function chartSeriesFromIdleBuffer(
+export function chartSeriesFromChartBuffer(
   machineId: number,
   allocation: Allocation
 ): { points: ChartSeriesPoint[]; bucketMs: number } {
-  const points = idleTelemetryBuffer
+  const points = chartTelemetryBuffer
     .getChartSeries(machineId)
     .filter((point) => bucketOverlapsAllocation(point.timestamp, allocation))
-  return { points, bucketMs: IDLE_CHART_BUCKET_MS }
+  return { points, bucketMs: CHART_BUCKET_MS }
 }
 
 export function shouldPersistAllocationSample(

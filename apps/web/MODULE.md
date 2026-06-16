@@ -13,7 +13,7 @@ Interface entre **usuários** (alunos/pesquisadores) e **administradores** do la
 | Público | O que faz no front |
 |---------|-------------------|
 | **User** | Gantt, reservas, SSH, minhas alocações, estatísticas de sessão, parque de máquinas |
-| **Admin** | Tudo acima + CRUD usuários/máquinas/alocações, telemetria ao vivo, manutenção, políticas |
+| **Admin** | Tudo acima + CRUD usuários/máquinas/alocações, processos/sessões no detalhe da máquina, manutenção, políticas |
 
 ---
 
@@ -40,7 +40,7 @@ Testes utilitários: `node src/utils/datetime.spec.mjs`, `ssh.spec.mjs`, `notifi
 | `/` | `HomeView` | User | Calendário Gantt + nova reserva |
 | `/my-allocations` | `MyAllocationsView` | User | Histórico e ações sobre reservas |
 | `/machines` | `MachinesView` | User | Parque agrupado + busca |
-| `/machines/:id` | `MachineDetailView` | User | Specs, reservar, conectar; **admin** vê seções ao vivo |
+| `/machines/:id` | `MachineDetailView` | User | Specs, telemetria ao vivo, gráfico 24 h, partições, reservar, conectar |
 | `/profile` | `ProfileView` | User | Perfil + chave SSH ed25519 |
 | `/admin` | `AdminDashboardView` | Admin | Dashboard |
 | `/admin/users` | `AdminUsersView` | Admin | CRUD usuários |
@@ -61,7 +61,7 @@ Layout: `AppLayout.vue` (navbar, notificações, links admin).
 |-------|------------------|
 | `auth` | Login, token, `/me`, roles |
 | `allocations` | CRUD reservas, minhas alocações |
-| `machines` | Listagem, detalhe, stream de telemetria, idle history |
+| `machines` | Listagem, detalhe, stream de telemetria, gráfico 24 h (`chartHistory`) |
 | `users` | Lista de usuários (admin) |
 | `notifications` | Inbox, marcar lida |
 | `labConfig` | Cache de `GET /api/config`, presets de telemetria |
@@ -92,17 +92,25 @@ Layout: `AppLayout.vue` (navbar, notificações, links admin).
 - Cards com RAM, GPU+VRAM, **disco total** (`displayTotalDiskGb`), status efetivo.
 - Modal: specs completas, partições ordenadas por tamanho, livre/total por volume.
 
-### Detalhe da máquina — usuário (`MachineDetailView`)
+### Detalhe da máquina (`MachineDetailView`)
 
-- Header: CPU, GPU, RAM, VRAM, **Disco**, **IP local** (placeholder *Aguardando sync* se vazio).
-- Disco total: spec `totalDiskGb` ou fallback soma de partições.
-- Botão reservar / conectar conforme alocação própria ativa.
+Visível para **qualquer usuário autenticado** em `/machines/:id` (admin usa a mesma view, com `?from=admin`):
+
+| Seção | Usuário | Admin |
+|-------|---------|-------|
+| Header (CPU, GPU, RAM, disco, IP) | sim | sim |
+| Barras ao vivo (CPU/GPU/RAM/rede/temp) | sim | sim |
+| Gráfico 24 h (`MachineChartHistoryChart`) | sim | sim |
+| Partições com uso ao vivo | sim | sim |
+| Reservar / Conectar SSH | sim | sim |
+| Tabela de **processos** | — | sim |
+| Collapsible **Usuários** (sessões ativas) | — | sim |
+| Botão preset telemetria (`MachineTelemetryPanel`) | — | sim |
+| Editar máquina | — | sim |
+
+Fontes: barras e partições via `useTelemetryPlayback` → `GET …/telemetry/stream`; gráfico via `useMachineChartHistory` → `GET …/telemetry` (`chartHistory`). Rotas abertas a usuário autenticado (não exigem `admin`).
 
 ---
-
-## Fluxo do administrador
-
-### Edição de máquina (`AdminMachineEditView`)
 
 Abas via `AdminMachine*Tab`:
 
@@ -116,22 +124,13 @@ Abas via `AdminMachine*Tab`:
 
 **Regra de specs:** admin preenche → agente **não sobrescreve** no boot. Admin **limpa** campo → agente repreenche no próximo sync.
 
-### Detalhe ao vivo — admin (`MachineDetailView` + `MachineLiveSections`)
+### Extras no detalhe — só admin
 
-Visível para `role === 'admin'` (ou discos para todos quando existem partições):
-
-| Seção | Componente | Fonte de dados |
-|-------|------------|----------------|
-| Telemetria preset | `MachineTelemetryPanel` | PUT máquina (preset/custom) |
-| **Barras ao vivo** (CPU/GPU/RAM/rede/temp) | `MachineLiveSections` | `useTelemetryPlayback` → `GET …/telemetry/stream` (`telemetryBuffer`) |
-| **Gráfico 24 h ocioso** | `MachineIdleHistoryChart` | `GET …/telemetry` → `idleHistory.chartSeries` (`idleTelemetryBuffer`; congela em alocação) |
-| **Partições** | `MachineLiveSections` | Spec da máquina + `liveData.disksInfo` do stream |
-| **Processos** | `MachineLiveProcessSection` | Último lote com `processes` no stream (não vem do buffer 24 h) |
-| **Usuários** | Collapsible | `activeUsers` na amostra realtime + heartbeat |
+Além das seções da tabela acima: `MachineTelemetryPanel` (preset custom), `MachineLiveProcessSection`, collapsible **Usuários** (`activeUsers`).
 
 Playback: `useTelemetryPlayback` — polling a cada **3 s** em `/telemetry/stream`, diff de lotes (`telemetryBatchDiff`), reprodução suave entre timestamps. `liveData` = mais recente entre playback e `machine.latestTelemetry` (parque, refresh 30 s).
 
-Histórico ocioso: `useMachineIdleHistory` — polling a cada **30 s** em `/telemetry` (`idleHistory`); só cresce com máquina **sem** alocação ativa na API.
+Gráfico 24 h: `useMachineChartHistory` — polling em `/telemetry` (`chartHistory`); atualiza em ocioso **e** alocação.
 
 ### Manutenção (`AdminMaintenanceView`)
 
@@ -197,19 +196,19 @@ Sincronização de relógio: `src/services/timeSync.ts` — `startTimeSync()` + 
 
 | Caminho | Endpoint / store | Quando | UI |
 |---------|-------------------|--------|-----|
-| **Ao vivo** | `GET /machines/:id/telemetry/stream` via `useTelemetryPlayback` | Admin no detalhe da máquina | Barras, discos, processos, usuários ativos |
+| **Ao vivo** | `GET /machines/:id/telemetry/stream` via `useTelemetryPlayback` | Usuário autenticado no detalhe da máquina | Barras, discos (partições) |
 | **Parque / fallback** | `GET /machines` → `latestTelemetry` | Listagem e refresh 30 s | Cards do dashboard admin |
-| **Gráfico 24 h ocioso** | `GET /machines/:id/telemetry` → `idleHistory` via `useMachineIdleHistory` | Todos (seção gráficos) | `MachineIdleHistoryChart` — atualiza também em alocação |
+| **Gráfico 24 h** | `GET /machines/:id/telemetry` → `chartHistory` via `useMachineChartHistory` | Usuário autenticado (seção gráficos) | `MachineChartHistoryChart` |
 | **Resumo de sessão** | `GET /allocations/:id/summary` | Após admin gerar resumo | `AllocationUsageStatsModal` |
 
-Durante **alocação ativa**, barras/processos/discos usam o buffer runtime (stream). O gráfico 24 h **continua** a agregar TWA @ 15 min no `idleTelemetryBuffer`. Escalares da sessão no resumo vêm desse buffer; só amostras com **processos** vão para a fila SQLite até o resumo.
+Durante **alocação ativa**, barras/partições usam o buffer runtime (stream). O gráfico 24 h agrega TWA @ 15 min no `chartTelemetryBuffer`. **Processos** e **sessões ativas** só aparecem para admin. Escalares da sessão no resumo vêm do chart buffer; SQLite guarda só snapshots com `processes`.
 
 **Memória (ocioso):** ao vivo = ring ~15 amostras ricas em `telemetryBuffer`; gráfico = janela pending ≤15 + **~96 pts @ 15 min** materializados (~**81–116 KiB**/máquina conforme preset). Ver [`apps/api/MODULE.md`](../../api/MODULE.md#retenção-e-buffers).
 
 | Arquivo | Papel |
 |---------|--------|
 | `composables/useTelemetryPlayback.ts` | Poll stream 3 s; playback; `latestProcesses` |
-| `composables/useMachineIdleHistory.ts` | Poll idle 30 s; `chartSeries` 24 h |
+| `composables/useMachineChartHistory.ts` | Poll chartHistory; `chartSeries` 24 h |
 | `utils/telemetryBatchDiff.ts` | Diff de lotes, ordenação por timestamp |
 | `utils/processTelemetry.ts` | Filtro lab/sistema, sort da tabela |
 | `telemetryPresets.ts` | Constantes, validação de intervalo/batch/processos |
@@ -267,6 +266,9 @@ Tema escuro em `src/assets/main.css` (`--bg-*`, `--text-*`, `--border`). Listage
 | Telemetria lab → manutenção | `/admin/lab-telemetry` redirect; removidos `AdminLabTelemetryView`, `AdminTabBar` |
 | Filtro de processos por tipo de usuário | Toolbar em `MachineLiveProcessSection` |
 | Seção Usuários no detalhe admin | Sessões ativas; removido bloco debug da API |
+| `idleHistory` → `chartHistory` | `useMachineChartHistory`, `MachineChartHistoryChart`; gráfico 24 h também durante alocação |
+| Remoção fase `prepare` | Sem SFTP pré-alocação; conta só a partir de `startTime` (API + agente) |
+| Telemetria no detalhe da máquina | Usuários autenticados veem barras, gráfico 24 h e partições; processos/sessões só admin |
 
 ---
 

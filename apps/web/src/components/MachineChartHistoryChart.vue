@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed } from "vue";
 import { useLabConfigStore } from "@/stores/labConfig";
-import { useMachineIdleHistory } from "@/composables/useMachineIdleHistory";
+import { useMachineChartHistory } from "@/composables/useMachineChartHistory";
 import { formatChartResolutionLegend } from "@/utils/allocationMetricFormat";
 import AllocationSummaryChart from "@/components/allocation/AllocationSummaryChart.vue";
 
@@ -9,7 +9,7 @@ const props = defineProps<{
   machineId: number;
   /** Só faz polling quando a seção está expandida. */
   active?: boolean;
-  /** Timestamp do último lote ao vivo — força refresh do histórico ocioso. */
+  /** Timestamp do último lote ao vivo — força refresh do gráfico 24 h. */
   liveStamp?: string | null;
 }>();
 
@@ -17,7 +17,7 @@ const lab = useLabConfigStore();
 
 const enabled = computed(() => props.active !== false);
 
-const { chartSeries, meta, loading, error } = useMachineIdleHistory(
+const { chartSeries, meta, loading, error } = useMachineChartHistory(
   () => props.machineId,
   { enabled, liveStamp: () => props.liveStamp },
 );
@@ -32,10 +32,10 @@ const resolutionLegend = computed(() => {
 </script>
 
 <template>
-  <div class="idle-chart-panel">
-    <div v-if="resolutionLegend" class="idle-chart-head">
-      <span class="idle-chart-window text-secondary">Últimas 24 h</span>
-      <span class="idle-chart-resolution text-secondary">{{ resolutionLegend }}</span>
+  <div class="chart-history-panel">
+    <div v-if="resolutionLegend" class="chart-history-head">
+      <span class="chart-history-window text-secondary">Últimas 24 h</span>
+      <span class="chart-history-resolution text-secondary">{{ resolutionLegend }}</span>
     </div>
 
     <div v-if="loading && chartSeries.length === 0" class="empty-state chart-loading">
@@ -51,11 +51,11 @@ const resolutionLegend = computed(() => {
 </template>
 
 <style scoped>
-.idle-chart-panel {
+.chart-history-panel {
   margin-bottom: 0.5rem;
 }
 
-.idle-chart-head {
+.chart-history-head {
   display: flex;
   flex-wrap: wrap;
   align-items: baseline;
@@ -64,12 +64,12 @@ const resolutionLegend = computed(() => {
   margin-bottom: 0.75rem;
 }
 
-.idle-chart-window {
+.chart-history-window {
   font-size: 0.82rem;
   font-weight: 500;
 }
 
-.idle-chart-resolution {
+.chart-history-resolution {
   font-size: 0.78rem;
 }
 

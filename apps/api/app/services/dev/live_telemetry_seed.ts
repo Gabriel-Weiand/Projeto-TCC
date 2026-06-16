@@ -2,7 +2,7 @@ import { readFileSync, writeFileSync, mkdirSync, existsSync } from 'node:fs'
 import { join } from 'node:path'
 import app from '@adonisjs/core/services/app'
 import { telemetryBuffer } from '#services/telemetry/buffer'
-import { idleTelemetryBuffer } from '#services/telemetry/idle_buffer'
+import { chartTelemetryBuffer } from '#services/telemetry/chart_buffer'
 import {
   generateRawTelemetriesWire,
   type UsageProfile,
@@ -93,7 +93,7 @@ export function applyLiveTelemetrySeedIfPresent(): void {
       for (const sample of batch) {
         telemetryBuffer.updateRealtime(entry.machineId, sample)
         if (entry.mode === 'idle') {
-          idleTelemetryBuffer.ingest(entry.machineId, sample, entry.intervalSeconds)
+          chartTelemetryBuffer.ingest(entry.machineId, sample, entry.intervalSeconds)
         }
       }
 

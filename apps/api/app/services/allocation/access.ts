@@ -4,7 +4,6 @@ import { getLabAccessConfig } from '#services/lab/config'
 
 export type AccessPhase =
   | 'none'
-  | 'prepare'
   | 'active'
   | 'grace'
   | 'post_sftp'
@@ -92,13 +91,6 @@ export function resolveAccessPhase(
   if (nowMs >= startMs && nowMs < endMs) {
     return 'active'
   }
-  if (
-    allocation.status === 'approved' &&
-    nowMs < startMs &&
-    allocation.startTime.diff(now, 'minutes').minutes <= access.prepareMinutes
-  ) {
-    return 'prepare'
-  }
   return 'none'
 }
 
@@ -114,7 +106,6 @@ const PHASE_RANK: Record<AccessPhase, number> = {
   teardown: 0,
   no_key: 10,
   post_sftp: 20,
-  prepare: 30,
   grace: 40,
   active: 50,
 }
@@ -125,7 +116,6 @@ export function phaseToProvisioning(
   userSshKey: string | null
 ): ProvisioningAccess | null {
   switch (phase) {
-    case 'prepare':
     case 'post_sftp':
       return {
         accessState: 'sftp_only',
@@ -177,43 +167,7 @@ export function resolveDominantAccessForUser(
   return best
 }
 
-const HOME_MIGRATION_BLOCKING_PHASES: AccessPhase[] = ['prepare', 'active', 'grace', 'post_sftp']
-
-/**
- * Permite migrar a home POSIX para a alocação dominante quando reservas antigas
- * só restam em no_key (sem SFTP com chave útil na home anterior).
- */
-export function allowHomeMigrationForUser(
-  allocations: Allocation[],
-  dominantAllocation: Allocation,
-  homeDirectory: string | null | undefined,
-  now: DateTime = DateTime.utc(),
-  access: LabAccessConfig = getLabAccessConfig()
-): boolean {
-  if (!homeDirectory?.trim()) {
-    return false
-  }
-
-  for (const allocation of allocations) {
-    if (allocation.id === dominantAllocation.id) {
-      continue
-    }
-    if (!allocationNeedsProvisioning(allocation, now, access)) {
-      continue
-    }
-    const phase = resolveAccessPhase(allocation, now, access)
-    if (phase === 'none' || phase === 'teardown' || phase === 'no_key') {
-      continue
-    }
-    if (HOME_MIGRATION_BLOCKING_PHASES.includes(phase)) {
-      return false
-    }
-  }
-
-  return true
-}
-
-/** Máquina com alocação em curso (prepare → pós-SFTP), exceto teardown. */
+/** Máquina com alocação em curso (active → pós-SFTP), exceto teardown. */
 export function machineHasAllocationTelemetry(phase: AccessPhase): boolean {
   return phase !== 'none' && phase !== 'teardown'
 }

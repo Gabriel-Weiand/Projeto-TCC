@@ -7,12 +7,12 @@ import {
 } from '#services/telemetry/downsample'
 
 /** Série exibida no front — janela 24 h @ 15 min/ponto (~96 pts). */
-export const IDLE_CHART_BUCKET_MS = 900_000
+export const CHART_BUCKET_MS = 900_000
 const TWENTY_FOUR_HOURS_MS = 24 * 60 * 60 * 1000
 
-export interface IdleBufferEntry {
+export interface ChartBufferEntry {
   timestamp: string
-  resolutionMs: typeof IDLE_CHART_BUCKET_MS
+  resolutionMs: typeof CHART_BUCKET_MS
   metrics: TelemetryPayload
   sampleCount: number
 }
@@ -22,7 +22,7 @@ interface StoredChartPoint {
   sampleCount: number
 }
 
-interface MachineIdleState {
+interface MachineChartState {
   /** Início da janela de 15 min aberta (ms UTC). */
   pendingBucketStartMs: number | null
   /** Amostras na precisão do agente dentro da janela aberta. */
@@ -72,13 +72,13 @@ function sampleToPayload(sample: ChartSeriesPoint): TelemetryPayload {
 }
 
 function chartBucketStartMs(sampleMs: number): number {
-  return Math.floor(sampleMs / IDLE_CHART_BUCKET_MS) * IDLE_CHART_BUCKET_MS
+  return Math.floor(sampleMs / CHART_BUCKET_MS) * CHART_BUCKET_MS
 }
 
-class TelemetryIdleBuffer {
-  private machines = new Map<number, MachineIdleState>()
+class TelemetryChartBuffer {
+  private machines = new Map<number, MachineChartState>()
 
-  private getOrCreate(machineId: number): MachineIdleState {
+  private getOrCreate(machineId: number): MachineChartState {
     let state = this.machines.get(machineId)
     if (!state) {
       state = {
@@ -93,7 +93,7 @@ class TelemetryIdleBuffer {
   }
 
   /**
-   * Acumula amostra ociosa na janela de 15 min aberta; ao cruzar bucket, TWA → chartSeries.
+   * Acumula amostra na janela de 15 min aberta; ao cruzar bucket, TWA → chartSeries.
    */
   ingest(machineId: number, sample: TelemetryPayload, intervalSeconds: number): void {
     const state = this.getOrCreate(machineId)
@@ -119,7 +119,7 @@ class TelemetryIdleBuffer {
     this.purgeOldChartSeries(state)
   }
 
-  private flushPendingBucket(state: MachineIdleState): void {
+  private flushPendingBucket(state: MachineChartState): void {
     if (state.pendingSamples.length === 0 || state.pendingBucketStartMs === null) {
       state.pendingSamples = []
       state.pendingBucketStartMs = null
@@ -127,11 +127,11 @@ class TelemetryIdleBuffer {
     }
 
     const bucketStart = state.pendingBucketStartMs
-    const bucketEnd = bucketStart + IDLE_CHART_BUCKET_MS
+    const bucketEnd = bucketStart + CHART_BUCKET_MS
     const sampleCount = state.pendingSamples.length
     const points = downsampleToBuckets(
       state.pendingSamples,
-      IDLE_CHART_BUCKET_MS,
+      CHART_BUCKET_MS,
       bucketStart,
       bucketEnd
     )
@@ -145,7 +145,7 @@ class TelemetryIdleBuffer {
   }
 
   private upsertChartPoint(
-    state: MachineIdleState,
+    state: MachineChartState,
     point: ChartSeriesPoint,
     sampleCount: number
   ): void {
@@ -161,20 +161,20 @@ class TelemetryIdleBuffer {
     }
   }
 
-  private purgeOldChartSeries(state: MachineIdleState): void {
+  private purgeOldChartSeries(state: MachineChartState): void {
     const cutoff = Date.now() - TWENTY_FOUR_HOURS_MS
     state.chartSeries = state.chartSeries.filter(
       (entry) => parseTimestampMs(entry.point.timestamp) >= cutoff
     )
   }
 
-  private buildPendingPreview(state: MachineIdleState): ChartSeriesPoint | null {
+  private buildPendingPreview(state: MachineChartState): ChartSeriesPoint | null {
     if (state.pendingSamples.length === 0 || state.pendingBucketStartMs === null) {
       return null
     }
 
     const bucketStart = state.pendingBucketStartMs
-    const bucketEnd = bucketStart + IDLE_CHART_BUCKET_MS
+    const bucketEnd = bucketStart + CHART_BUCKET_MS
     const lastSampleMs = parseTimestampMs(
       state.pendingSamples[state.pendingSamples.length - 1]!.timestamp
     )
@@ -184,7 +184,7 @@ class TelemetryIdleBuffer {
 
     const points = downsampleToBuckets(
       state.pendingSamples,
-      IDLE_CHART_BUCKET_MS,
+      CHART_BUCKET_MS,
       bucketStart,
       rangeEnd
     )
@@ -220,14 +220,14 @@ class TelemetryIdleBuffer {
     return [...closed, preview]
   }
 
-  /** Compat.: entradas fechadas @ 15 min (alias estruturado de `chartSeries`). */
-  getHistory(machineId: number): IdleBufferEntry[] {
+  /** Entradas fechadas @ 15 min (alias estruturado de `chartSeries`). */
+  getHistory(machineId: number): ChartBufferEntry[] {
     const state = this.machines.get(machineId)
     if (!state) return []
 
     return state.chartSeries.map((entry) => ({
       timestamp: entry.point.timestamp,
-      resolutionMs: IDLE_CHART_BUCKET_MS,
+      resolutionMs: CHART_BUCKET_MS,
       metrics: sampleToPayload(entry.point),
       sampleCount: entry.sampleCount,
     }))
@@ -250,11 +250,10 @@ class TelemetryIdleBuffer {
 
     return {
       retentionHours: 24,
-      /** @deprecated ambos = bucket do gráfico (15 min) após refactor */
-      recentResolutionMinutes: IDLE_CHART_BUCKET_MS / 60_000,
-      olderResolutionMinutes: IDLE_CHART_BUCKET_MS / 60_000,
+      recentResolutionMinutes: CHART_BUCKET_MS / 60_000,
+      olderResolutionMinutes: CHART_BUCKET_MS / 60_000,
       pointCount: closed.length,
-      chartBucketMinutes: IDLE_CHART_BUCKET_MS / 60_000,
+      chartBucketMinutes: CHART_BUCKET_MS / 60_000,
       chartPointCount: chartSeries.length,
       pendingSampleCount: state?.pendingSamples.length ?? 0,
       lastBufferTimestamp: lastPendingTs ?? lastClosedTs,
@@ -263,7 +262,7 @@ class TelemetryIdleBuffer {
     }
   }
 
-  getLatestEntry(machineId: number): IdleBufferEntry | null {
+  getLatestEntry(machineId: number): ChartBufferEntry | null {
     const state = this.machines.get(machineId)
     if (!state) return null
 
@@ -271,7 +270,7 @@ class TelemetryIdleBuffer {
       const last = state.pendingSamples[state.pendingSamples.length - 1]!
       return {
         timestamp: last.timestamp,
-        resolutionMs: IDLE_CHART_BUCKET_MS,
+        resolutionMs: CHART_BUCKET_MS,
         metrics: sampleToPayload(last),
         sampleCount: 1,
       }
@@ -282,7 +281,7 @@ class TelemetryIdleBuffer {
 
     return {
       timestamp: lastStored.point.timestamp,
-      resolutionMs: IDLE_CHART_BUCKET_MS,
+      resolutionMs: CHART_BUCKET_MS,
       metrics: sampleToPayload(lastStored.point),
       sampleCount: lastStored.sampleCount,
     }
@@ -297,4 +296,4 @@ class TelemetryIdleBuffer {
   }
 }
 
-export const idleTelemetryBuffer = new TelemetryIdleBuffer()
+export const chartTelemetryBuffer = new TelemetryChartBuffer()

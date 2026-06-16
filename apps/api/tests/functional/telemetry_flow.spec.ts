@@ -5,7 +5,7 @@ import Allocation from '#models/allocation'
 import Telemetry from '#models/telemetry'
 import AllocationMetric from '#models/allocation_metric'
 import { telemetryBuffer } from '#services/telemetry/buffer'
-import { idleTelemetryBuffer } from '#services/telemetry/idle_buffer'
+import { chartTelemetryBuffer } from '#services/telemetry/chart_buffer'
 import { downsampleToBuckets, resolveChartBucketMs, CHART_COARSE_BUCKET_MS, CHART_MAX_POINTS } from '#services/telemetry/downsample'
 import testUtils from '@adonisjs/core/services/test_utils'
 import { DateTime } from 'luxon'
@@ -869,14 +869,14 @@ test.group('Fluxo End-to-End via API do Agente', (group) => {
       telResponse.assertStatus(204)
     }
 
-    // === 2. FLUSH MANUAL DO BUFFER (escalares vão ao idleTelemetryBuffer; DB só processos) ===
+    // === 2. FLUSH MANUAL DO BUFFER (escalares vão ao chartTelemetryBuffer; DB só processos) ===
     const flushed = await telemetryBuffer.flush()
     assert.equal(flushed, 0)
 
     // === 3. Escalares no buffer ocioso; SQLite sem linhas brutas ===
     const dbTel = await Telemetry.query().where('allocationId', allocation.id)
     assert.equal(dbTel.length, 0)
-    assert.isAtLeast(idleTelemetryBuffer.getChartSeries(machine.id).length, 1)
+    assert.isAtLeast(chartTelemetryBuffer.getChartSeries(machine.id).length, 1)
 
     // === 4. ADMIN GERA RESUMO ===
     // Finaliza alocação primeiro
@@ -937,8 +937,8 @@ test.group('Fluxo End-to-End via API do Agente', (group) => {
     const flushed = await telemetryBuffer.flush()
     assert.equal(flushed, 0)
 
-    const idleHistory = idleTelemetryBuffer.getChartSeries(machine.id)
-    assert.isAtLeast(idleHistory.length, 1)
+    const chartHistory = chartTelemetryBuffer.getChartSeries(machine.id)
+    assert.isAtLeast(chartHistory.length, 1)
 
     await machine.refresh()
     assert.equal(machine.status, 'offline')
@@ -1361,7 +1361,7 @@ test.group('Telemetry Stream Endpoint', (group) => {
 // BUFFER OCIOSO 24h + CHART SERIES DE ALOCAÇÃO
 // ============================================================================
 
-function idleSample(
+function chartSample(
   timestamp: DateTime,
   cpuUsage: number,
   overrides: Record<string, unknown> = {}
@@ -1379,41 +1379,41 @@ function idleSample(
   }
 }
 
-test.group('Buffer ocioso 24h e chart series', (group) => {
+test.group('Chart buffer 24h e chart series', (group) => {
   group.each.setup(() => {
     telemetryBuffer.reset()
     return testUtils.db().withGlobalTransaction()
   })
 
   test('ingest @ 30s agrega amostras na janela 15 min (preview TWA)', async ({ assert }) => {
-    idleTelemetryBuffer.reset()
+    chartTelemetryBuffer.reset()
     const machineId = -1001
     const base = DateTime.now().startOf('minute')
 
-    idleTelemetryBuffer.ingest(machineId, idleSample(base, 100), 30)
-    idleTelemetryBuffer.ingest(machineId, idleSample(base.plus({ seconds: 30 }), 300), 30)
+    chartTelemetryBuffer.ingest(machineId, chartSample(base, 100), 30)
+    chartTelemetryBuffer.ingest(machineId, chartSample(base.plus({ seconds: 30 }), 300), 30)
 
-    const preview = idleTelemetryBuffer.getChartSeries(machineId)
-    assert.equal(idleTelemetryBuffer.getHistory(machineId).length, 0)
+    const preview = chartTelemetryBuffer.getChartSeries(machineId)
+    assert.equal(chartTelemetryBuffer.getHistory(machineId).length, 0)
     assert.equal(preview.length, 1)
     assert.equal(preview[0].cpuUsage, 200)
   })
 
   test('ingest fecha bucket 15 min ao cruzar janela', async ({ assert }) => {
-    idleTelemetryBuffer.reset()
+    chartTelemetryBuffer.reset()
     const machineId = -1002
     const bucketStartMs = Math.floor(DateTime.utc().toMillis() / 900_000) * 900_000
     const base = DateTime.fromMillis(bucketStartMs, { zone: 'utc' })
 
-    idleTelemetryBuffer.ingest(machineId, idleSample(base, 100), 60)
-    idleTelemetryBuffer.ingest(machineId, idleSample(base.plus({ minutes: 1 }), 400), 60)
-    idleTelemetryBuffer.ingest(
+    chartTelemetryBuffer.ingest(machineId, chartSample(base, 100), 60)
+    chartTelemetryBuffer.ingest(machineId, chartSample(base.plus({ minutes: 1 }), 400), 60)
+    chartTelemetryBuffer.ingest(
       machineId,
-      idleSample(base.plus({ minutes: 15 }), 500),
+      chartSample(base.plus({ minutes: 15 }), 500),
       60
     )
 
-    const closed = idleTelemetryBuffer.getHistory(machineId)
+    const closed = chartTelemetryBuffer.getHistory(machineId)
     assert.equal(closed.length, 1)
     assert.equal(closed[0].sampleCount, 2)
     assert.equal(closed[0].metrics.cpuUsage, 380)
@@ -1421,20 +1421,20 @@ test.group('Buffer ocioso 24h e chart series', (group) => {
   })
 
   test('purge remove pontos do gráfico com mais de 24 h', async ({ assert }) => {
-    idleTelemetryBuffer.reset()
+    chartTelemetryBuffer.reset()
     const machineId = -1003
     const now = DateTime.utc()
     const old = now.minus({ hours: 25 })
 
-    idleTelemetryBuffer.ingest(machineId, idleSample(old, 500), 60)
-    idleTelemetryBuffer.ingest(
+    chartTelemetryBuffer.ingest(machineId, chartSample(old, 500), 60)
+    chartTelemetryBuffer.ingest(
       machineId,
-      idleSample(old.plus({ minutes: 15 }), 600),
+      chartSample(old.plus({ minutes: 15 }), 600),
       60
     )
-    idleTelemetryBuffer.ingest(machineId, idleSample(now.minus({ minutes: 10 }), 700), 60)
+    chartTelemetryBuffer.ingest(machineId, chartSample(now.minus({ minutes: 10 }), 700), 60)
 
-    const closed = idleTelemetryBuffer.getClosedChartSeries(machineId)
+    const closed = chartTelemetryBuffer.getClosedChartSeries(machineId)
     for (const point of closed) {
       const ageMs = now.toMillis() - new Date(point.timestamp).getTime()
       assert.isBelow(ageMs, 25 * 60 * 60 * 1000)
@@ -1492,7 +1492,7 @@ test.group('Buffer ocioso 24h e chart series', (group) => {
     const rows = await Telemetry.query().where('allocationId', allocation.id)
     assert.equal(rows.length, 1)
     assert.isAtLeast(rows[0].processes?.length ?? 0, 1)
-    assert.isAtLeast(idleTelemetryBuffer.getChartSeries(machine.id).length, 1)
+    assert.isAtLeast(chartTelemetryBuffer.getChartSeries(machine.id).length, 1)
   })
 
   test('buffer ocioso recebe amostras durante alocação ativa (gráfico 24 h)', async ({
@@ -1525,12 +1525,12 @@ test.group('Buffer ocioso 24h e chart series', (group) => {
       .header('Authorization', `Bearer ${machine.token}`)
       .json({ data: [generateTelemetry(0, 0.5)] })
 
-    const series = idleTelemetryBuffer.getChartSeries(machine.id)
+    const series = chartTelemetryBuffer.getChartSeries(machine.id)
     assert.isAtLeast(series.length, 1)
-    assert.isAtLeast(idleTelemetryBuffer.getMeta(machine.id).pendingSampleCount, 1)
+    assert.isAtLeast(chartTelemetryBuffer.getMeta(machine.id).pendingSampleCount, 1)
   })
 
-  test('GET /machines/:id/telemetry expõe idleHistory', async ({ client, assert }) => {
+  test('GET /machines/:id/telemetry expõe chartHistory', async ({ client, assert }) => {
     const admin = await User.create({
       fullName: 'Admin Idle Hist',
       email: 'admin.idlehist@teste.com',
@@ -1554,14 +1554,14 @@ test.group('Buffer ocioso 24h e chart series', (group) => {
       .loginAs(admin)
 
     response.assertStatus(200)
-    assert.property(response.body(), 'idleHistory')
-    assert.isAtLeast(response.body().idleHistory.points.length, 1)
-    assert.isArray(response.body().idleHistory.chartSeries)
-    assert.equal(response.body().idleHistory.meta.retentionHours, 24)
-    assert.equal(response.body().idleHistory.meta.chartBucketMinutes, 15)
+    assert.property(response.body(), 'chartHistory')
+    assert.isAtLeast(response.body().chartHistory.points.length, 1)
+    assert.isArray(response.body().chartHistory.chartSeries)
+    assert.equal(response.body().chartHistory.meta.retentionHours, 24)
+    assert.equal(response.body().chartHistory.meta.chartBucketMinutes, 15)
   })
 
-  test('usuário autenticado pode ler idleHistory em GET /telemetry', async ({ client, assert }) => {
+  test('usuário autenticado pode ler chartHistory em GET /telemetry', async ({ client, assert }) => {
     const user = await User.create({
       fullName: 'Aluno Idle Hist',
       email: 'aluno.idlehist@teste.com',
@@ -1585,8 +1585,8 @@ test.group('Buffer ocioso 24h e chart series', (group) => {
       .loginAs(user)
 
     response.assertStatus(200)
-    assert.property(response.body(), 'idleHistory')
-    assert.isArray(response.body().idleHistory.chartSeries)
+    assert.property(response.body(), 'chartHistory')
+    assert.isArray(response.body().chartHistory.chartSeries)
   })
 
   test('chartSeries com intervalo 300s não gera pontos 0 espúrios', async ({ client, assert }) => {

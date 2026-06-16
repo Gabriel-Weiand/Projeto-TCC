@@ -1,5 +1,5 @@
 import Telemetry from '#models/telemetry'
-import { idleTelemetryBuffer } from '#services/telemetry/idle_buffer'
+import { chartTelemetryBuffer } from '#services/telemetry/chart_buffer'
 import logger from '@adonisjs/core/services/logger'
 
 /** * Payload unificado de telemetria enviado pelo agente (C2).
@@ -112,7 +112,7 @@ class TelemetryBuffer {
    * Adiciona telemetria ao buffer de persistência (para batch insert no banco).
    * Chamado quando há alocação ativa.
    * Também atualiza o estado real-time.
-   * @param options.persist — false: só ring buffer ao vivo (escalares vão ao idleTelemetryBuffer)
+   * @param options.persist — false: só ring buffer ao vivo (escalares vão ao chartTelemetryBuffer)
    */
   add(machineId: number, data: TelemetryData, options?: { persist?: boolean }): void {
     this.updateRealtime(machineId, data)
@@ -275,7 +275,7 @@ class TelemetryBuffer {
     this.latestState.delete(machineId)
     this.recentEntries.delete(machineId)
     this.lastBatchByMachine.delete(machineId)
-    idleTelemetryBuffer.clearMachine(machineId)
+    chartTelemetryBuffer.clearMachine(machineId)
   }
 
   /**
@@ -287,7 +287,7 @@ class TelemetryBuffer {
     this.latestState.clear()
     this.recentEntries.clear()
     this.lastBatchByMachine.clear()
-    idleTelemetryBuffer.reset()
+    chartTelemetryBuffer.reset()
   }
 }
 

@@ -55,14 +55,16 @@ if not TOKEN:
         "[Config] MACHINE_TOKEN ausente. Copie .env.example para .env e preencha o token da máquina."
     )
 
-# Detecta o caminho real do sftp-server uma vez no boot.
-# O caminho varia por distro/versão — hardcoding quebraria silenciosamente.
-SFTP_SHELL  = (
+# Detecta o caminho real do sftp-server (legado; fases SFTP usam internal-sftp + chroot).
+SFTP_SHELL = (
     shutil.which("sftp-server")
     or next(iter(glob.glob("/usr/lib/openssh/sftp-server")), None)
     or next(iter(glob.glob("/usr/lib/sftp-server")), None)
-    or "/usr/lib/openssh/sftp-server"  # fallback explícito
+    or "/usr/lib/openssh/sftp-server"
 )
+LAB_SFTP_CHROOT_CONF = "/etc/ssh/sshd_config.d/99-lab-sftp-chroot.conf"
+SFTP_CHROOT_WORKDIR = "home"
+SFTP_RESTRICTED_SHELL = "/usr/sbin/nologin"
 LAST_PROCESS_REQUEST_TS = None
 PROCESS_BATCHES_REMAINING = 0
 # Último accessState por usuário lab.* (pkill na transição full_shell → sftp_only)
@@ -807,24 +809,92 @@ def _grant_root_home_access(path: str) -> None:
     subprocess.run(["setfacl", "-d", "-m", "u:root:rx", path], check=False)
 
 
-def _maybe_migrate_user_home(uname: str, target_home: str, user_info) -> object:
-    """
-    Atualiza pw_dir para target_home quando allowHomeMigration (API).
-    Não remove dados na home antiga — só passwd + nova árvore + chave no fluxo seguinte.
-    """
-    current = (user_info.pw_dir or "").strip()
-    target = target_home.strip()
-    if not target or os.path.normpath(current) == os.path.normpath(target):
-        return user_info
+def _sftp_workdir(chroot_root: str) -> str:
+    return os.path.join(os.path.normpath(chroot_root.strip()), SFTP_CHROOT_WORKDIR)
 
-    print(f"[OS] Migrando home de {uname}: {current} → {target}")
-    subprocess.run(["pkill", "-u", uname], stderr=subprocess.DEVNULL)
-    _ensure_home_mount_parent(target)
-    os.makedirs(target, mode=0o700, exist_ok=True)
-    subprocess.run(["usermod", "-d", target, uname], check=True)
-    shutil.chown(target, user=uname, group=uname)
-    _grant_root_home_access(target)
-    return pwd.getpwnam(uname)
+
+def _resolve_sftp_chroot_root(uname: str, home_directory: str | None, user_info) -> str:
+    """Raiz do chroot SFTP (root:root 755). API envia homeDirectory = esta raiz."""
+    if home_directory and home_directory.strip():
+        return os.path.normpath(home_directory.strip())
+    current = (user_info.pw_dir or "").strip()
+    if not current:
+        return os.path.join("/home", uname)
+    work = _sftp_workdir(current)
+    if os.path.normpath(current) == os.path.normpath(work):
+        return os.path.dirname(current)
+    return current
+
+
+def _ensure_sftp_chroot_layout(uname: str, chroot_root: str, user_info) -> str:
+    """
+    Garante chroot root:root 755 e diretório gravável home/ (pw_dir).
+    Dados do usuário permanecem em home/ entre transições shell ↔ SFTP.
+    """
+    chroot_root = os.path.normpath(chroot_root)
+    workdir = _sftp_workdir(chroot_root)
+    _ensure_home_mount_parent(chroot_root)
+    os.makedirs(chroot_root, mode=0o755, exist_ok=True)
+    try:
+        shutil.chown(chroot_root, user="root", group="root")
+    except LookupError:
+        pass
+    os.chmod(chroot_root, 0o755)
+
+    os.makedirs(workdir, mode=0o700, exist_ok=True)
+    shutil.chown(workdir, user=uname, group=uname)
+    os.chmod(workdir, 0o700)
+    _grant_root_home_access(workdir)
+
+    if os.path.normpath(user_info.pw_dir or "") != os.path.normpath(workdir):
+        subprocess.run(["usermod", "-d", workdir, uname], check=True)
+
+    return workdir
+
+
+def _sync_sshd_sftp_chroot(sftp_users: dict[str, str]) -> None:
+    """Match User em fase sftp_only — ChrootDirectory + internal-sftp."""
+    lines = [
+        "# Autogerado por lab-agent — não editar manualmente",
+        "# Usuários lab.* em fase sftp_only (pós-reserva / no_key)",
+        "",
+    ]
+    for uname in sorted(sftp_users):
+        chroot = sftp_users[uname]
+        lines.extend(
+            [
+                f"Match User {uname}",
+                f"    ChrootDirectory {chroot}",
+                "    ForceCommand internal-sftp",
+                "    AllowTcpForwarding no",
+                "    X11Forwarding no",
+                "    PermitTunnel no",
+                "    PermitTTY no",
+                "",
+            ]
+        )
+
+    content = "\n".join(lines) if len(lines) > 4 else "# (nenhum usuário em fase SFTP)\n"
+    try:
+        os.makedirs(os.path.dirname(LAB_SFTP_CHROOT_CONF), exist_ok=True)
+        previous = ""
+        if os.path.isfile(LAB_SFTP_CHROOT_CONF):
+            with open(LAB_SFTP_CHROOT_CONF) as f:
+                previous = f.read()
+        if previous != content:
+            with open(LAB_SFTP_CHROOT_CONF, "w") as f:
+                f.write(content)
+            for svc in ("ssh", "sshd"):
+                reload = subprocess.run(
+                    ["systemctl", "reload", svc],
+                    capture_output=True,
+                    text=True,
+                )
+                if reload.returncode == 0:
+                    print(f"[SFTP] sshd recarregado ({len(sftp_users)} chroot(s) ativos)")
+                    break
+    except OSError as err:
+        print(f"[SFTP] Aviso: não atualizou {LAB_SFTP_CHROOT_CONF}: {err}")
 
 
 def apply_provisioning(provisioning_data: list) -> None:
@@ -841,6 +911,8 @@ def apply_provisioning(provisioning_data: list) -> None:
             _purge_lab_user(uname)
 
     _scan_orphan_lab_dirs()
+
+    sftp_chroot_users: dict[str, str] = {}
 
     for item in provisioning_data:
         uname = item["systemUsername"]
@@ -863,20 +935,37 @@ def apply_provisioning(provisioning_data: list) -> None:
         except KeyError:
             print(f"[OS] Criando conta: {uname}")
             home_dir = (item.get("homeDirectory") or "").strip()
-            if home_dir:
-                _ensure_home_mount_parent(home_dir)
+            chroot_root = home_dir or os.path.join("/home", uname)
+            workdir = _sftp_workdir(chroot_root)
+            _ensure_home_mount_parent(chroot_root)
+            os.makedirs(chroot_root, mode=0o755, exist_ok=True)
+            try:
+                shutil.chown(chroot_root, user="root", group="root")
+            except LookupError:
+                pass
+            os.makedirs(workdir, mode=0o700, exist_ok=True)
             useradd_cmd = [
-                "useradd", "-m", "-s", "/bin/bash", "-K", "UMASK=0077", "-G", "lab",
+                "useradd",
+                "-M",
+                "-s",
+                "/bin/bash",
+                "-K",
+                "UMASK=0077",
+                "-G",
+                "lab",
+                "-d",
+                workdir,
+                uname,
             ]
-            if home_dir:
-                useradd_cmd.extend(["-d", home_dir])
-            useradd_cmd.append(uname)
             subprocess.run(useradd_cmd, check=True)
             user_info = pwd.getpwnam(uname)
+            shutil.chown(workdir, user=uname, group=uname)
 
-        target_home = (item.get("homeDirectory") or "").strip()
-        if item.get("allowHomeMigration") and target_home:
-            user_info = _maybe_migrate_user_home(uname, target_home, user_info)
+        chroot_root = _resolve_sftp_chroot_root(
+            uname, (item.get("homeDirectory") or "").strip() or None, user_info
+        )
+        _ensure_sftp_chroot_layout(uname, chroot_root, user_info)
+        user_info = pwd.getpwnam(uname)
 
         try:
             home = user_info.pw_dir
@@ -925,7 +1014,12 @@ def apply_provisioning(provisioning_data: list) -> None:
                 print(f"[ACCESS] {uname}: full_shell → sftp_only (encerrando processos)")
                 subprocess.run(["pkill", "-u", uname], stderr=subprocess.DEVNULL)
 
-            target_shell = SFTP_SHELL if state == "sftp_only" else "/bin/bash"
+            if state == "sftp_only":
+                sftp_chroot_users[uname] = chroot_root
+                target_shell = SFTP_RESTRICTED_SHELL
+            else:
+                target_shell = "/bin/bash"
+
             if user_info.pw_shell != target_shell:
                 subprocess.run(["usermod", "-s", target_shell, uname], check=True)
                 print(f"[OS] Shell de {uname} alterado para {target_shell}")
@@ -933,6 +1027,9 @@ def apply_provisioning(provisioning_data: list) -> None:
             LAST_ACCESS_STATE[uname] = state
         except Exception as user_err:
             print(f"[OS] Erro ao provisionar {uname}: {user_err}")
+
+    _sync_sshd_sftp_chroot(sftp_chroot_users)
+
 
 def _host_fingerprint() -> str | None:
     """Extrai o Fingerprint SHA256 da chave ed25519 da máquina (para o front validar)."""

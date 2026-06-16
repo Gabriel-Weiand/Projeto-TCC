@@ -222,7 +222,7 @@ export const AllocationService = {
     const end = allocation.endTime
     const phase = resolveAccessPhase(allocation, now)
 
-    if (!['none', 'prepare', 'active', 'grace'].includes(phase)) {
+    if (!['none', 'active', 'grace'].includes(phase)) {
       throw new DomainError(
         'INVALID_PHASE',
         'Não é possível estender nesta fase. Estenda antes do início, durante a sessão ou no grace.',

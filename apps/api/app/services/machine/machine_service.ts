@@ -27,7 +27,7 @@ import {
 } from '#services/machine/provisioned_users'
 import { DomainError } from '#services/shared/domain_error'
 import {
-  buildIdleHistory,
+  buildChartHistory,
   normalizeTelemetryStreamBatch,
   resolveParkTelemetry,
   serializeMachineForApi,
@@ -189,12 +189,12 @@ export const MachineService = {
     const machine = await Machine.findOrFail(machineId)
     const allocations = await Allocation.query().where('machineId', machine.id).select('id')
     const allocationIds = allocations.map((a) => a.id)
-    const idleHistory = buildIdleHistory(machine.id)
+    const chartHistory = buildChartHistory(machine.id)
 
     if (allocationIds.length === 0) {
       return {
         realtime: normalizeRealtimeTelemetry(telemetryBuffer.getLatest(machine.id)),
-        idleHistory,
+        chartHistory,
         history: { data: [], meta: { total: 0, perPage: limit, currentPage: page } },
       }
     }
@@ -207,7 +207,7 @@ export const MachineService = {
 
     return {
       realtime: normalizeRealtimeTelemetry(telemetryBuffer.getLatest(machine.id)),
-      idleHistory,
+      chartHistory,
       history: telemetries,
     }
   },

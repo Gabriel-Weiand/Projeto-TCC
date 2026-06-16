@@ -6,16 +6,14 @@ import {
   toValue,
 } from "vue";
 import { useMachinesStore } from "@/stores/machines";
-import type { AllocationChartPoint, MachineIdleHistoryMeta } from "@/types";
+import type { AllocationChartPoint, MachineChartHistoryMeta } from "@/types";
 
 /** Verifica se há dados novos; alinhado ao heartbeat do agente (~30 s). */
 const CHECK_INTERVAL_MS = 30_000;
 const SPARSE_CHECK_INTERVAL_MS = 5_000;
 const SPARSE_CHART_POINT_THRESHOLD = 4;
 
-function idleHistorySignature(
-  meta: MachineIdleHistoryMeta | null,
-): string {
+function chartHistorySignature(meta: MachineChartHistoryMeta | null): string {
   if (!meta) return "";
   return [
     meta.pointCount,
@@ -25,7 +23,7 @@ function idleHistorySignature(
   ].join("|");
 }
 
-export function useMachineIdleHistory(
+export function useMachineChartHistory(
   machineId: MaybeRefOrGetter<number>,
   options?: {
     enabled?: MaybeRefOrGetter<boolean>;
@@ -34,7 +32,7 @@ export function useMachineIdleHistory(
   },
 ) {
   const chartSeries = ref<AllocationChartPoint[]>([]);
-  const meta = ref<MachineIdleHistoryMeta | null>(null);
+  const meta = ref<MachineChartHistoryMeta | null>(null);
   const loading = ref(false);
   const error = ref("");
 
@@ -64,8 +62,8 @@ export function useMachineIdleHistory(
   async function refresh(options?: { force?: boolean }) {
     if (!isEnabled()) return;
     try {
-      const data = await machinesStore.fetchMachineIdleHistory(toValue(machineId));
-      const signature = idleHistorySignature(data.meta ?? null);
+      const data = await machinesStore.fetchMachineChartHistory(toValue(machineId));
+      const signature = chartHistorySignature(data.meta ?? null);
 
       if (!options?.force && signature === lastSignature && chartSeries.value.length > 0) {
         return;

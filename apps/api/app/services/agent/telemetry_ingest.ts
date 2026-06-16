@@ -3,9 +3,9 @@ import Allocation from '#models/allocation'
 import type Machine from '#models/machine'
 import { updateMachinePresence } from '#services/agent/presence'
 import { telemetryBuffer } from '#services/telemetry/buffer'
-import { idleTelemetryBuffer } from '#services/telemetry/idle_buffer'
+import { chartTelemetryBuffer } from '#services/telemetry/chart_buffer'
 import { resolveMachineIntervalSeconds } from '#services/telemetry/presets'
-import { shouldPersistAllocationSample } from '#services/telemetry/allocation_scalar_source'
+import { shouldPersistAllocationSample } from '#services/telemetry/allocation_chart_source'
 import type { Infer } from '@vinejs/vine/types'
 import type { telemetryReportValidator } from '#validators/telemetry'
 
@@ -58,7 +58,7 @@ export const TelemetryIngestService = {
         telemetryBuffer.updateRealtime(machine.id, item)
       }
 
-      idleTelemetryBuffer.ingest(machine.id, item, intervalSeconds)
+      chartTelemetryBuffer.ingest(machine.id, item, intervalSeconds)
     }
 
     telemetryBuffer.recordBatch(machine.id, batchPayload)

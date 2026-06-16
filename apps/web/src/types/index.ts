@@ -268,7 +268,7 @@ export interface AllocationChartPoint {
   moboTemperature: number | null;
 }
 
-export interface MachineIdleHistoryMeta {
+export interface MachineChartHistoryMeta {
   retentionHours: number;
   recentResolutionMinutes: number;
   olderResolutionMinutes: number;
@@ -281,9 +281,9 @@ export interface MachineIdleHistoryMeta {
   lastChartTimestamp?: string | null;
 }
 
-export interface MachineIdleHistoryResponse {
+export interface MachineChartHistoryResponse {
   chartSeries: AllocationChartPoint[];
-  meta: MachineIdleHistoryMeta;
+  meta: MachineChartHistoryMeta;
 }
 
 export interface AllocationMetric {

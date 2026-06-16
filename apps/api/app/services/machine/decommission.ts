@@ -2,7 +2,7 @@ import Machine from '#models/machine'
 import MachineUser from '#models/machine_user'
 import { cancelAllocationsForMaintenance } from '#services/notification/notification_service'
 import { telemetryBuffer } from '#services/telemetry/buffer'
-import { idleTelemetryBuffer } from '#services/telemetry/idle_buffer'
+import { chartTelemetryBuffer } from '#services/telemetry/chart_buffer'
 import { machineCache } from '#services/machine/cache'
 
 type MachineCustomConfig = Record<string, unknown> & { pendingRemoval?: boolean }
@@ -34,6 +34,6 @@ export async function finalizeMachineDeletion(machine: Machine): Promise<void> {
   machineCache.invalidateById(machine.id)
   machineCache.invalidate(machine.token)
   telemetryBuffer.clearMachine(machine.id)
-  idleTelemetryBuffer.clearMachine(machine.id)
+  chartTelemetryBuffer.clearMachine(machine.id)
   await machine.delete()
 }
