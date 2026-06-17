@@ -48,6 +48,7 @@ const MACHINE_STATUS_LABELS: Record<Machine["status"], string> = {
   occupied: "Ocupada",
   offline: "Inativa",
   maintenance: "Manutenção",
+  disabled: "Desabilitada",
 };
 
 const isAdmin = computed(() => auth.user?.role === "admin");

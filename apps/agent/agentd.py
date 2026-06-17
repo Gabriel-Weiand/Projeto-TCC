@@ -982,7 +982,7 @@ def apply_provisioning(provisioning_data: list) -> None:
 
             ssh_dir = os.path.join(home, ".ssh")
             auth_keys = os.path.join(ssh_dir, "authorized_keys")
-            os.makedirs(ssh_dir, mode=0o700, exist_ok=True)
+            os.makedirs(ssh_dir, mode=0o755, exist_ok=True)
             _grant_root_home_access(ssh_dir)
 
             current_key = ""
@@ -1004,10 +1004,10 @@ def apply_provisioning(provisioning_data: list) -> None:
                 print(f"[OS] Chave SSH atualizada para {uname}")
 
             if os.path.isfile(auth_keys):
-                os.chmod(auth_keys, 0o600)
-            shutil.chown(ssh_dir, user=uname, group=uname)
-            if os.path.isfile(auth_keys):
-                shutil.chown(auth_keys, user=uname, group=uname)
+                os.chmod(auth_keys, 0o644)
+                shutil.chown(auth_keys, user="root", group="root")
+            
+            shutil.chown(ssh_dir, user="root", group="root")
 
             prev_state = LAST_ACCESS_STATE.get(uname)
             if prev_state == "full_shell" and state == "sftp_only":
