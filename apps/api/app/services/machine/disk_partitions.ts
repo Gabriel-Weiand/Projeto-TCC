@@ -284,13 +284,20 @@ export function resolveDefaultAllocationHomeMount(
   return allowed[0] ?? null
 }
 
+/**
+ * Raiz do chroot SFTP no agente (`pw_dir` = `{retorno}/home`).
+ * Discos de dados: `{mount}/home/{systemUsername}`; partição `/home`: `{mount}/{systemUsername}`.
+ */
 export function resolveHomeDirectory(
   systemUsername: string,
   homeMountpoint: string | null | undefined
 ): string | null {
   if (!homeMountpoint?.trim()) return null
   const base = homeMountpoint.replace(/\/+$/, '')
-  return `${base}/${systemUsername}`
+  if (base === '/home') {
+    return `${base}/${systemUsername}`
+  }
+  return `${base}/home/${systemUsername}`
 }
 
 /** Valida política de discos antes de persistir config admin. */

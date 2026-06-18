@@ -714,17 +714,28 @@ def _user_partition_mountpoints() -> list[str]:
 def _collect_user_remnant_paths(uname: str) -> set[str]:
     """
     Caminhos candidatos a resquícios de home/dados do usuário lab.*.
-    Cobre passwd, /home padrão e cada partição user (multi-disco).
+    Cobre passwd, chroot (pai de pw_dir quando termina em /home), /home padrão
+    e cada partição user (multi-disco), inclusive {mount}/home/{uname}.
     """
     paths: set[str] = set()
+    pw_dir = None
     try:
-        paths.add(pwd.getpwnam(uname).pw_dir)
+        pw_dir = pwd.getpwnam(uname).pw_dir
+        if pw_dir:
+            paths.add(pw_dir)
+            norm_pw = os.path.normpath(pw_dir)
+            if os.path.basename(norm_pw) == SFTP_CHROOT_WORKDIR:
+                parent = os.path.dirname(norm_pw)
+                if parent:
+                    paths.add(parent)
     except KeyError:
         pass
     paths.add(os.path.join("/home", uname))
+    paths.add(os.path.join("/home", SFTP_CHROOT_WORKDIR, uname))
     for mount in _user_partition_mountpoints():
         paths.add(os.path.join(mount, uname))
-    return {p for p in paths if p and p not in ("/", "")}
+        paths.add(os.path.join(mount, SFTP_CHROOT_WORKDIR, uname))
+    return {p for p in paths if p and p not in ("/", "/home", "/root")}
 
 
 def _remove_path_tree(path: str) -> None:
@@ -743,17 +754,18 @@ def _remove_path_tree(path: str) -> None:
 def _scan_orphan_lab_dirs() -> None:
     """Remove diretórios lab.* órfãos (sem entrada passwd) em partições de usuário."""
     for mount in _user_partition_mountpoints():
-        try:
-            for name in os.listdir(mount):
-                if not name.startswith("lab."):
-                    continue
-                try:
-                    pwd.getpwnam(name)
-                    continue
-                except KeyError:
-                    _remove_path_tree(os.path.join(mount, name))
-        except OSError:
-            pass
+        for scan_root in (mount, os.path.join(mount, SFTP_CHROOT_WORKDIR)):
+            try:
+                for name in os.listdir(scan_root):
+                    if not name.startswith("lab."):
+                        continue
+                    try:
+                        pwd.getpwnam(name)
+                        continue
+                    except KeyError:
+                        _remove_path_tree(os.path.join(scan_root, name))
+            except OSError:
+                pass
 
 
 def _purge_lab_user(uname: str) -> None:
@@ -820,16 +832,19 @@ def _resolve_sftp_chroot_root(uname: str, home_directory: str | None, user_info)
     current = (user_info.pw_dir or "").strip()
     if not current:
         return os.path.join("/home", uname)
-    work = _sftp_workdir(current)
-    if os.path.normpath(current) == os.path.normpath(work):
-        return os.path.dirname(current)
-    return current
+    norm_current = os.path.normpath(current)
+    if os.path.basename(norm_current) == SFTP_CHROOT_WORKDIR:
+        return os.path.dirname(norm_current) or norm_current
+    return norm_current
 
 
-def _ensure_sftp_chroot_layout(uname: str, chroot_root: str, user_info) -> str:
+def _ensure_sftp_chroot_layout(
+    uname: str, chroot_root: str, user_info, *, relocate_home: bool = False
+) -> str:
     """
     Garante chroot root:root 755 e diretório gravável home/ (pw_dir).
     Dados do usuário permanecem em home/ entre transições shell ↔ SFTP.
+    relocate_home: só na criação da conta — não migra usuários legados.
     """
     chroot_root = os.path.normpath(chroot_root)
     workdir = _sftp_workdir(chroot_root)
@@ -846,7 +861,7 @@ def _ensure_sftp_chroot_layout(uname: str, chroot_root: str, user_info) -> str:
     os.chmod(workdir, 0o700)
     _grant_root_home_access(workdir)
 
-    if os.path.normpath(user_info.pw_dir or "") != os.path.normpath(workdir):
+    if relocate_home and os.path.normpath(user_info.pw_dir or "") != os.path.normpath(workdir):
         subprocess.run(["usermod", "-d", workdir, uname], check=True)
 
     return workdir
@@ -930,9 +945,11 @@ def apply_provisioning(provisioning_data: list) -> None:
         else:
             pubkey_to_write = pubkey
 
+        is_new_account = False
         try:
             user_info = pwd.getpwnam(uname)
         except KeyError:
+            is_new_account = True
             print(f"[OS] Criando conta: {uname}")
             home_dir = (item.get("homeDirectory") or "").strip()
             chroot_root = home_dir or os.path.join("/home", uname)
@@ -964,7 +981,9 @@ def apply_provisioning(provisioning_data: list) -> None:
         chroot_root = _resolve_sftp_chroot_root(
             uname, (item.get("homeDirectory") or "").strip() or None, user_info
         )
-        _ensure_sftp_chroot_layout(uname, chroot_root, user_info)
+        _ensure_sftp_chroot_layout(
+            uname, chroot_root, user_info, relocate_home=is_new_account
+        )
         user_info = pwd.getpwnam(uname)
 
         try:
@@ -982,8 +1001,7 @@ def apply_provisioning(provisioning_data: list) -> None:
 
             ssh_dir = os.path.join(home, ".ssh")
             auth_keys = os.path.join(ssh_dir, "authorized_keys")
-            os.makedirs(ssh_dir, mode=0o755, exist_ok=True)
-            _grant_root_home_access(ssh_dir)
+            os.makedirs(ssh_dir, mode=0o700, exist_ok=True)
 
             current_key = ""
             if os.path.isfile(auth_keys):
@@ -1004,10 +1022,11 @@ def apply_provisioning(provisioning_data: list) -> None:
                 print(f"[OS] Chave SSH atualizada para {uname}")
 
             if os.path.isfile(auth_keys):
-                os.chmod(auth_keys, 0o644)
-                shutil.chown(auth_keys, user="root", group="root")
-            
-            shutil.chown(ssh_dir, user="root", group="root")
+                os.chmod(auth_keys, 0o600)
+                shutil.chown(auth_keys, user=uname, group=uname)
+
+            os.chmod(ssh_dir, 0o700)
+            shutil.chown(ssh_dir, user=uname, group=uname)
 
             prev_state = LAST_ACCESS_STATE.get(uname)
             if prev_state == "full_shell" and state == "sftp_only":

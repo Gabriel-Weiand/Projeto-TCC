@@ -457,6 +457,47 @@ test.group('Agent API', (group) => {
     })
   })
 
+  test('alocação ativa envia homeDirectory em {mount}/home/{user} para discos de dados', async ({
+    client,
+    assert,
+  }) => {
+    const machine = await Machine.create({
+      name: 'PC-DISK',
+      description: 'Lab',
+      token: 't-disk-home',
+      onlyMainDisk: false,
+      disks: [
+        { device: 'sdb1', mountpoint: '/home', role: 'user', mainDisk: true, totalGb: 200 },
+        { device: 'sdc1', mountpoint: '/data', role: 'user', totalGb: 500 },
+      ],
+    })
+    const user = await User.create({
+      fullName: 'Disco Data',
+      email: 'data@teste.com',
+      password: '123',
+      role: 'user',
+      systemUsername: 'lab.disco_data',
+    })
+
+    await Allocation.create({
+      userId: user.id,
+      machineId: machine.id,
+      startTime: DateTime.now().minus({ minutes: 5 }),
+      endTime: DateTime.now().plus({ hours: 1 }),
+      status: 'approved',
+      homeMountpoint: '/data',
+    })
+
+    const response = await client
+      .post('/api/v1/agent/heartbeat')
+      .header('Authorization', `Bearer ${machine.token}`)
+
+    response.assertStatus(200)
+    const prov = response.body().provisioning[0]
+    assert.equal(prov.systemUsername, 'lab.disco_data')
+    assert.equal(prov.homeDirectory, '/data/home/lab.disco_data')
+  })
+
   // =========================================================================
   // 4. HEARTBEAT: AUDITORIA DE SSH
   // =========================================================================

@@ -91,12 +91,14 @@ export default class HeartbeatService {
 
     const dbMachineUsers = await MachineUser.query().where('machineId', machine.id).preload('user')
     const osUsers = payload.provisionedOsUsers || []
+    const driftRemovedUserIds = new Set<number>()
 
     for (const dbUser of dbMachineUsers) {
       if (!osUsers.includes(dbUser.osUsername)) {
         const needed = phasesByUserId.has(dbUser.userId)
         if (!needed) {
           await dbUser.delete()
+          driftRemovedUserIds.add(dbUser.userId)
           logger.info(
             `[Drift] Usuário ${dbUser.osUsername} removido do inventário da máquina ${machine.id}`
           )
@@ -116,6 +118,8 @@ export default class HeartbeatService {
 
     // access_type fixo: ignora fases de alocação para este usuário
     for (const dbUser of dbMachineUsers) {
+      if (driftRemovedUserIds.has(dbUser.userId)) continue
+
       const accessType = (dbUser.accessType as AccessType) ?? 'auto'
       if (accessType === 'auto') continue
 

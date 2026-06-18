@@ -13,6 +13,7 @@ import {
   diskUsagePercent,
   normalizeAllocationHomeMount,
   resolveDefaultAllocationHomeMount,
+  resolveHomeDirectory,
   resolveMainDiskMountpoint,
 } from '#services/machine/disk_partitions'
 import { canChangeAllocationHomeMount } from '#services/allocation/home_mount'
@@ -257,6 +258,14 @@ test.group('Disk partitions', () => {
     ])
     const result = normalizeAllocationHomeMount(disks, false, '/data')
     assert.isNotNull(result.error)
+  })
+
+  test('resolveHomeDirectory coloca usuário em {mount}/home/{user} exceto partição /home', async ({
+    assert,
+  }) => {
+    assert.equal(resolveHomeDirectory('lab.aluno', '/data'), '/data/home/lab.aluno')
+    assert.equal(resolveHomeDirectory('lab.aluno', '/home'), '/home/lab.aluno')
+    assert.isNull(resolveHomeDirectory('lab.aluno', null))
   })
 })
 
