@@ -118,7 +118,8 @@ async function runPrune() {
         <p class="action-text">
           Executa agora a rotina de manutenção (tokens expirados, resumos TWA e limpeza
           automática de alocações, notificações e tentativas SSH conforme os padrões do
-          sistema).
+          sistema). A rotina também é executada conforme a frequência configurada na função chron
+          em .env na inicialização da API!
         </p>
         <button
           type="button"

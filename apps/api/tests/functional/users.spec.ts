@@ -133,7 +133,7 @@ test.group('Users', (group) => {
     assert.equal(verified.email, 'old@teste.com')
   })
 
-  test('admin NÃO pode alterar nome ou email via PUT /users/:id', async ({ client, assert }) => {
+  test('admin deve alterar nome e email via PUT /users/:id', async ({ client, assert }) => {
     const admin = await User.create({
       fullName: 'Admin',
       email: 'admin@teste.com',
@@ -146,6 +146,7 @@ test.group('Users', (group) => {
       password: 'senha123',
       role: 'user',
     })
+    const originalSystemUsername = user.systemUsername
 
     const response = await client.put(`/api/v1/users/${user.id}`).loginAs(admin).json({
       fullName: 'Nome Alterado',
@@ -154,8 +155,10 @@ test.group('Users', (group) => {
 
     response.assertStatus(200)
     await user.refresh()
-    assert.equal(user.fullName, 'Nome Original')
-    assert.equal(user.email, 'original@teste.com')
+    assert.equal(user.fullName, 'Nome Alterado')
+    assert.equal(user.email, 'alterado@teste.com')
+    // system_username permanece estável (vinculado às contas Linux)
+    assert.equal(user.systemUsername, originalSystemUsername)
   })
 
   test('admin deve excluir um usuário', async ({ client, assert }) => {

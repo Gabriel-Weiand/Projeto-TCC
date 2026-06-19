@@ -53,6 +53,15 @@ const MACHINE_STATUS_LABELS: Record<Machine["status"], string> = {
 
 const isAdmin = computed(() => auth.user?.role === "admin");
 
+const requiresAdminApproval = computed(
+  () => lab.config.allocation.requireAdminApproval === true,
+);
+
+// Usuário comum com aprovação obrigatória apenas solicita a reserva (nasce pendente).
+const isRequestMode = computed(
+  () => !isAdmin.value && requiresAdminApproval.value,
+);
+
 const panelAlignStyle = computed(() => {
   if (!showForm.value || panelAlign.value.height <= 0) return undefined;
   return {
@@ -302,7 +311,7 @@ async function handleCreate() {
     <div class="page-header">
       <h1 class="page-title">Reservas</h1>
       <button v-if="!showForm" class="btn btn-primary" @click="openForm()">
-        + Nova Reserva
+        {{ isRequestMode ? "+ Solicitar Reserva" : "+ Nova Reserva" }}
       </button>
     </div>
 
@@ -325,7 +334,9 @@ async function handleCreate() {
       >
         <div class="panel-card">
           <div class="panel-header">
-            <h2 class="panel-title">Nova Reserva</h2>
+            <h2 class="panel-title">
+              {{ isRequestMode ? "Solicitar Reserva" : "Nova Reserva" }}
+            </h2>
             <button type="button" class="btn-close" @click="showForm = false">
               ✕
             </button>
@@ -364,7 +375,12 @@ async function handleCreate() {
                 class="btn btn-primary"
                 :disabled="!canCreateReservation"
               >
-                {{ formSaving ? "Criando..." : "Criar Reserva" }}
+                <template v-if="isRequestMode">
+                  {{ formSaving ? "Solicitando..." : "Solicitar Reserva" }}
+                </template>
+                <template v-else>
+                  {{ formSaving ? "Criando..." : "Criar Reserva" }}
+                </template>
               </button>
             </div>
           </form>

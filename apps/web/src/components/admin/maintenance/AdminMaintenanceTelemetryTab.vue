@@ -139,7 +139,7 @@ async function handleSave() {
 <template>
   <div class="maintenance-tab">
     <p class="tab-lead text-secondary">
-      Perfis globais <strong>fast</strong> e <strong>eco</strong> para todo o parque.
+      Perfis globais <strong>fast</strong> e <strong>eco</strong> para todas as máquinas do laboratório.
       Máquinas em modo <em>custom</em> ignoram estes defaults.
     </p>
 

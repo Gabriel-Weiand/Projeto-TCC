@@ -44,7 +44,10 @@ export const useMachinesStore = defineStore("machines", () => {
     return data;
   }
 
-  async function deleteMachine(id: number) {
+  async function deleteMachine(
+    id: number,
+    onPhase?: (phase: "decommissioning") => void,
+  ) {
     const maxAttempts = 10;
     const waitMs = 35_000;
 
@@ -81,6 +84,7 @@ export const useMachinesStore = defineStore("machines", () => {
             "Descomissionamento ainda em andamento. Aguarde o agente sincronizar e tente excluir novamente.",
           );
         }
+        onPhase?.("decommissioning");
         await sleep(waitMs);
         continue;
       }

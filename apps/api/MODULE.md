@@ -59,7 +59,7 @@ node ace test
 - `machine_groups` para agrupar o parque (ex.: CUDA vídeo, render).
 - `machines` com `agent_token`, specs (`total_ram_gb`, `total_vram_gb`, **`total_disk_gb`** em wire GB×10), `disks` JSONB, `telemetry_preset`, `custom_agent_config`, `host_fingerprint`, `ip_address` (local), `public_ip_address` (alternativo, só admin).
 - `machine_users` — vínculo usuário ↔ máquina provisionada no SO.
-- `allocations` com janela de uso (no seed dev, reservas típicas de **2–4 semanas**).
+- `allocations` com janela de uso (no seed, reservas ativas de **3 dias a 2 semanas**, uma por máquina exceto GaciS1).
 - `telemetries` — snapshots de **processos** durante alocações (wire ×10; removidos após resumo). Escalares TWA vêm do `chartTelemetryBuffer`.
 - `allocation_metrics` — TWA, picos por sessão e `chart_series` (série resumida para gráfico).
 - `ssh_connection_attempts` — auditoria de login SSH.

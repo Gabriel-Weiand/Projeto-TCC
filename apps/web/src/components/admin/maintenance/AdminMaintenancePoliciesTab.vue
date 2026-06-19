@@ -72,8 +72,7 @@ async function handleSave() {
         (<code>LAB_ALLOCATION_REQUIRE_ADMIN_APPROVAL</code> e
         <code>LAB_ALLOCATION_PUBLIC_NAMES</code>).
         <strong>Ativado</strong> ou <strong>Desativado</strong> fixam o valor até voltar para
-        Auto — isso grava em <code>runtime_settings.json</code> e sobrescreve o
-        <code>.env</code> enquanto durar.
+        Auto.
       </p>
 
       <div class="card policy-card">

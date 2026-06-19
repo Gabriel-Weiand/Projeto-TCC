@@ -47,30 +47,33 @@ const baseConfig = {
   },
 }
 
-/** Parque mock com status, heartbeats e IPs fictícios — perfil dev. */
-export async function seedDevMachines() {
+/** Máquinas que existem apenas no perfil dev (host pessoal de desenvolvimento). */
+const DEV_ONLY_MACHINES = new Set(['Notebook-server'])
+
+export type SeedMachinesOptions = {
+  /** Inclui o Notebook-server (única diferença entre os perfis dev e lab). */
+  includeNotebookServer: boolean
+}
+
+/**
+ * Parque completo com status, heartbeats, IPs e fingerprints fictícios.
+ * Usado nos perfis dev e lab — a única diferença é o Notebook-server (dev-only).
+ */
+export async function seedParkMachines(options: SeedMachinesOptions) {
   const { groupGpu, groupCpu } = await createDefaultMachineGroups()
 
-  const statusByAlias: Record<string, 'available' | 'occupied' | 'maintenance' | 'offline'> = {
-    Euler: 'occupied',
-    Arendt: 'occupied',
-    Chomsky: 'maintenance',
-    GaciG8: 'offline',
-  }
+  const park = MOCK_LAB_MACHINES.filter(
+    (machine) => options.includeNotebookServer || !DEV_ONLY_MACHINES.has(machine.name)
+  )
 
+  // Presets "como antes": GPU → fast, CPU → eco, com overrides pontuais.
   const presetByAlias: Record<string, 'fast' | 'eco' | 'custom'> = {
     Euler: 'fast',
-    Arendt: 'fast',
-    Dijkstra: 'fast',
-    GaciG6: 'eco',
-    GaciG9: 'eco',
   }
-
-  const withoutHeartbeat = new Set(['GaciG8', 'Chomsky', 'Notebook-server'])
 
   console.log('\n--- Tokens das máquinas (MACHINE_TOKEN no agente) ---')
 
-  for (const machine of MOCK_LAB_MACHINES) {
+  for (const machine of park) {
     const hasGpu = machine.hasGpu
     const agentConfig = hasGpu
       ? baseConfig
@@ -81,9 +84,8 @@ export async function seedDevMachines() {
           telemetrySet: { ...baseConfig.telemetrySet, gpu: false },
         }
 
-    const lastSeenAt = withoutHeartbeat.has(machine.name)
-      ? null
-      : DateTime.utc().minus({ hours: statusByAlias[machine.name] === 'occupied' ? 1 : 4 })
+    // Heartbeat recente → todo o parque entra online (GaciS1 também, porém livre).
+    const lastSeenAt = DateTime.utc().minus({ minutes: 10 })
 
     const created = await Machine.create({
       name: machine.name,
@@ -98,7 +100,7 @@ export async function seedDevMachines() {
       ipAddress: machine.anyDeskOnly ? null : mockSshHost(machine.name),
       sshPort: machine.anyDeskOnly ? null : 50000,
       hostFingerprint: hostFingerprint(machine.name),
-      status: statusByAlias[machine.name] ?? 'available',
+      status: 'available',
       telemetryPreset: presetByAlias[machine.name] ?? (hasGpu ? 'fast' : 'eco'),
       customAgentConfig: agentConfig,
       onlyMainDisk: !hasGpu && machine.name.startsWith('Gaci'),

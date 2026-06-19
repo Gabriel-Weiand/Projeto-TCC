@@ -12,7 +12,8 @@ export default class SeedFresh extends BaseCommand {
   }
 
   @args.string({
-    description: 'Perfil: dev (fictício completo) | minimal (só admin) | lab (parque real)',
+    description:
+      'Perfil: dev (parque completo + Notebook-server) | lab (igual ao dev, sem Notebook-server) | minimal (só admin)',
     default: 'dev',
   })
   declare profile: string
