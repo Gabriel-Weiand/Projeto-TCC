@@ -38,7 +38,7 @@ const route = useRoute();
 const router = useRouter();
 
 const showForm = ref(false);
-const panelAlign = ref({ top: 0, height: 0 });
+const panelAlign = ref({ top: 0, height: 0, fullHeight: 0 });
 
 const ganttAllocations = ref<Allocation[]>([]);
 const ganttLoading = ref(false);
@@ -63,10 +63,12 @@ const isRequestMode = computed(
 );
 
 const panelAlignStyle = computed(() => {
-  if (!showForm.value || panelAlign.value.height <= 0) return undefined;
+  if (!showForm.value || panelAlign.value.fullHeight <= 0) return undefined;
+  // Atrela ao calendário apenas no seu tamanho máximo (PAGE_SIZE máquinas);
+  // com menos máquinas o painel mantém o tamanho completo.
   return {
     marginTop: `${panelAlign.value.top}px`,
-    height: `${panelAlign.value.height}px`,
+    height: `${panelAlign.value.fullHeight}px`,
   };
 });
 
