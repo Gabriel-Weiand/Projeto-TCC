@@ -4,8 +4,8 @@ Documentação de referência do daemon `agentd.py` — comunicação com a API 
 
 **Código-fonte:** `apps/agent/agentd.py`  
 **Rotas consumidas:** `apps/api/start/routes.ts` → prefixo `/api/v1/agent`  
-**Lógica de resposta (heartbeat):** `apps/api/app/services/heartbeat_service.ts`  
-**Multi-disco / home na reserva:** `apps/api/app/services/disk_partitions.ts`, `allocation_home_mount.ts`
+**Lógica de resposta (heartbeat):** `apps/api/app/services/agent/heartbeat_service.ts`  
+**Multi-disco / home na reserva:** `apps/api/app/services/machine/disk_partitions.ts`, `apps/api/app/services/allocation/home_mount.ts`
 
 ---
 
@@ -383,7 +383,7 @@ Cada campo de spec só é gravado se estiver **vazio** no banco (`null`, string 
 | `fstype` | `ext4`, `xfs`, `btrfs`, … (filtro: filesystems “reais”) |
 | `totalGb` | Capacidade (1 decimal) |
 | `freeGb` | Espaço livre (1 decimal) |
-| `role` | `system` \| `user` — classificação local espelhada em `#services/disk_partitions.ts` |
+| `role` | `system` \| `user` — classificação local espelhada em `#services/machine/disk_partitions.ts` |
 
 **API:** `mergeDiskPartitionsFromAgent` preserva flags admin (`mainDisk`, `allocatable`) ao atualizar `totalGb`/`freeGb`. Capacidade ao vivo também é refrescada por `disksInfo` na telemetria (`mergeDiskPartitionsFromTelemetry`).
 
@@ -1010,12 +1010,12 @@ telemetry      ← collect_telemetry() = todas as entradas §20.1
 | `apps/agent/agentd.py` | Implementação |
 | `apps/agent/.env.example` | Variáveis e exemplo systemd |
 | `apps/api/app/controllers/agent_controller.ts` | Entrada HTTP agente |
-| `apps/api/app/services/heartbeat_service.ts` | provisioning, decommission |
-| `apps/api/app/services/machine_decommission.ts` | Exclusão admin 2 fases |
-| `apps/api/app/services/machine_specs_merge.ts` | Fill-empty no sync-specs |
-| `apps/api/app/services/disk_partitions.ts` | Roles, mainDisk, homeDirectory, merge telemetria |
+| `apps/api/app/services/agent/heartbeat_service.ts` | provisioning, decommission |
+| `apps/api/app/services/machine/decommission.ts` | Exclusão admin 2 fases |
+| `apps/api/app/services/machine/specs_merge.ts` | Fill-empty no sync-specs |
+| `apps/api/app/services/machine/disk_partitions.ts` | Roles, mainDisk, homeDirectory, merge telemetria |
 | `apps/api/app/services/allocation/access.ts` | Fases active→teardown |
-| `apps/api/app/services/telemetry_presets.ts` | Presets eco/fast/custom |
+| `apps/api/app/services/telemetry/presets.ts` | Presets eco/fast/custom |
 | `apps/api/tests/functional/agent.spec.ts` | Testes contrato agente |
 | `apps/web/src/stores/machines.ts` | DELETE com retry 35 s |
 

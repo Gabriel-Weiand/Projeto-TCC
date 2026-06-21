@@ -6,12 +6,12 @@ A API centraliza regras de negócio, autenticação e persistência. Ela orquest
 
 ## Como rodar
 
-### Pre-requisitos
+### Pré-requisitos
 
 - Node.js **22.x** (`engines` em `package.json`)
 - npm
 
-### Instalacao
+### Instalação
 
 ```bash
 # Dentro do monorepo
@@ -57,7 +57,7 @@ node ace test
 
 - `users` com `system_username` e `ssh_public_key` (ed25519).
 - `machine_groups` para agrupar o parque (ex.: CUDA vídeo, render).
-- `machines` com `agent_token`, specs (`total_ram_gb`, `total_vram_gb`, **`total_disk_gb`** em wire GB×10), `disks` JSONB, `telemetry_preset`, `custom_agent_config`, `host_fingerprint`, `ip_address` (local), `public_ip_address` (alternativo, só admin).
+- `machines` com `token` (bearer do agente, 128 hex), specs (`total_ram_gb`, `total_vram_gb`, **`total_disk_gb`** em wire GB×10), `disks` JSON, `telemetry_preset`, `custom_agent_config`, `host_fingerprint`, `ip_address` (local), `ssh_port`, `public_ip_address` (alternativo, só admin), `only_main_disk`.
 - `machine_users` — vínculo usuário ↔ máquina provisionada no SO.
 - `allocations` com janela de uso (no seed dev, reservas típicas de **2–4 semanas**).
 - `telemetries` — snapshots de **processos** durante alocações (wire ×10; removidos após resumo). Escalares TWA vêm do `chartTelemetryBuffer`.
@@ -316,66 +316,97 @@ Limpeza em massa (admin): `DELETE /api/v1/system/prune/notifications` ou rotina 
 ### Diagrama de Entidade-Relacionamento
 
 ```
-┌──────────────────┐       ┌──────────────────┐       ┌──────────────────┐
-│      USERS       │       │   ACCESS_TOKENS  │       │    MACHINES      │
-├──────────────────┤       ├──────────────────┤       ├──────────────────┤
-│ id (PK)          │──────<│ tokenable_id(FK) │       │ id (PK)          │
-│ full_name        │       │ type             │       │ name             │
-│ email (UNIQUE)   │       │ name             │       │ agent_token      │
-│ password (HASH)  │       │ hash             │       │ cpu_model        │
-│ role (enum)      │       │ abilities        │       │ ram_gb           │
-│ created_at       │       │ created_at       │       │ disk_gb          │
-│ updated_at       │       │ updated_at       │       │ os               │
-└──────────────────┘       │ last_used_at     │       │ status (enum)    │
-				 │                 │ expires_at       │       │ last_heartbeat   │
-				 │                 └──────────────────┘       │ created_at       │
-				 │                                            │ updated_at       │
-				 │                                            └──────────────────┘
-				 │                                                     │
-				 │                 ┌──────────────────┐                │
-				 │                 │   ALLOCATIONS    │                │
-				 │                 ├──────────────────┤                │
-				 └────────────────>│ user_id (FK)     │<───────────────┘
-													 │ machine_id (FK)  │
-													 │ starts_at        │
-													 │ ends_at          │
-													 │ actual_login     │
-													 │ actual_logout    │
-													 │ created_at       │
-													 │ updated_at       │
-													 └────────┬─────────┘
-																		│
-				 ┌──────────────────────────┴──────────────────────────┐
-				 │                                                      │
-				 ▼                                                      ▼
-┌──────────────────┐                               ┌──────────────────────┐
-│   TELEMETRIES    │                               │  ALLOCATION_METRICS  │
-├──────────────────┤                               ├──────────────────────┤
-│ id (PK)          │                               │ id (PK)              │
-│ machine_id (FK)  │                               │ allocation_id (FK)   │
-│ cpu_percent      │                               │ avg_cpu_percent      │
-│ ram_percent      │                               │ avg_ram_percent      │
-│ disk_percent     │                               │ avg_disk_percent     │
-│ created_at       │                               │ peak_cpu_percent     │
-│                  │                               │ peak_ram_percent     │
-└──────────────────┘                               │ samples_count        │
-																									 │ created_at           │
-																									 │ updated_at           │
-																									 └──────────────────────┘
+USERS (1)───<(N) ALLOCATIONS (N)>───(1) MACHINES (N)>───(1) MACHINE_GROUPS
+  │                    │                        │
+  │ (1)                │ (1)                    │ (1)
+  └──<(N) ACCESS_TOKENS │                        └──<(N) SSH_CONNECTION_ATTEMPTS
+  └──<(N) NOTIFICATIONS │
+  └──<(N) MACHINE_USERS (N)>──(1) MACHINES        ALLOCATIONS (1)──<(N) TELEMETRIES
+                                                  ALLOCATIONS (1)──(1) ALLOCATION_METRICS
+
+┌──────────────────────┐   ┌──────────────────────────┐   ┌──────────────────────────┐
+│        USERS         │   │        MACHINES          │   │      MACHINE_GROUPS      │
+├──────────────────────┤   ├──────────────────────────┤   ├──────────────────────────┤
+│ id (PK)              │   │ id (PK)                  │   │ id (PK)                  │
+│ full_name / email(UQ)│   │ machine_group_id (FK)    │   │ title                    │
+│ system_username (UQ) │   │ name / description       │   │ description              │
+│ password (scrypt)    │   │ system_username          │   │ created_at / updated_at  │
+│ role (enum)          │   │ token (128 hex / 512 bit)│   └──────────────────────────┘
+│ ssh_public_key       │   │ host_fingerprint         │
+│ created_at/updated_at│   │ cpu_model / gpu_model    │
+└──────────────────────┘   │ total_ram_gb  (wire ×10) │
+                           │ total_vram_gb (wire ×10) │
+┌──────────────────────┐   │ total_disk_gb (wire ×10) │
+│    ACCESS_TOKENS     │   │ disks (JSON)             │
+├──────────────────────┤   │ ip_address / ssh_port    │
+│ id (PK)              │   │ public_ip_address        │
+│ tokenable_id (FK)    │   │ status (enum)            │
+│ type / name          │   │ telemetry_preset (enum)  │
+│ hash / abilities     │   │ custom_agent_config(JSON)│
+│ last_used_at         │   │ current_sessions (JSON)  │
+│ expires_at           │   │ only_main_disk           │
+└──────────────────────┘   │ last_seen_at             │
+                           │ token_rotated_at         │
+┌──────────────────────┐   │ created_at / updated_at  │
+│    MACHINE_USERS     │   └──────────────────────────┘
+├──────────────────────┤
+│ id (PK)              │   ┌──────────────────────────┐
+│ user_id (FK)         │   │       ALLOCATIONS        │
+│ machine_id (FK)      │   ├──────────────────────────┤
+│ access_type (enum)   │   │ id (PK)                  │
+│ last_active_at       │   │ user_id (FK, SET NULL)   │
+│ created_at/updated_at│   │ machine_id (FK, CASCADE) │
+└──────────────────────┘   │ start_time / end_time    │
+                           │ reason                   │
+┌──────────────────────┐   │ status (enum)            │
+│     NOTIFICATIONS    │   │ user_hidden              │
+├──────────────────────┤   │ home_mountpoint          │
+│ id (PK)              │   │ created_at / updated_at  │
+│ user_id (FK)         │   └────────────┬─────────────┘
+│ title / message      │                │
+│ is_read / read_at    │      ┌─────────┴──────────┐
+│ created_at           │      ▼                    ▼
+└──────────────────────┘  ┌──────────────────┐  ┌──────────────────────┐
+                          │   TELEMETRIES    │  │  ALLOCATION_METRICS  │
+┌──────────────────────┐  ├──────────────────┤  ├──────────────────────┤
+│SSH_CONNECTION_ATTEMPTS│ │ id (PK)          │  │ id (PK)              │
+├──────────────────────┤  │ allocation_id(FK)│  │ allocation_id (FK,UQ)│
+│ id (PK)              │  │ timestamp        │  │ avg/max_cpu_usage     │
+│ machine_id (FK)      │  │ cpu_usage        │  │ avg/max_cpu_temp      │
+│ source_ip            │  │ cpu_temp/freq    │  │ avg/max_gpu_usage     │
+│ target_username      │  │ gpu_usage/temp   │  │ avg/max_gpu_temp      │
+│ status (enum)        │  │ gpu_power_watts  │  │ avg/max_gpu_power     │
+│ auth_method         │  │ vram_*_gb        │  │ avg/max_vram_*_gb     │
+│ client_fingerprint   │  │ ram_*_gb         │  │ avg/max_ram_used_gb   │
+│ created_at           │  │ swap_*_gb        │  │ avg/max_swap_used_gb  │
+└──────────────────────┘  │ disks_info (JSON)│  │ avg/max_disk_*_mbps   │
+                          │ disk_*_mbps      │  │ avg/max_*_mbps (rede) │
+  Convenção wire ×10:     │ download/upload  │  │ avg/max_mobo_temp     │
+  inteiros = valor real   │ mobo_temperature │  │ session_duration_min  │
+  ×10 (155 = 15,5).       │ active_users(JSON)│ │ chart_bucket_minutes  │
+  TELEMETRIES guarda só   │ processes (JSON) │  │ chart_series (JSON)   │
+  amostras COM processos  └──────────────────┘  │ process_summary (JSON)│
+  durante a alocação.                           │ created_at           │
+                                                └──────────────────────┘
 ```
 
 ---
 
 ## Tecnologias Utilizadas
 
-| Tecnologia     | Versão | Propósito                            |
-| -------------- | ------ | ------------------------------------ |
-| **Node.js**    | 22.x   | Runtime JavaScript                   |
-| **AdonisJS**   | 6.x    | Framework web full-stack             |
-| **TypeScript** | 5.x    | Tipagem estática                     |
-| **Lucid ORM**  | -      | Mapeamento objeto-relacional         |
-| **VineJS**     | -      | Validação de dados                   |
-| **SQLite**     | 3.x    | Banco de dados (WAL Mode habilitado) |
+| Tecnologia          | Versão     | Propósito                                  |
+| ------------------- | ---------- | ------------------------------------------ |
+| **Node.js**         | 22.x       | Runtime JavaScript (`engines` + `.nvmrc`)  |
+| **AdonisJS**        | 6.18+      | Framework web full-stack (`@adonisjs/core`)|
+| **TypeScript**      | 5.8        | Tipagem estática                           |
+| **Lucid ORM**       | 21.x       | Mapeamento objeto-relacional               |
+| **VineJS**          | 3.x        | Validação de dados                         |
+| **better-sqlite3**  | 12.x       | Driver SQLite (WAL Mode habilitado)        |
+| **Luxon**           | 3.x        | Datas/fuso (UTC ↔ relógio do lab)          |
+| **node-cron**       | 4.x        | Agendador (lembretes, retenção, resumo)    |
+| **Japa**            | 4.x        | Testes funcionais (`node ace test`)        |
+
+Demais dependências (`@adonisjs/auth`, `@adonisjs/bouncer`, `@adonisjs/cors`): ver `apps/api/package.json`.
 
 ---
 
@@ -470,10 +501,10 @@ As senhas dos usuários **nunca são armazenadas em texto plano** no banco de da
 │  • Cache de 5 minutos para reduzir consultas ao banco       │
 │  • Usado apenas nas rotas /api/v1/agent/*                   │
 │                                                             │
-│  Geração do Agent Key:                                      │
+│  Geração do Agent Key (Machine.assignToken):                │
 │  ┌────────────────────────────────────────────────────────┐ │
-│  │ const apiKey = string.generateRandom(64) // 512 bits   │ │
-│  │ // Exemplo: "d08248929bf8bcae92a2e204219c7941..."      │ │
+│  │ randomBytes(64).toString('hex') // 64 bytes = 512 bits  │ │
+│  │ // 128 chars hex; ex.: "d08248929bf8bcae92a2e20421..."  │ │
 │  └────────────────────────────────────────────────────────┘ │
 │                                                             │
 │  Rotação de Token:                                          │
@@ -948,7 +979,7 @@ Cadastrar máquina e gerar Agent Key para o agente.
 | `gpuModel`    | string | ❌          | Modelo da GPU                                     |
 | `totalRamGb`  | number | ❌          | RAM total em GB                                   |
 | `ipAddress`   | string | ❌          | Endereço IP                                       |
-| `status`      | enum   | ❌          | `available`, `occupied`, `maintenance`, `offline` |
+| `status`      | enum   | ❌          | Modo operacional do admin: `available`, `offline`, `maintenance` |
 
 **Response (201):**
 
@@ -1009,6 +1040,8 @@ Inventário de máquinas com status em tempo real.
 ```
 
 > `latestTelemetry`: `telemetryBuffer.getLatest()`; se ausente, fallback `chartTelemetryBuffer.getLatestEntry()`.
+
+> **Status × modo operacional:** o admin define apenas `operationalMode` (`available` = auto, `offline` = desativada, `maintenance`) — persistido na coluna `status`. A resposta serializa `operationalMode` **e** um `status` **efetivo** computado por `resolveEffectiveMachineStatus` (`available` · `occupied` · `maintenance` · `offline` · **`disabled`**): modo `offline` → `disabled`; heartbeat parado &gt; 24 h → `offline`; alocação ativa/grace → `occupied`. Reservas são bloqueadas quando o efetivo é `maintenance`/`offline`/`disabled`.
 
 ---
 

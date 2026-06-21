@@ -51,7 +51,7 @@ Testes utilitários: `node src/utils/datetime.spec.mjs`, `ssh.spec.mjs`, `notifi
 | `/admin/maintenance` | `AdminMaintenanceView` | Admin | Abas: telemetria, políticas, retenção, grupos |
 | `/admin/lab-telemetry` | redirect → `?tab=telemetria` | Admin | Compatibilidade de bookmark (view antiga removida) |
 
-Layout: `AppLayout.vue` (navbar, notificações, links admin).
+Layout: `src/layouts/AppLayout.vue` (navbar, notificações, links admin).
 
 ---
 
@@ -112,17 +112,34 @@ Fontes: barras e partições via `useTelemetryPlayback` → `GET …/telemetry/s
 
 ---
 
-Abas via `AdminMachine*Tab`:
+Abas em `AdminMachineEditView` (sincronizadas com a query `?tab=`): **Informações**, **Discos**, **Telemetria**, **Usuários**, **SSH**.
 
-| Aba | Editável | Somente leitura / agente |
-|-----|----------|---------------------------|
-| **Hardware** | CPU, GPU, RAM, VRAM, **disco total**, IP local, IP alternativo | Valores vazios serão preenchidos no próximo `sync-specs` |
-| **Discos** | `mainDisk`, `allocatable`, `onlyMainDisk` | `totalGb`, `freeGb`, `%` — atualizados por sync/telemetria |
-| **Telemetria** | Preset custom (intervalo, batch, toggles, processos) | Presets fast/eco globais em manutenção |
-| **Usuários provisionados** | Override `shell` / `sftp` / `auto` | Inventário reconciliado no heartbeat |
-| **SSH** | Porta, IP alternativo para conexão | Tentativas de login (auditoria) |
+| Aba | Componente | Editável | Somente leitura / agente |
+|-----|-----------|----------|---------------------------|
+| **Informações** | inline na view | Nome, descrição, CPU, GPU, RAM, VRAM, **disco total**, IP local, IP alternativo, grupo, **modo operacional** | Campos de spec vazios serão preenchidos no próximo `sync-specs` |
+| **Discos** | `AdminMachineDisksTab` | `mainDisk`, `allocatable`, `onlyMainDisk` | `totalGb`, `freeGb`, `%` — atualizados por sync/telemetria |
+| **Telemetria** | `MachineTelemetryPanel` (+ `TelemetryMetricGrid`, `ProcessCaptureOptions`) | Preset custom (intervalo, batch, toggles, processos) | Presets fast/eco globais em manutenção |
+| **Usuários** | `AdminMachineUsersTab` | Override `shell` / `sftp` / `auto` | Inventário reconciliado no heartbeat |
+| **SSH** | `AdminMachineSshTab` | Porta, IP alternativo para conexão | Tentativas de login (auditoria) |
 
 **Regra de specs:** admin preenche → agente **não sobrescreve** no boot. Admin **limpa** campo → agente repreenche no próximo sync.
+
+### Status efetivo × modo operacional
+
+A API serializa **dois campos** distintos para cada máquina (`#services/machine/api_format.ts` → `resolveEffectiveMachineStatus`):
+
+| Campo | Valores | Origem |
+|-------|---------|--------|
+| `operationalMode` | `available` (auto) · `offline` (desativada) · `maintenance` | Escolha do admin (coluna `status` persistida), editável na aba **Informações** |
+| `status` | `available` · `occupied` · `maintenance` · `offline` · `disabled` | **Efetivo**, computado no servidor |
+
+Mapeamento do `status` efetivo:
+
+- modo `maintenance` → `maintenance`
+- modo `offline` (admin desativou) → **`disabled`** (rótulo *Desabilitada*)
+- senão: heartbeat parado &gt; 24 h → `offline`; alocação ativa/grace → `occupied`; caso contrário → `available`
+
+`offline` = agente sem heartbeat; `disabled` = desativação manual do admin. Reservas são bloqueadas quando o efetivo é `maintenance`, `offline` ou `disabled` (`utils/allocationAvailability.ts` no front; validado também na API).
 
 ### Extras no detalhe — só admin
 
@@ -224,13 +241,52 @@ Métricas ausentes na amostra (`null`) → UI mostra `—`, não zero.
 
 | Área | Componentes |
 |------|-------------|
-| Reservas | `CalendarGanttScroll`, `ReservationFormFields`, `ReservationMachinePicker`, `ExtendAllocationOverlay` |
-| Máquinas | `MachineLiveSections`, `MachineLiveProcessSection`, `MachineTelemetryPanel`, `AdminMachine*Tab` |
-| Relatórios | `AllocationUsageStatsModal`, `AllocationSummaryChart` |
-| SSH | `ProfileAllocationConnectModal` |
+| Reservas | `CalendarGanttScroll`, `ReservationFormFields`, `ReservationMachinePicker`, `ExtendAllocationOverlay`, `SearchableUserPicker` (admin reserva em nome de outro) |
+| Listas de alocação | `ProfileMyAllocationsTab`, `MyAllocationDetailPanel`, `AllocationListToolbar` (busca + filtros por sub-estado) |
+| Parque | `MachineParkCard`, `MachineParkInfoModal` |
+| Detalhe da máquina | `MachineLiveSections` → `MachineChartHistoryChart` + `MachineLiveProcessSection`; `MachineTelemetryPanel`, `CollapsibleSection` |
+| Telemetria (UI) | `TelemetryMetricGrid`, `ProcessCaptureOptions`, `process/ProcessTelemetryTable`, `NumberStepper` |
+| Relatórios | `AllocationUsageStatsModal`, `allocation/AllocationSummaryChart` |
+| SSH / perfil | `ProfileAllocationConnectModal`, `ProfileSshPanel` |
 | Notificações | `NotificationsPanel` |
-| Admin manutenção | `AdminMaintenance*Tab` |
+| Admin máquina | `admin/machine/AdminMachine{Disks,Users,Ssh}Tab` |
+| Admin manutenção | `admin/maintenance/AdminMaintenance{Telemetry,Policies,Retention,Groups}Tab` |
 | Datetime | `LabWallClockDateInput`, `LabWallClockTimeInput` |
+
+Aninhamento ao vivo: `MachineDetailView` → `MachineLiveSections` → (`CollapsibleSection`, `MachineChartHistoryChart`, `MachineLiveProcessSection` → `ProcessTelemetryTable`). Painel de preset: `MachineTelemetryPanel` → (`TelemetryMetricGrid`, `ProcessCaptureOptions`).
+
+---
+
+## Composables
+
+| Composable | Responsabilidade |
+|------------|------------------|
+| `useTelemetryPlayback` | Poll `/telemetry/stream` (3 s), diff de lotes, playback suave; expõe `liveData`, `latestProcesses` |
+| `useMachineChartHistory` | Poll `/telemetry` (`chartHistory`); série `chartSeries` 24 h @ 15 min |
+| `useMyAllocationActions` | Regras de UI das reservas do usuário (cancelar, conectar, estender, finalizar) a partir do `effectiveLifecycleStatus` + relógio sincronizado |
+| `useAdminAllocationActions` | Regras de UI admin por alocação (aprovar/negar, cancelar, editar período, gerar resumo, ver estatísticas) |
+
+---
+
+## Utilitários (`src/utils`)
+
+| Arquivo | Papel |
+|---------|-------|
+| `datetime.ts` | UTC ↔ relógio de parede do lab; comparações com relógio do servidor (`isNowBeforeUtc`, ranges de grace/SFTP) |
+| `allocationLifecycle.ts` | `effectiveLifecycleStatus` e helpers de fase (`isSessionPhase`, `isExtendablePhase`, `isPostSessionPhase`) |
+| `allocationAvailability.ts` | Conflito de reserva e bloqueio por status efetivo da máquina |
+| `allocationPeriodValidation.ts` | Validações client-side do período (espelham a API) |
+| `allocationLabels.ts` | Mensagens/labels de validação e lifecycle (limite do motivo = 200) |
+| `allocationMetricFormat.ts` · `buildAllocationChartTabs.ts` | Formatação TWA e séries para o modal de estatísticas |
+| `machineDisks.ts` | Disco total, partições, picker de home (ver seção de discos) |
+| `machineGpu.ts` | Rótulo GPU + VRAM total para cards/listas (`formatGpuWithVram`) |
+| `calendarDays.ts` | Geração de dias do calendário Gantt (calendário civil, sem parse ISO) |
+| `processTelemetry.ts` | Filtro lab/sistema e ordenação da tabela de processos |
+| `telemetryBatchDiff.ts` · `telemetryChartConfig.ts` · `telemetryPresets.ts` | Diff de lotes, cores/abas de gráfico, constantes/validação de preset |
+| `ssh.ts` | Monta comandos SSH/SFTP do modal de conexão |
+| `clipboard.ts` | Cópia para a área de transferência com fallback fora de contexto seguro (HTTP/LAN) |
+
+Testes (Node, sem framework): `datetime.spec.mjs`, `ssh.spec.mjs`, `notificationMessage.spec.mjs`.
 
 ---
 
@@ -269,6 +325,12 @@ Tema escuro em `src/assets/main.css` (`--bg-*`, `--text-*`, `--border`). Listage
 | `idleHistory` → `chartHistory` | `useMachineChartHistory`, `MachineChartHistoryChart`; gráfico 24 h também durante alocação |
 | Remoção fase `prepare` | Sem SFTP pré-alocação; conta só a partir de `startTime` (API + agente) |
 | Telemetria no detalhe da máquina | Usuários autenticados veem barras, gráfico 24 h e partições; processos/sessões só admin |
+| **Status efetivo + modo operacional** | Máquina passa a expor `operationalMode` (admin) e `status` efetivo com novo estado **`disabled`** (*Desabilitada*); bloqueio de reserva em `utils/allocationAvailability.ts` |
+| **Aba Informações** | Antiga aba *Hardware* virou **Informações**; inclui seletor de **modo operacional** (disponível/desativada/manutenção) |
+| **Ações de alocação em composables** | Lógica de UI extraída para `useMyAllocationActions` / `useAdminAllocationActions` (antes inline nas views/tabs) |
+| **Toolbar de listas** | `AllocationListToolbar` unifica busca + filtros por sub-estado em *Minhas alocações* e *Alocações (admin)* |
+| **Componentes de telemetria reutilizáveis** | `TelemetryMetricGrid`, `ProcessCaptureOptions`, `NumberStepper` e `CollapsibleSection` compartilhados entre detalhe da máquina e manutenção |
+| **Helpers GPU/cópia** | `utils/machineGpu.ts` (GPU + VRAM) e `utils/clipboard.ts` (cópia com fallback HTTP/LAN) |
 
 ---
 

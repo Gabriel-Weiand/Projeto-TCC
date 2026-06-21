@@ -78,7 +78,7 @@ Documentação detalhada: [`apps/api/MODULE.md`](apps/api/MODULE.md), [`apps/web
 ### Administrador (`admin`)
 
 - **Usuários:** CRUD; `system_username` imutável; ver alocações por usuário.
-- **Máquinas:** CRUD, grupos, status efetivo (online/offline/ocupada/manutenção), **edição de specs** (CPU, GPU, RAM, VRAM, disco total, IP local/alternativo), **política de discos** (principal / reservável), preset de telemetria por máquina, token do agente, descomissionamento em duas fases, usuários provisionados (override shell/sftp).
+- **Máquinas:** CRUD, grupos, **modo operacional** (disponível/desativada/manutenção) + status efetivo (disponível/ocupada/offline/desabilitada/manutenção), **edição de specs** (CPU, GPU, RAM, VRAM, disco total, IP local/alternativo), **política de discos** (principal / reservável), preset de telemetria por máquina, token do agente, descomissionamento em duas fases, usuários provisionados (override shell/sftp).
 - **Detalhe da máquina (admin):** tudo que o usuário vê, mais **tabela de processos** (filtro lab/sistema), **sessões ativas** e painel de preset custom por máquina.
 - **Alocações:** listagem global, filtros por sub-estado (ativa, grace, SFTP…), aprovar/negar/cancelar, editar período, **gerar resumo TWA**, reservar em nome de outro usuário.
 - **Manutenção** (`/admin/maintenance`): presets globais fast/eco, políticas do lab (aprovação, grace, SFTP, nomes no Gantt), retenção e prune manual.
@@ -126,7 +126,7 @@ Hardware estável da máquina é dividido em **colunas de spec** e **partições
 
 **Limpar um campo no painel admin** (ex.: CPU em branco) **reabilita** o próximo `sync-specs` do agente a repreencher.
 
-Serviço: `applySyncSpecsIfEmpty` em `#services/machine_specs_merge.ts`.
+Serviço: `applySyncSpecsIfEmpty` em `#services/machine/specs_merge.ts`.
 
 ### Partições (`machines.disks[]`)
 
@@ -223,8 +223,8 @@ _Medições em junho/2026 (excl. `node_modules` / venv)._
 
 | Métrica | Agente | API | Web |
 |---------|--------|-----|-----|
-| Linhas principais | ~1 350 (`agentd.py`) | ~16 000 TS | ~18 000 Vue/TS |
-| Testes automatizados | — (contrato via API) | **232** specs Japa | Scripts Node (`datetime`, `ssh`, `notificationMessage`) |
+| Linhas principais | ~1 600 (`agentd.py`) | ~19 000 TS | ~19 000 Vue/TS |
+| Testes automatizados | — (contrato via API) | **~234** specs Japa | Scripts Node (`datetime`, `ssh`, `notificationMessage`) |
 | Documentação | `MODULE.md` | `MODULE.md` | `MODULE.md` |
 
 ### Pontos de atenção (revisão de código)
@@ -253,9 +253,11 @@ A pasta `docs/` mantém a proposta em PDF. Conteúdo técnico está nos `MODULE.
 
 | Camada | Stack |
 |--------|--------|
-| API | Node.js **22.x**, AdonisJS 6, TypeScript, Lucid, VineJS, SQLite |
-| Web | Vue 3, Vite, Pinia, Vue Router, Axios, Chart.js |
-| Agente | Python 3, `psutil`, `requests`, `nvidia-ml-py` (opcional) |
+| API | Node.js **22.x**, AdonisJS **6**, TypeScript **5.8**, Lucid **21**, VineJS **3**, `better-sqlite3` **12** (SQLite), Luxon **3**, `node-cron` **4** |
+| Web | Vue **3.5**, Vite **7**, Pinia **3**, Vue Router **4**, Axios **1**, Chart.js **4**, TypeScript **6** |
+| Agente | Python **3.10+**, `psutil`, `requests`, `nvitop` (GPU NVIDIA: uso/VRAM/processos), `nvidia-ml-py` (fallback de inventário) |
+
+> Versões exatas em `apps/api/package.json`, `apps/web/package.json` e `apps/agent/requirements.txt`. Node fixado em `.nvmrc` (22.x).
 
 ---
 
@@ -265,7 +267,7 @@ A pasta `docs/` mantém a proposta em PDF. Conteúdo técnico está nos `MODULE.
 
 - **Node.js 22.x**
 - npm
-- Python 3 (agente nas máquinas)
+- Python 3.10+ (agente nas máquinas)
 
 ### API
 
@@ -282,7 +284,7 @@ node ace seed:fresh dev
 node ace serve --watch
 ```
 
-Testes: `node ace test` (232 specs).
+Testes: `node ace test` (~234 specs).
 
 Utilitários web: `node apps/web/src/utils/datetime.spec.mjs`
 
