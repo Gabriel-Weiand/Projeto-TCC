@@ -48,21 +48,28 @@ const props = withDefaults(
 const emit = defineEmits<{
   (
     e: "panel-align",
-    metrics: { top: number; height: number },
+    metrics: { top: number; height: number; fullHeight: number },
   ): void;
 }>();
 
 const ganttOuterRef = ref<HTMLElement | null>(null);
 let resizeObserver: ResizeObserver | null = null;
 
-/** Alinha painel lateral ao card do Gantt (topo da caixa + mesma altura, sem toolbar externa). */
+/**
+ * Alinha painel lateral ao card do Gantt (topo da caixa + altura).
+ * `fullHeight` é a altura equivalente ao calendário cheio (PAGE_SIZE máquinas):
+ * com menos máquinas o painel mantém o tamanho máximo em vez de encolher junto.
+ */
 function updateAlignOffset() {
-  if (ganttOuterRef.value) {
-    emit("panel-align", {
-      top: ganttOuterRef.value.offsetTop,
-      height: ganttOuterRef.value.offsetHeight,
-    });
-  }
+  if (!ganttOuterRef.value) return;
+  const height = ganttOuterRef.value.offsetHeight;
+  const missingRows = Math.max(0, PAGE_SIZE - displayedMachines.value.length);
+  const fullHeight = height + missingRows * ROW_H.value;
+  emit("panel-align", {
+    top: ganttOuterRef.value.offsetTop,
+    height,
+    fullHeight,
+  });
 }
 
 watch(() => props.loading, async (isLoading) => {

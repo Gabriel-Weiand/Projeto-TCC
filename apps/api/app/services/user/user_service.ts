@@ -21,7 +21,9 @@ export const UserService = {
   async updateUserByAdmin(userId: number, data: UpdateUserPayload) {
     const targetUser = await User.findOrFail(userId)
 
-    const patch: Pick<UpdateUserPayload, 'password' | 'role'> = {}
+    const patch: Pick<UpdateUserPayload, 'fullName' | 'email' | 'password' | 'role'> = {}
+    if (data.fullName !== undefined) patch.fullName = data.fullName
+    if (data.email !== undefined) patch.email = data.email
     if (data.password) patch.password = data.password
     if (data.role !== undefined) patch.role = data.role
 

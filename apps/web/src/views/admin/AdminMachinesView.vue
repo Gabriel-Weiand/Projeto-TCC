@@ -24,6 +24,9 @@ const tokenValue = ref("");
 const tokenMachine = ref("");
 const tokenCopied = ref(false);
 
+const deletingId = ref<number | null>(null);
+const decommissioningId = ref<number | null>(null);
+
 onMounted(async () => {
   try {
     await store.fetchMachines();
@@ -70,14 +73,25 @@ function goToEdit(m: Machine, event?: Event) {
 
 async function handleDelete(m: Machine, event: Event) {
   event.stopPropagation();
+  if (deletingId.value !== null) return;
   if (!confirm(`Excluir "${m.name}"? Esta ação não pode ser desfeita.`)) return;
+  deletingId.value = m.id;
+  decommissioningId.value = null;
   try {
-    await store.deleteMachine(m.id);
+    await store.deleteMachine(m.id, () => {
+      decommissioningId.value = m.id;
+    });
   } catch (err) {
-    alert(
-      err instanceof Error ? err.message : "Erro ao excluir máquina.",
-    );
+    alert(err instanceof Error ? err.message : "Erro ao excluir máquina.");
+  } finally {
+    deletingId.value = null;
+    decommissioningId.value = null;
   }
+}
+
+function deleteButtonLabel(m: Machine) {
+  if (deletingId.value !== m.id) return "Excluir";
+  return decommissioningId.value === m.id ? "Descomissionando…" : "Excluindo…";
 }
 
 function openCreate() {
@@ -201,21 +215,32 @@ async function copyToken() {
                 <button
                   type="button"
                   class="btn btn-ghost btn-sm"
+                  :disabled="deletingId === m.id"
                   @click="goToView(m)"
                 >
                   Ver
                 </button>
-                <button type="button" class="btn btn-ghost btn-sm" @click="goToEdit(m)">
+                <button
+                  type="button"
+                  class="btn btn-ghost btn-sm"
+                  :disabled="deletingId === m.id"
+                  @click="goToEdit(m)"
+                >
                   Editar
                 </button>
                 <button
                   type="button"
                   class="btn btn-danger btn-sm"
+                  :disabled="deletingId !== null"
                   @click="handleDelete(m, $event)"
                 >
-                  Excluir
+                  {{ deleteButtonLabel(m) }}
                 </button>
               </div>
+              <p v-if="decommissioningId === m.id" class="decommission-hint">
+                Descomissionando: aguardando o agente sincronizar (~30s). Não feche
+                a página.
+              </p>
             </td>
           </tr>
         </tbody>
@@ -326,6 +351,14 @@ async function copyToken() {
   gap: 0.35rem;
   flex-wrap: nowrap;
   white-space: nowrap;
+}
+.machines-table .decommission-hint {
+  margin: 0.4rem auto 0;
+  max-width: 240px;
+  font-size: 0.75rem;
+  line-height: 1.3;
+  color: var(--text-secondary);
+  white-space: normal;
 }
 .modal-overlay {
   position: fixed;

@@ -38,7 +38,7 @@ const route = useRoute();
 const router = useRouter();
 
 const showForm = ref(false);
-const panelAlign = ref({ top: 0, height: 0 });
+const panelAlign = ref({ top: 0, height: 0, fullHeight: 0 });
 
 const ganttAllocations = ref<Allocation[]>([]);
 const ganttLoading = ref(false);
@@ -53,11 +53,22 @@ const MACHINE_STATUS_LABELS: Record<Machine["status"], string> = {
 
 const isAdmin = computed(() => auth.user?.role === "admin");
 
+const requiresAdminApproval = computed(
+  () => lab.config.allocation.requireAdminApproval === true,
+);
+
+// Usuário comum com aprovação obrigatória apenas solicita a reserva (nasce pendente).
+const isRequestMode = computed(
+  () => !isAdmin.value && requiresAdminApproval.value,
+);
+
 const panelAlignStyle = computed(() => {
-  if (!showForm.value || panelAlign.value.height <= 0) return undefined;
+  if (!showForm.value || panelAlign.value.fullHeight <= 0) return undefined;
+  // Atrela ao calendário apenas no seu tamanho máximo (PAGE_SIZE máquinas);
+  // com menos máquinas o painel mantém o tamanho completo.
   return {
     marginTop: `${panelAlign.value.top}px`,
-    height: `${panelAlign.value.height}px`,
+    height: `${panelAlign.value.fullHeight}px`,
   };
 });
 
@@ -302,7 +313,7 @@ async function handleCreate() {
     <div class="page-header">
       <h1 class="page-title">Reservas</h1>
       <button v-if="!showForm" class="btn btn-primary" @click="openForm()">
-        + Nova Reserva
+        {{ isRequestMode ? "+ Solicitar Reserva" : "+ Nova Reserva" }}
       </button>
     </div>
 
@@ -325,7 +336,9 @@ async function handleCreate() {
       >
         <div class="panel-card">
           <div class="panel-header">
-            <h2 class="panel-title">Nova Reserva</h2>
+            <h2 class="panel-title">
+              {{ isRequestMode ? "Solicitar Reserva" : "Nova Reserva" }}
+            </h2>
             <button type="button" class="btn-close" @click="showForm = false">
               ✕
             </button>
@@ -364,7 +377,12 @@ async function handleCreate() {
                 class="btn btn-primary"
                 :disabled="!canCreateReservation"
               >
-                {{ formSaving ? "Criando..." : "Criar Reserva" }}
+                <template v-if="isRequestMode">
+                  {{ formSaving ? "Solicitando..." : "Solicitar Reserva" }}
+                </template>
+                <template v-else>
+                  {{ formSaving ? "Criando..." : "Criar Reserva" }}
+                </template>
               </button>
             </div>
           </form>

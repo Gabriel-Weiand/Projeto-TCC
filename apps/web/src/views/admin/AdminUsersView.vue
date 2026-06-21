@@ -92,16 +92,23 @@ async function handleSave() {
     return;
   }
 
+  const fullName = form.fullName.trim();
+  const email = form.email.trim();
+  if (!fullName || !email) {
+    error.value = "Nome e email são obrigatórios.";
+    return;
+  }
+
   const payload: Record<string, unknown> = {};
+  if (fullName !== editing.value.fullName) payload.fullName = fullName;
+  if (email !== editing.value.email) payload.email = email;
   if (form.password) payload.password = form.password;
   if (isEditingOther.value && form.role !== editing.value.role) {
     payload.role = form.role;
   }
 
   if (Object.keys(payload).length === 0) {
-    error.value = isEditingOther.value
-      ? "Informe uma nova senha ou altere o cargo."
-      : "Informe uma nova senha.";
+    error.value = "Altere ao menos um campo antes de salvar.";
     return;
   }
 
@@ -246,11 +253,11 @@ function fmtDate(iso: string) {
             <template v-else>
               <div class="field">
                 <label class="field-label">Nome completo</label>
-                <input :value="form.fullName" type="text" disabled />
+                <input v-model="form.fullName" type="text" />
               </div>
               <div class="field">
                 <label class="field-label">Email</label>
-                <input :value="form.email" type="email" disabled />
+                <input v-model="form.email" type="email" />
               </div>
               <div class="field">
                 <label class="field-label">Senha (em branco = manter)</label>
